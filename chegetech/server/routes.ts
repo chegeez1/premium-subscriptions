@@ -2289,6 +2289,49 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Admin: Custom Domain Management ────────────────────────────────
+  type CustomDomain = { id: string; domain: string; label: string; addedAt: string; primary: boolean };
+
+  function getDomains(): CustomDomain[] {
+    try { return JSON.parse(dbSettingsGet("custom_domains") || "[]"); } catch { return []; }
+  }
+  function saveDomains(domains: CustomDomain[]) { dbSettingsSet("custom_domains", JSON.stringify(domains)); }
+
+  app.get("/api/admin/domains", adminAuthMiddleware, superAdminOnly, (_req, res) => {
+    const replitDomain = process.env.REPLIT_DEV_DOMAIN || process.env.REPLIT_DOMAINS || null;
+    res.json({ success: true, domains: getDomains(), replitDomain });
+  });
+
+  app.post("/api/admin/domains", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    const { domain, label } = req.body;
+    if (!domain) return res.status(400).json({ success: false, error: "domain is required" });
+    const clean = domain.toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    const existing = getDomains();
+    if (existing.some((d) => d.domain === clean)) return res.status(400).json({ success: false, error: "Domain already added" });
+    const entry: CustomDomain = { id: uuidv4(), domain: clean, label: label || clean, addedAt: new Date().toISOString(), primary: existing.length === 0 };
+    existing.push(entry);
+    saveDomains(existing);
+    logAdminAction({ action: `Custom domain added: ${clean}`, category: "settings", status: "success" });
+    res.json({ success: true, domain: entry });
+  });
+
+  app.put("/api/admin/domains/:id/primary", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    const domains = getDomains().map((d) => ({ ...d, primary: d.id === req.params.id }));
+    saveDomains(domains);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/admin/domains/:id", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    const all = getDomains();
+    const target = all.find((d) => d.id === req.params.id);
+    if (!target) return res.status(404).json({ success: false, error: "Not found" });
+    const filtered = all.filter((d) => d.id !== req.params.id);
+    if (target.primary && filtered.length > 0) filtered[0].primary = true;
+    saveDomains(filtered);
+    logAdminAction({ action: `Custom domain removed: ${target.domain}`, category: "settings", status: "warning" });
+    res.json({ success: true });
+  });
+
   // ─── Public: AI Support Chat ─────────────────────────────────────────
   app.post("/api/support/chat", async (req, res) => {
     try {

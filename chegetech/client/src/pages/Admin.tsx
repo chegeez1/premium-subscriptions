@@ -12,7 +12,7 @@ import {
   Terminal, Info, TriangleAlert, Filter, Upload, Download,
   Search, BarChart2, Loader2, FileCheck, ClipboardCheck, Send,
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
-  Wifi, HardDrive, Cpu, MemoryStick
+  Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "emailblast" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "emailblast" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
   success: { label: "Completed", icon: CheckCircle, color: "text-emerald-400" },
@@ -105,6 +105,7 @@ export default function Admin() {
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "geo-restrict", label: "Geo Restrict", icon: Globe, superOnly: true },
     { id: "vps", label: "VPS Manager", icon: Server, superOnly: true },
+    { id: "domains", label: "Domains", icon: Link2, superOnly: true },
     { id: "settings", label: "Settings", icon: Settings, superOnly: true },
   ];
 
@@ -188,6 +189,7 @@ export default function Admin() {
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
           {activeTab === "vps" && adminRole === "super" && <VpsTab />}
+          {activeTab === "domains" && adminRole === "super" && <DomainsTab />}
           {activeTab === "settings" && adminRole === "super" && <SettingsTab />}
         </div>
       </main>
@@ -3758,6 +3760,260 @@ function VpsTab() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── DOMAINS TAB ────────────────────────────────────────────────────────────
+function DomainsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const authFetchD = (url: string, opts: any = {}) =>
+    fetch(url, {
+      ...opts,
+      headers: { "Content-Type": "application/json", "x-admin-token": localStorage.getItem("adminToken") || "", ...(opts.headers || {}) },
+      body: opts.body,
+    }).then((r) => r.json());
+
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/domains"],
+    queryFn: () => authFetchD("/api/admin/domains"),
+  });
+
+  const domains: any[] = data?.domains || [];
+  const replitDomain: string | null = data?.replitDomain || null;
+
+  const [newDomain, setNewDomain] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const inputCls = "bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-indigo-500/50";
+
+  const addMutation = useMutation({
+    mutationFn: () => authFetchD("/api/admin/domains", { method: "POST", body: JSON.stringify({ domain: newDomain, label: newLabel || newDomain }) }),
+    onSuccess: (res) => {
+      if (res.success) {
+        toast({ title: "Domain added!", description: res.domain.domain });
+        setNewDomain(""); setNewLabel(""); setShowAdd(false);
+        qc.invalidateQueries({ queryKey: ["/api/admin/domains"] });
+      } else {
+        toast({ title: "Failed", description: res.error, variant: "destructive" });
+      }
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => authFetchD(`/api/admin/domains/${id}`, { method: "DELETE" }),
+    onSuccess: () => { toast({ title: "Domain removed" }); qc.invalidateQueries({ queryKey: ["/api/admin/domains"] }); },
+  });
+
+  const setPrimaryMutation = useMutation({
+    mutationFn: (id: string) => authFetchD(`/api/admin/domains/${id}/primary`, { method: "PUT" }),
+    onSuccess: () => { toast({ title: "Primary domain updated" }); qc.invalidateQueries({ queryKey: ["/api/admin/domains"] }); },
+  });
+
+  function copyText(text: string, id: string) {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  }
+
+  const cnameDest = replitDomain
+    ? (replitDomain.includes(".") ? replitDomain.split(",")[0].trim() : replitDomain)
+    : "your-app.replit.app";
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">Custom Domains</h2>
+          <p className="text-sm text-white/40 mt-1">Manage additional domains that point to your store</p>
+        </div>
+        <Button onClick={() => setShowAdd(!showAdd)} className="bg-indigo-600 hover:bg-indigo-500 text-white">
+          <Plus className="w-4 h-4 mr-1.5" />Add Domain
+        </Button>
+      </div>
+
+      {/* Current Replit domain */}
+      {replitDomain && (
+        <div className="glass-card rounded-2xl p-5 border border-indigo-500/20">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Your Replit Domain</p>
+          </div>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="font-mono text-white font-medium">{cnameDest}</p>
+              <p className="text-xs text-white/40 mt-0.5">This is your app's live domain — point your custom domain here</p>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => copyText(cnameDest, "replit")}
+                className="border-white/10 text-white/60 hover:text-white">
+                {copiedId === "replit" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span className="ml-1.5">Copy</span>
+              </Button>
+              <a href={`https://${cnameDest}`} target="_blank" rel="noreferrer">
+                <Button size="sm" variant="outline" className="border-white/10 text-white/60 hover:text-white">
+                  <ExternalLink className="w-3.5 h-3.5" /><span className="ml-1.5">Open</span>
+                </Button>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add domain form */}
+      {showAdd && (
+        <div className="glass-card rounded-2xl p-5 border border-indigo-500/20">
+          <h3 className="text-sm font-semibold text-white mb-4">Add Custom Domain</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-white/40 block mb-1">Domain name *</label>
+              <Input
+                placeholder="shop.yourdomain.com"
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+                className={inputCls}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="text-xs text-white/40 block mb-1">Label (optional)</label>
+              <Input
+                placeholder="My Store Domain"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                className={inputCls}
+              />
+            </div>
+          </div>
+
+          {/* DNS instructions preview */}
+          {newDomain && (
+            <div className="mt-4 p-4 rounded-xl border border-white/8 bg-white/3">
+              <p className="text-xs text-white/50 mb-3 font-medium">DNS record to add at your registrar:</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="text-white/30">
+                      <th className="text-left pb-2 pr-4">Type</th>
+                      <th className="text-left pb-2 pr-4">Name / Host</th>
+                      <th className="text-left pb-2">Points to</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="text-white/70">
+                      <td className="pr-4 py-1"><Badge className="bg-blue-600/40 text-blue-300 border-0 text-xs">CNAME</Badge></td>
+                      <td className="pr-4 py-1">{newDomain.replace(/\..+$/, "") || "@"}</td>
+                      <td className="py-1 text-indigo-300">{cnameDest}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2 mt-4">
+            <Button
+              onClick={() => addMutation.mutate()}
+              disabled={!newDomain.trim() || addMutation.isPending}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white"
+            >
+              {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Plus className="w-4 h-4 mr-1.5" />}
+              Add Domain
+            </Button>
+            <Button variant="ghost" onClick={() => setShowAdd(false)} className="text-white/40 hover:text-white">Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Domain list */}
+      {isLoading ? (
+        <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+      ) : domains.length === 0 ? (
+        <div className="glass-card rounded-2xl text-center py-16">
+          <Link2 className="w-10 h-10 text-white/15 mx-auto mb-3" />
+          <p className="text-white/40 font-medium">No custom domains added yet</p>
+          <p className="text-white/25 text-sm mt-1">Add a domain to serve your store under your own brand</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {domains.map((d: any) => (
+            <div key={d.id} className={`glass-card rounded-2xl p-5 border ${d.primary ? "border-indigo-500/30" : "border-white/8"}`}>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${d.primary ? "bg-indigo-500/20" : "bg-white/5"}`}>
+                    <Link2 className={`w-4 h-4 ${d.primary ? "text-indigo-400" : "text-white/40"}`} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-white font-mono">{d.domain}</p>
+                      {d.primary && <Badge className="bg-indigo-600/60 text-white border-0 text-xs">Primary</Badge>}
+                    </div>
+                    {d.label !== d.domain && <p className="text-xs text-white/40">{d.label}</p>}
+                    <p className="text-xs text-white/25 mt-0.5">Added {new Date(d.addedAt).toLocaleDateString()}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => copyText(d.domain, d.id + "-copy")}
+                    className="border-white/10 text-white/50 hover:text-white h-8">
+                    {copiedId === d.id + "-copy" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span className="ml-1.5 text-xs">Copy</span>
+                  </Button>
+                  <a href={`https://${d.domain}`} target="_blank" rel="noreferrer">
+                    <Button size="sm" variant="outline" className="border-white/10 text-white/50 hover:text-white h-8">
+                      <ExternalLink className="w-3.5 h-3.5" /><span className="ml-1.5 text-xs">Visit</span>
+                    </Button>
+                  </a>
+                  {!d.primary && (
+                    <Button size="sm" variant="outline" onClick={() => setPrimaryMutation.mutate(d.id)} disabled={setPrimaryMutation.isPending}
+                      className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 h-8">
+                      <Star className="w-3.5 h-3.5" /><span className="ml-1.5 text-xs">Set Primary</span>
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={() => deleteMutation.mutate(d.id)} disabled={deleteMutation.isPending}
+                    className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-8">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* DNS instruction per domain */}
+              <div className="mt-4 p-3 rounded-xl bg-black/20 border border-white/5">
+                <p className="text-xs text-white/35 mb-2 font-medium">DNS Configuration</p>
+                <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                  <span className="text-white/30">Type:</span><Badge className="bg-blue-600/40 text-blue-300 border-0">CNAME</Badge>
+                  <span className="text-white/30">Host:</span><span className="text-white/60">{d.domain.split(".")[0]}</span>
+                  <span className="text-white/30">Points to:</span>
+                  <span className="text-indigo-300">{cnameDest}</span>
+                  <button onClick={() => copyText(cnameDest, d.id + "-dns")} className="text-white/30 hover:text-white transition-colors">
+                    {copiedId === d.id + "-dns" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* How it works */}
+      <div className="rounded-xl p-4 border border-white/8 bg-white/3">
+        <p className="text-xs font-semibold text-white/50 mb-3">How to connect a custom domain</p>
+        <ol className="space-y-2 text-xs text-white/40 list-none">
+          {[
+            "Go to your domain registrar (Namecheap, Cloudflare, GoDaddy, etc.)",
+            `Add a CNAME record pointing to: ${cnameDest}`,
+            "Wait for DNS to propagate (can take up to 48 hours, usually under 1 hour)",
+            "Click 'Visit' to verify your domain is live",
+          ].map((step, i) => (
+            <li key={i} className="flex items-start gap-2">
+              <span className="w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
     </div>
   );
 }
