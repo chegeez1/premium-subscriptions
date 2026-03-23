@@ -410,6 +410,24 @@ async function migrateJsonToDbAsync() {
 
 export { migrateJsonToDbAsync as migrateJsonToDb };
 
+// Non-sensitive keys that also persist to a committed JSON file so they
+// survive fresh deploys where the SQLite database doesn't exist yet.
+const JSON_PERSIST_MAP: Record<string, string> = {
+  app_config: "app-config.json",
+  promo_codes: "promo-codes.json",
+  plan_overrides: "plan-overrides.json",
+  custom_plans: "custom-plans.json",
+  affiliate_tiers: "affiliate-tiers.json",
+};
+
+function persistToJsonFile(key: string, value: string): void {
+  const fileName = JSON_PERSIST_MAP[key];
+  if (!fileName) return;
+  try {
+    fs.writeFileSync(path.join(process.cwd(), fileName), value, "utf8");
+  } catch { /* non-fatal */ }
+}
+
 export function dbSettingsGet(key: string): string | null {
   try {
     if (dbType === "pg") {
@@ -417,7 +435,16 @@ export function dbSettingsGet(key: string): string | null {
     }
     if (sqliteInstance) {
       const row = sqliteInstance.prepare("SELECT value FROM settings WHERE key = ?").get(key) as any;
-      return row?.value || null;
+      if (row?.value) return row.value;
+    }
+    // Fallback: read from committed JSON file if SQLite has no value yet
+    const fileName = JSON_PERSIST_MAP[key];
+    if (fileName) {
+      const filePath = path.join(process.cwd(), fileName);
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, "utf8").trim();
+        if (raw) return raw;
+      }
     }
   } catch {}
   return null;
@@ -425,6 +452,10 @@ export function dbSettingsGet(key: string): string | null {
 
 export function dbSettingsSet(key: string, value: string): void {
   try {
+    // Always dual-write non-sensitive settings to a JSON file so they survive
+    // fresh deploys where the SQLite database doesn't exist yet.
+    persistToJsonFile(key, value);
+
     if (dbType === "pg") {
       settingsCache.set(key, value);
       if (pgPool) {
