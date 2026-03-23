@@ -1814,6 +1814,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         whatsappAdminPhone: override.whatsappAdminPhone || "",
         openaiApiKey: override.openaiApiKey ? "••••••••••••••••" : "",
         openaiApiKeySet: !!override.openaiApiKey,
+        externalDatabaseUrl: override.externalDatabaseUrl ? "••••••••••••••••" : "",
+        externalDatabaseUrlSet: !!override.externalDatabaseUrl,
       },
       effective: {
         paystackPublicKey: status.paystackPublicKey,
@@ -1831,6 +1833,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         whatsappAccessToken: !!override.whatsappAccessToken,
         whatsappPhoneId: !!override.whatsappPhoneId,
         openaiApiKey: !!override.openaiApiKey,
+        externalDatabaseUrl: !!override.externalDatabaseUrl,
       },
       envVarSet: {
         paystackPublicKey: !!process.env.PAYSTACK_PUBLIC_KEY,
@@ -1844,6 +1847,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         whatsappAccessToken: !!process.env.WHATSAPP_ACCESS_TOKEN,
         whatsappPhoneId: !!process.env.WHATSAPP_PHONE_ID,
         openaiApiKey: !!process.env.OPENAI_API_KEY,
+        externalDatabaseUrl: !!process.env.EXTERNAL_DATABASE_URL,
       },
     });
   });
@@ -1852,7 +1856,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.put("/api/admin/credentials", adminAuthMiddleware, superAdminOnly, (req, res) => {
     try {
       const { paystackPublicKey, paystackSecretKey, emailUser, emailPass, adminEmail, adminPassword, telegramBotToken, telegramChatId,
-        whatsappAccessToken, whatsappPhoneId, whatsappVerifyToken, whatsappAdminPhone, openaiApiKey } = req.body;
+        whatsappAccessToken, whatsappPhoneId, whatsappVerifyToken, whatsappAdminPhone, openaiApiKey, externalDatabaseUrl } = req.body;
       const toSave: Record<string, string | undefined> = {};
       if (paystackPublicKey !== undefined) toSave.paystackPublicKey = paystackPublicKey || undefined;
       if (paystackSecretKey !== undefined && paystackSecretKey !== "••••••••••••••••") toSave.paystackSecretKey = paystackSecretKey || undefined;
@@ -1867,6 +1871,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (whatsappVerifyToken !== undefined) toSave.whatsappVerifyToken = whatsappVerifyToken || undefined;
       if (whatsappAdminPhone !== undefined) toSave.whatsappAdminPhone = whatsappAdminPhone || undefined;
       if (openaiApiKey !== undefined && openaiApiKey !== "••••••••••••••••") toSave.openaiApiKey = openaiApiKey || undefined;
+      if (externalDatabaseUrl !== undefined && externalDatabaseUrl !== "••••••••••••••••") toSave.externalDatabaseUrl = externalDatabaseUrl || undefined;
 
       saveCredentialsOverride(toSave);
       logAdminAction({ action: "Credentials updated", category: "settings", details: `Updated: ${Object.keys(toSave).join(", ")}`, status: "success" });

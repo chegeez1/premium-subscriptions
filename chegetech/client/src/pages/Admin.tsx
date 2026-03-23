@@ -13,7 +13,7 @@ import {
   Search, BarChart2, Loader2, FileCheck, ClipboardCheck, Send,
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
   Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera,
-  Bot, Sparkles, Minimize2
+  Bot, Sparkles, Minimize2, Database, UserCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -3511,6 +3511,28 @@ function CredentialsEditor({ inputCls }: { inputCls: string }) {
 
         {/* WhatsApp Bot */}
         <WhatsAppWebPanel inputCls={inputCls} />
+
+        {/* Database */}
+        <div className="glass rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Database className="w-3.5 h-3.5 text-emerald-400" />
+            <p className="text-[10px] font-semibold text-white/40 uppercase tracking-widest">PostgreSQL Database</p>
+            {(creds.externalDatabaseUrlSet || !!envVarSet?.externalDatabaseUrl) && (
+              <Badge className="text-[9px] bg-emerald-500/20 text-emerald-400 border-0 px-1.5">Connected</Badge>
+            )}
+          </div>
+          <CredRow
+            label="External Database URL"
+            field="externalDatabaseUrl"
+            type="password"
+            placeholder="postgresql://user:pass@host:5432/dbname"
+            hint="PostgreSQL connection string from Neon, Supabase, or Render. Replaces SQLite — requires server restart to take effect."
+          />
+          <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-500/8 border border-amber-500/15">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-[10px] text-amber-300/70">After saving, restart the server for the database switch to take effect. Get a free PostgreSQL at <strong className="text-amber-300">neon.tech</strong> or <strong className="text-amber-300">render.com</strong></p>
+          </div>
+        </div>
 
         <div className="flex items-start gap-3 p-3 rounded-xl" style={{ background: "rgba(99,102,241,.08)", border: "1px solid rgba(99,102,241,.15)" }}>
           <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
