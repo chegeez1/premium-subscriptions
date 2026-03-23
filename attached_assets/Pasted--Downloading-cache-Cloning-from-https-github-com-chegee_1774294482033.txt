@@ -1,0 +1,56 @@
+==> Downloading cache...
+==> Cloning from https://github.com/chegeez1/premium-subscriptions
+==> Checking out commit 15652275537d1f586c034c28e72d0fb025bde974 in branch main
+==> Downloaded 280MB in 4s. Extraction took 8s.
+Menu
+==> Using Node.js version 22.22.0 (default)
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Running build command 'npm install; npm run build'...
+up to date, audited 655 packages in 2s
+98 packages are looking for funding
+  run `npm fund` for details
+2 vulnerabilities (1 moderate, 1 high)
+To address all issues, run:
+  npm audit fix
+Run `npm audit` for details.
+> rest-express@1.0.0 build
+> tsx script/build.ts
+building client...
+vite v7.3.1 building client environment for production...
+transforming...
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+✓ 1698 modules transformed.
+rendering chunks...
+computing gzip size...
+../dist/public/index.html                   1.14 kB │ gzip:   0.60 kB
+../dist/public/assets/index-YhmkMr5x.css  103.19 kB │ gzip:  16.97 kB
+../dist/public/assets/index-D49Y-o_c.js   689.08 kB │ gzip: 185.32 kB
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 6.38s
+building server...
+✘ [ERROR] Could not resolve "dotenv/config"
+    server/index.ts:1:7:
+      1 │ import "dotenv/config";
+        ╵        ~~~~~~~~~~~~~~~
+  You can mark the path "dotenv/config" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+1 error
+Error: Build failed with 1 error:
+server/index.ts:1:7: ERROR: Could not resolve "dotenv/config"
+    at failureErrorWithLog (/opt/render/project/src/node_modules/esbuild/lib/main.js:1467:15)
+    at /opt/render/project/src/node_modules/esbuild/lib/main.js:926:25
+    at /opt/render/project/src/node_modules/esbuild/lib/main.js:878:52
+    at buildResponseToResult (/opt/render/project/src/node_modules/esbuild/lib/main.js:924:7)
+    at /opt/render/project/src/node_modules/esbuild/lib/main.js:951:16
+    at responseCallbacks.<computed> (/opt/render/project/src/node_modules/esbuild/lib/main.js:603:9)
+    at handleIncomingPacket (/opt/render/project/src/node_modules/esbuild/lib/main.js:658:12)
+    at Socket.readFromStdout (/opt/render/project/src/node_modules/esbuild/lib/main.js:581:7)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12) {
+  errors: [Getter/Setter],
+  warnings: [Getter/Setter]
+}
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
