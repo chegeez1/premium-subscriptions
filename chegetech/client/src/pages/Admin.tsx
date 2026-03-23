@@ -547,6 +547,101 @@ function LoginFlow({ onLogin }: { onLogin: (token: string, role?: string) => voi
 // ═══════════════════════════════════════════════════════════════
 // SETTINGS TAB  (2FA setup + Paystack config)
 // ═══════════════════════════════════════════════════════════════
+function AffiliateTiersSection({ inputCls }: { inputCls: string }) {
+  const { toast } = useToast();
+  const tierColors: Record<string, { bg: string; text: string; border: string; badge: string }> = {
+    Silver:   { bg: "bg-slate-400/10",  text: "text-slate-300",  border: "border-slate-400/20",  badge: "bg-slate-500/30 text-slate-200" },
+    Gold:     { bg: "bg-amber-400/10",  text: "text-amber-300",  border: "border-amber-400/20",  badge: "bg-amber-500/30 text-amber-200" },
+    Platinum: { bg: "bg-violet-400/10", text: "text-violet-300", border: "border-violet-400/20", badge: "bg-violet-500/30 text-violet-200" },
+  };
+
+  const { data, refetch } = useQuery<{ success: boolean; tiers: any[] }>({
+    queryKey: ["/api/admin/affiliate-tiers"],
+    queryFn: () => authFetch("/api/admin/affiliate-tiers"),
+  });
+
+  const [tiers, setTiers] = useState<any[]>([]);
+  const [dirty, setDirty] = useState(false);
+
+  if (data?.tiers && tiers.length === 0) setTiers(data.tiers);
+
+  function updateTier(index: number, field: string, value: any) {
+    setTiers(prev => prev.map((t, i) => i === index ? { ...t, [field]: field === "name" ? value : Number(value) } : t));
+    setDirty(true);
+  }
+
+  const saveMutation = useMutation({
+    mutationFn: () => authFetch("/api/admin/affiliate-tiers", { method: "PUT", body: JSON.stringify({ tiers }) }),
+    onSuccess: (d) => {
+      if (d.success) { toast({ title: "Affiliate tiers saved" }); setDirty(false); refetch(); }
+      else toast({ title: "Failed to save", description: d.error, variant: "destructive" });
+    },
+  });
+
+  return (
+    <div className="glass-card rounded-2xl overflow-hidden">
+      <div className="p-5 border-b border-white/8 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-600/20 flex items-center justify-center">
+            <Star className="w-5 h-5 text-amber-400" />
+          </div>
+          <div>
+            <p className="font-semibold text-white">Affiliate Tier Thresholds</p>
+            <p className="text-xs text-white/40">Set referral counts and coin multipliers for each tier</p>
+          </div>
+        </div>
+        {dirty && (
+          <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}
+            className="bg-gradient-to-r from-amber-600 to-orange-600 border-0 text-white text-xs h-8 px-3">
+            <Save className="w-3.5 h-3.5 mr-1.5" />{saveMutation.isPending ? "Saving..." : "Save Tiers"}
+          </Button>
+        )}
+      </div>
+      <div className="p-5 space-y-3">
+        <div className="grid grid-cols-3 gap-2 mb-1">
+          <p className="text-xs text-white/30 font-medium uppercase tracking-wide">Tier</p>
+          <p className="text-xs text-white/30 font-medium uppercase tracking-wide">Min Referrals</p>
+          <p className="text-xs text-white/30 font-medium uppercase tracking-wide">Coin Multiplier</p>
+        </div>
+        {tiers.length === 0 ? (
+          <div className="text-center text-white/30 text-sm py-4">Loading...</div>
+        ) : (
+          tiers.map((tier, i) => {
+            const c = tierColors[tier.name] || tierColors["Silver"];
+            return (
+              <div key={i} className={`grid grid-cols-3 gap-2 items-center p-3 rounded-xl border ${c.border} ${c.bg}`}>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${c.badge}`}>{tier.name}</span>
+                </div>
+                <div>
+                  <Input
+                    type="number" min={1} value={tier.min}
+                    onChange={(e) => updateTier(i, "min", e.target.value)}
+                    className={`${inputCls} h-8 text-sm`}
+                    placeholder="5"
+                  />
+                </div>
+                <div className="relative">
+                  <Input
+                    type="number" min={1} step={0.05} value={tier.multiplier}
+                    onChange={(e) => updateTier(i, "multiplier", e.target.value)}
+                    className={`${inputCls} h-8 text-sm pr-8`}
+                    placeholder="1.25"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-white/30">×</span>
+                </div>
+              </div>
+            );
+          })
+        )}
+        <p className="text-[11px] text-white/25 pt-1">
+          Referrers automatically upgrade tiers as they accumulate referrals. Each tier earns coins at the set multiplier on every purchase by referred users.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SettingsTab() {
   const { toast } = useToast();
   const inputCls = "glass border-white/10 bg-white/5 text-white placeholder:text-white/25 focus:border-indigo-500/50";
@@ -691,6 +786,9 @@ function SettingsTab() {
 
         {/* ─── Credentials Editor ─────────────────────────── */}
         <CredentialsEditor inputCls={inputCls} />
+
+        {/* ─── Affiliate Tiers ─────────────────────────────── */}
+        <AffiliateTiersSection inputCls={inputCls} />
 
         {/* ─── 2FA ─────────────────────────────────────────── */}
         <div className="glass-card rounded-2xl overflow-hidden">
