@@ -5,6 +5,8 @@ server/public
 vite.config.ts.*
 *.tar.gz
 
+.env
+
 # Sensitive — never commit these
 accounts.json
 admin-config.json

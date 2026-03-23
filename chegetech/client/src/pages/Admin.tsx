@@ -1253,9 +1253,6 @@ function SettingsTab() {
           )}
         </div>
 
-        {/* ─── Credentials Editor ─────────────────────────── */}
-        <CredentialsEditor inputCls={inputCls} />
-
         {/* ─── Affiliate Tiers ─────────────────────────────── */}
         <AffiliateTiersSection inputCls={inputCls} />
 
