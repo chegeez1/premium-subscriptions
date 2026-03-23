@@ -56,14 +56,14 @@ export default function Auth() {
     if (resendCooldown > 0) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/register", {
+      const res = await fetch("/api/auth/resend-verification", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, name, password }),
+        body: JSON.stringify({ email }),
       });
       const data = await res.json();
       if (data.success) {
-        toast({ title: "Code resent!", description: "Check your email for a new verification code" });
+        toast({ title: "Code resent!", description: "Check your inbox and spam folder" });
         startCooldown();
       } else {
         toast({ title: "Resend failed", description: data.error, variant: "destructive" });
@@ -162,12 +162,17 @@ export default function Auth() {
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault();
+    const cleanCode = verifyCode.replace(/\D/g, "").trim();
+    if (cleanCode.length !== 6) {
+      toast({ title: "Enter the 6-digit code", description: "Check your email inbox or spam folder", variant: "destructive" });
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch("/api/auth/verify-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code: verifyCode }),
+        body: JSON.stringify({ email, code: cleanCode }),
       });
       const data = await res.json();
       if (data.success) {
@@ -324,14 +329,22 @@ export default function Auth() {
           {/* VERIFY FORM */}
           {mode === "verify" && (
             <form onSubmit={handleVerify} className="space-y-4">
+              <div className="rounded-xl p-3 text-center text-xs text-white/50" style={{ background: "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.2)" }}>
+                A 6-digit code was sent to <span className="text-indigo-300 font-semibold">{email}</span>.<br />
+                <span className="text-white/35">Check your inbox and spam folder.</span>
+              </div>
               <div>
                 <label className="text-xs text-white/60 block mb-1.5">Verification Code</label>
                 <NeonInput
                   icon={<ShieldCheck className="w-4 h-4" />}
                   type="text"
-                  placeholder="123456"
+                  inputMode="numeric"
+                  placeholder="1  2  3  4  5  6"
                   value={verifyCode}
-                  onChange={(e) => setVerifyCode(e.target.value)}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+                    setVerifyCode(digits);
+                  }}
                   maxLength={6}
                   testId="input-verify-code"
                 />
@@ -340,7 +353,7 @@ export default function Auth() {
                 Verify Email
               </NeonButton>
               <p className="text-center text-white/30 text-xs">
-                Didn't receive the code? Check your spam folder or{" "}
+                Didn't get it?{" "}
                 <button
                   type="button"
                   onClick={handleResendVerification}
@@ -348,8 +361,9 @@ export default function Auth() {
                   className="text-indigo-400 font-bold hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="button-resend-verify"
                 >
-                  {resendCooldown > 0 ? `resend (${resendCooldown}s)` : "resend"}
+                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
                 </button>
+                {" "}· valid for 30 min
               </p>
               <button type="button" onClick={() => switchMode("login")} className="w-full text-center text-white/40 text-sm hover:text-white/70 transition-colors mt-2">
                 Back to login

@@ -1242,7 +1242,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const passwordHash = await bcrypt.hash(password, 10);
       const verificationCode = generateVerificationCode();
-      const verificationExpiresDate = new Date(Date.now() + 15 * 60 * 1000);
+      const verificationExpiresDate = new Date(Date.now() + 30 * 60 * 1000);
       const verificationExpires = verificationExpiresDate.toISOString();
 
       if (existing && !existing.emailVerified) {
@@ -1259,7 +1259,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       res.json({ success: true, message: "Verification code sent to your email" });
-      sendVerificationEmail(email, verificationCode, name).catch(() => {});
+      sendVerificationEmail(email, verificationCode, name).catch((err) => {
+        console.error("[email] Failed to send verification code to", email, err?.message);
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Resend verification code (no password needed) ────────────────
+  app.post("/api/auth/resend-verification", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ success: false, error: "Email is required" });
+      const customer = await storage.getCustomerByEmail(email);
+      if (!customer) return res.status(404).json({ success: false, error: "Account not found" });
+      if (customer.emailVerified) return res.status(400).json({ success: false, error: "Email already verified" });
+      const verificationCode = generateVerificationCode();
+      const verificationExpires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      await storage.updateCustomer(customer.id, { verificationCode, verificationExpires });
+      res.json({ success: true, message: "Verification code resent" });
+      sendVerificationEmail(email, verificationCode, customer.name || undefined).catch((err) => {
+        console.error("[email] Failed to resend verification code to", email, err?.message);
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1269,12 +1291,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/auth/verify-email", async (req, res) => {
     try {
       const { email, code } = req.body;
+      const trimmedCode = (code || "").toString().trim();
       const customer = await storage.getCustomerByEmail(email);
       if (!customer) return res.status(404).json({ success: false, error: "Account not found" });
       if (customer.emailVerified) return res.status(400).json({ success: false, error: "Email already verified" });
-      if (customer.verificationCode !== code) return res.status(400).json({ success: false, error: "Invalid verification code" });
+      if (!trimmedCode || customer.verificationCode !== trimmedCode) return res.status(400).json({ success: false, error: "Invalid verification code" });
       if (customer.verificationExpires && new Date(customer.verificationExpires) < new Date()) {
-        return res.status(400).json({ success: false, error: "Verification code has expired. Please register again." });
+        return res.status(400).json({ success: false, error: "Verification code has expired. Click resend to get a new one." });
       }
 
       await storage.updateCustomer(customer.id, { emailVerified: true, verificationCode: null, verificationExpires: null });
