@@ -1026,7 +1026,7 @@ function AffiliateTiersSection({ inputCls }: { inputCls: string }) {
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    if (data?.tiers && tiers.length === 0) setTiers(data.tiers);
+    if (Array.isArray(data?.tiers) && tiers.length === 0) setTiers(data.tiers);
   }, [data?.tiers]);
 
   function updateTier(index: number, field: string, value: any) {
@@ -1067,7 +1067,7 @@ function AffiliateTiersSection({ inputCls }: { inputCls: string }) {
           <p className="text-xs text-white/30 font-medium uppercase tracking-wide">Min Referrals</p>
           <p className="text-xs text-white/30 font-medium uppercase tracking-wide">Coin Multiplier</p>
         </div>
-        {tiers.length === 0 ? (
+        {!Array.isArray(tiers) || tiers.length === 0 ? (
           <div className="text-center text-white/30 text-sm py-4">Loading...</div>
         ) : (
           tiers.map((tier, i) => {
@@ -1114,7 +1114,8 @@ function SettingsTab() {
     queryKey: ["/api/admin/secrets"],
     queryFn: () => authFetch("/api/admin/secrets"),
   });
-  const envVars: { key: string; label: string; set: boolean; group: string }[] = secretsData?.secrets?.vars ?? [];
+  const rawVars = secretsData?.secrets?.vars;
+  const envVars: { key: string; label: string; set: boolean; group: string }[] = Array.isArray(rawVars) ? rawVars : [];
   const groups = [...new Set(envVars.map((v) => v.group))];
 
   // ─── 2FA state ──────────────────────────────────────────────
