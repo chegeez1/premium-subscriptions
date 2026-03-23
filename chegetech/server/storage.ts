@@ -141,6 +141,16 @@ export async function initializeDatabase() {
           reward_amount INTEGER DEFAULT 0,
           created_at TEXT DEFAULT (NOW()::text)
         );
+
+        CREATE TABLE IF NOT EXISTS customer_notifications (
+          id SERIAL PRIMARY KEY,
+          customer_id INTEGER NOT NULL,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          read INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (NOW()::text)
+        );
       `);
 
       const drizzlePgModule = await import("drizzle-orm/node-postgres");
@@ -292,6 +302,16 @@ function initSqlite() {
       referee_email TEXT,
       status TEXT DEFAULT 'pending',
       reward_amount INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS customer_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      read INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
@@ -938,6 +958,71 @@ export class DbStorage implements IStorage {
     const completed = rows.filter((rw: any) => rw.status === "completed");
     const myCode = rows[0]?.referral_code || null;
     return { totalReferrals: completed.length, completedReferrals: completed.length, totalEarned: completed.reduce((s: number, rw: any) => s + (rw.reward_amount || 0), 0), code: myCode };
+  }
+
+  async createNotification(customerId: number, type: string, title: string, message: string): Promise<void> {
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query(
+        "INSERT INTO customer_notifications (customer_id, type, title, message) VALUES ($1, $2, $3, $4)",
+        [customerId, type, title, message]
+      );
+    } else {
+      sqliteInstance!.prepare(
+        "INSERT INTO customer_notifications (customer_id, type, title, message) VALUES (?, ?, ?, ?)"
+      ).run(customerId, type, title, message);
+    }
+  }
+
+  async getNotifications(customerId: number): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "SELECT * FROM customer_notifications WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 30",
+        [customerId]
+      );
+      return r.rows.map((row: any) => ({
+        id: row.id, customerId: row.customer_id, type: row.type,
+        title: row.title, message: row.message, read: !!row.read, createdAt: row.created_at,
+      }));
+    }
+    const rows = sqliteInstance!.prepare(
+      "SELECT * FROM customer_notifications WHERE customer_id = ? ORDER BY created_at DESC LIMIT 30"
+    ).all(customerId) as any[];
+    return rows.map((row) => ({
+      id: row.id, customerId: row.customer_id, type: row.type,
+      title: row.title, message: row.message, read: !!row.read, createdAt: row.created_at,
+    }));
+  }
+
+  async markNotificationsRead(customerId: number): Promise<void> {
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query("UPDATE customer_notifications SET read = 1 WHERE customer_id = $1", [customerId]);
+    } else {
+      sqliteInstance!.prepare("UPDATE customer_notifications SET read = 1 WHERE customer_id = ?").run(customerId);
+    }
+  }
+
+  async getCustomerSpendingStats(email: string): Promise<{ totalSpent: number; totalOrders: number; topPlan: string | null }> {
+    let rows: any[] = [];
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "SELECT amount, plan_name FROM transactions WHERE customer_email = $1 AND status = 'success'",
+        [email]
+      );
+      rows = r.rows;
+    } else {
+      rows = sqliteInstance!.prepare(
+        "SELECT amount, plan_name FROM transactions WHERE customer_email = ? AND status = 'success'"
+      ).all(email) as any[];
+    }
+    const totalSpent = rows.reduce((s, r) => s + (r.amount || r.amount || 0), 0);
+    const totalOrders = rows.length;
+    const planCounts: Record<string, number> = {};
+    for (const r of rows) {
+      const pn = r.plan_name || r.planName || "Unknown";
+      planCounts[pn] = (planCounts[pn] || 0) + 1;
+    }
+    const topPlan = Object.entries(planCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    return { totalSpent, totalOrders, topPlan };
   }
 }
 

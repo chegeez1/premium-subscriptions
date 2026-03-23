@@ -8,7 +8,8 @@ import {
   Loader2, ArrowLeft, QrCode, Lock, AlertTriangle,
   ChevronDown, ChevronUp, AlertCircle, Save, Package,
   Wallet, Link2, History, TrendingUp, Gift, ArrowUpCircle, ArrowDownCircle,
-  MessageCircle, Send, PlusCircle, Ticket
+  MessageCircle, Send, PlusCircle, Ticket,
+  Bell, BellDot, ShoppingCart, TrendingDown, Star
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -128,6 +129,25 @@ export default function Dashboard() {
     toast({ title: "Referral link copied!" });
     setTimeout(() => setCopiedReferral(false), 2000);
   }
+
+  const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+
+  const { data: notifData, refetch: refetchNotifs } = useQuery<any>({
+    queryKey: ["/api/customer/notifications"],
+    queryFn: () => customerFetch("/api/customer/notifications"),
+    refetchInterval: 30000,
+  });
+
+  const markReadMutation = useMutation({
+    mutationFn: () => customerFetch("/api/customer/notifications/read", { method: "PUT" }),
+    onSuccess: () => refetchNotifs(),
+  });
+
+  const { data: spendingStats } = useQuery<any>({
+    queryKey: ["/api/customer/stats"],
+    queryFn: () => customerFetch("/api/customer/stats"),
+    enabled: tab === "wallet",
+  });
 
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
   const [newTicketSubject, setNewTicketSubject] = useState("");
@@ -357,15 +377,75 @@ export default function Dashboard() {
               <p className="text-xs text-white/40">{customer?.email}</p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={logout}
-            className="text-white/40 hover:text-white hover:bg-white/5"
-            data-testid="button-logout"
-          >
-            <LogOut className="w-4 h-4 mr-1.5" />Logout
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Notification Bell */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowNotifDropdown(!showNotifDropdown);
+                  if (!showNotifDropdown && (notifData?.unread ?? 0) > 0) markReadMutation.mutate();
+                }}
+                className="relative p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-colors"
+                data-testid="button-notifications"
+              >
+                {(notifData?.unread ?? 0) > 0 ? (
+                  <>
+                    <BellDot className="w-5 h-5 text-indigo-400" />
+                    <span className="absolute top-1 right-1 w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+                  </>
+                ) : (
+                  <Bell className="w-5 h-5" />
+                )}
+              </button>
+              {showNotifDropdown && (
+                <div
+                  className="absolute right-0 top-10 w-80 rounded-xl border border-white/10 shadow-2xl z-50"
+                  style={{ background: "rgba(15,15,25,.97)", backdropFilter: "blur(20px)" }}
+                >
+                  <div className="p-3 border-b border-white/8 flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">Notifications</span>
+                    <button onClick={() => setShowNotifDropdown(false)} className="text-white/30 hover:text-white text-xs">✕</button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {(notifData?.notifications ?? []).length === 0 ? (
+                      <div className="text-center py-8">
+                        <Bell className="w-6 h-6 text-white/15 mx-auto mb-2" />
+                        <p className="text-white/30 text-xs">No notifications yet</p>
+                      </div>
+                    ) : (notifData?.notifications ?? []).map((notif: any) => {
+                      const iconMap: Record<string, string> = { order: "✅", ticket: "💬", wallet: "💰", referral: "🎁" };
+                      const icon = iconMap[notif.type] || "🔔";
+                      return (
+                        <div
+                          key={notif.id}
+                          className={`p-3 border-b border-white/5 last:border-0 ${!notif.read ? "bg-indigo-500/5" : ""}`}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span className="text-base">{icon}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-white">{notif.title}</p>
+                              <p className="text-xs text-white/50 mt-0.5">{notif.message}</p>
+                              <p className="text-xs text-white/25 mt-1">{new Date(notif.createdAt).toLocaleDateString()}</p>
+                            </div>
+                            {!notif.read && <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full mt-1 flex-shrink-0" />}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={logout}
+              className="text-white/40 hover:text-white hover:bg-white/5"
+              data-testid="button-logout"
+            >
+              <LogOut className="w-4 h-4 mr-1.5" />Logout
+            </Button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -518,6 +598,27 @@ export default function Dashboard() {
                   <p className="text-4xl font-bold text-white">KES {(walletData?.balance ?? 0).toLocaleString()}</p>
                   <p className="text-white/40 text-xs mt-2">Earn by referring friends. Balance is applied to purchases.</p>
                 </div>
+
+                {spendingStats && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-xl p-3 border border-white/10 text-center" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <ShoppingCart className="w-4 h-4 text-indigo-400 mx-auto mb-1" />
+                      <p className="text-lg font-bold text-white">{spendingStats.totalOrders ?? 0}</p>
+                      <p className="text-xs text-white/40">Orders</p>
+                    </div>
+                    <div className="rounded-xl p-3 border border-white/10 text-center" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <TrendingDown className="w-4 h-4 text-emerald-400 mx-auto mb-1" />
+                      <p className="text-lg font-bold text-white">KES {(spendingStats.totalSpent ?? 0).toLocaleString()}</p>
+                      <p className="text-xs text-white/40">Total Spent</p>
+                    </div>
+                    <div className="rounded-xl p-3 border border-white/10 text-center" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <Star className="w-4 h-4 text-amber-400 mx-auto mb-1" />
+                      <p className="text-xs font-bold text-white truncate">{spendingStats.topPlan ?? "—"}</p>
+                      <p className="text-xs text-white/40">Fav Plan</p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="rounded-xl p-4 border border-white/10" style={{ background: "rgba(255,255,255,.03)" }}>
                   <h3 className="text-sm font-semibold text-white/70 mb-3">Transaction History</h3>
                   {(walletData?.transactions ?? []).length === 0 ? (

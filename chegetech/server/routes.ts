@@ -216,6 +216,18 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
     return { success: false, error: "No account available - contact support for refund" };
   }
 
+  // ─── Low-stock Telegram alert ─────────────────────────────────────
+  try {
+    const allAccounts = accountManager.getAllAccounts();
+    if (allAccounts) {
+      const planAccounts = allAccounts[transaction.planId] || [];
+      const available = planAccounts.filter((a: any) => !a.fullyUsed && !a.disabled);
+      if (available.length <= 2) {
+        sendTelegramMessage(`⚠️ <b>Low Stock Alert</b>\n\nPlan: <b>${transaction.planName}</b>\nRemaining accounts: <b>${available.length}</b>\n\nPlease restock urgently!`).catch(() => {});
+      }
+    }
+  } catch (_) {}
+
   logDelivery({
     ...logBase,
     method: "account_assignment",
@@ -300,6 +312,19 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
   } catch (refErr: any) {
     console.error("[referral] Error processing referral reward:", refErr.message);
   }
+
+  // ─── In-app notification for customer ────────────────────────────
+  try {
+    const cust = await storage.getCustomerByEmail(transaction.customerEmail);
+    if (cust) {
+      await storage.createNotification(
+        cust.id,
+        "order",
+        "Order Confirmed ✅",
+        `Your ${transaction.planName} subscription is ready. Check your email for credentials.`
+      );
+    }
+  } catch (_) {}
 
   const orderOpts = {
     customerName: transaction.customerName || "Customer",
@@ -1844,6 +1869,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const ticket = await storage.getTicketById(ticketId);
       if (!ticket) return res.status(404).json({ success: false, error: "Ticket not found" });
       const msg = await storage.addMessage({ ticketId, sender: "admin", message });
+      // Notify customer of admin reply
+      try {
+        const customer = await storage.getCustomerByEmail(ticket.customerEmail);
+        if (customer) {
+          await storage.createNotification(customer.id, "ticket", "Support Reply 💬", `Your ticket #${ticketId} received a reply from our team.`);
+        }
+      } catch (_) {}
       res.json({ success: true, message: msg });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1998,6 +2030,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const wallet = await storage.getWallet(customerId);
       const transactions = await storage.getWalletTransactions(customerId);
       res.json({ success: true, balance: wallet.balance, transactions });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Notifications ─────────────────────────────────────────
+  app.get("/api/customer/notifications", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const notifications = await storage.getNotifications(req.customer.id);
+      const unread = notifications.filter((n: any) => !n.read).length;
+      res.json({ success: true, notifications, unread });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.put("/api/customer/notifications/read", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      await storage.markNotificationsRead(req.customer.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Spending Stats ─────────────────────────────────────────
+  app.get("/api/customer/stats", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const stats = await storage.getCustomerSpendingStats(req.customer.email);
+      res.json({ success: true, ...stats });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
