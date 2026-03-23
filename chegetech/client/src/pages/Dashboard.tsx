@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -10,7 +10,7 @@ import {
   Wallet, Link2, History, TrendingUp, Gift, ArrowUpCircle, ArrowDownCircle,
   MessageCircle, Send, PlusCircle, Ticket,
   Bell, BellDot, ShoppingCart, TrendingDown, Star,
-  MapPin, Monitor, Globe, Wifi
+  MapPin, Monitor, Globe, Wifi, Camera, X
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,11 @@ export default function Dashboard() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showCurrentPw, setShowCurrentPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
+
+  // Avatar state
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   // TOTP state
   const [totpStep, setTotpStep] = useState<"idle" | "qr" | "verify">("idle");
@@ -304,6 +309,60 @@ export default function Dashboard() {
     setTimeout(() => setCopiedField(null), 2000);
   }
 
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast({ title: "File too large", description: "Max 5MB allowed", variant: "destructive" }); return; }
+    // Show instant preview
+    const reader = new FileReader();
+    reader.onload = (ev) => setAvatarPreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+    // Upload
+    setAvatarUploading(true);
+    try {
+      const form = new FormData();
+      form.append("avatar", file);
+      const res = await fetch("/api/customer/avatar", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken()}` },
+        body: form,
+      });
+      const data = await res.json();
+      if (data.success) {
+        const stored = getCustomerData();
+        localStorage.setItem("customer_data", JSON.stringify({ ...stored, avatarUrl: data.avatarUrl }));
+        toast({ title: "Profile photo updated!" });
+      } else {
+        toast({ title: "Upload failed", description: data.error, variant: "destructive" });
+        setAvatarPreview(null);
+      }
+    } catch {
+      toast({ title: "Upload failed", variant: "destructive" });
+      setAvatarPreview(null);
+    } finally {
+      setAvatarUploading(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
+    }
+  }
+
+  async function handleAvatarRemove() {
+    setAvatarUploading(true);
+    try {
+      const res = await fetch("/api/customer/avatar", { method: "DELETE", headers: { Authorization: `Bearer ${getToken()}` } });
+      const data = await res.json();
+      if (data.success) {
+        const stored = getCustomerData();
+        localStorage.setItem("customer_data", JSON.stringify({ ...stored, avatarUrl: null }));
+        setAvatarPreview(null);
+        toast({ title: "Profile photo removed" });
+      }
+    } catch {
+      toast({ title: "Failed to remove photo", variant: "destructive" });
+    } finally {
+      setAvatarUploading(false);
+    }
+  }
+
   function handleProfileSave() {
     if (newPassword && newPassword !== confirmPassword) {
       toast({ title: "Passwords don't match", variant: "destructive" }); return;
@@ -373,11 +432,17 @@ export default function Dashboard() {
             <button onClick={() => setLocation("/")} className="text-white/40 hover:text-white transition-colors mr-1" data-testid="link-back-home">
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{
-              background: "linear-gradient(135deg, rgba(99,102,241,.6), rgba(168,85,247,.6))",
-              boxShadow: "0 0 20px rgba(99,102,241,.3)",
-            }}>
-              <User className="w-5 h-5 text-white" />
+            <div
+              className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center cursor-pointer relative group"
+              style={{ background: "linear-gradient(135deg, rgba(99,102,241,.6), rgba(168,85,247,.6))", boxShadow: "0 0 20px rgba(99,102,241,.3)" }}
+              onClick={() => setTab("profile")}
+              title="Edit profile photo"
+            >
+              {(avatarPreview || customer?.avatarUrl) ? (
+                <img src={avatarPreview || customer.avatarUrl} alt="avatar" className="w-full h-full object-cover" />
+              ) : (
+                <User className="w-5 h-5 text-white" />
+              )}
             </div>
             <div>
               <p className="font-bold text-white">{customer?.name || customer?.email}</p>
@@ -1227,7 +1292,83 @@ export default function Dashboard() {
           <div className="space-y-5">
             <div className="mb-2">
               <h2 className="text-lg font-bold text-white">Profile Settings</h2>
-              <p className="text-xs text-white/40 mt-0.5">Update your name or change your password</p>
+              <p className="text-xs text-white/40 mt-0.5">Update your photo, name, or password</p>
+            </div>
+
+            {/* Avatar upload card */}
+            <div className="rounded-2xl border border-white/8 p-5" style={{ background: "rgba(255,255,255,.04)", backdropFilter: "blur(12px)" }}>
+              <div className="flex items-center gap-3 pb-4 border-b border-white/8 mb-5">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(99,102,241,.2)" }}>
+                  <Camera className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <p className="font-semibold text-white">Profile Photo</p>
+                  <p className="text-xs text-white/40">Click the photo to upload a new one</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-5">
+                {/* Clickable avatar */}
+                <div className="relative group shrink-0">
+                  <div
+                    className="w-24 h-24 rounded-2xl overflow-hidden cursor-pointer border-2 border-white/10 group-hover:border-indigo-500/50 transition-colors"
+                    style={{ background: "linear-gradient(135deg, rgba(99,102,241,.3), rgba(168,85,247,.3))" }}
+                    onClick={() => !avatarUploading && avatarInputRef.current?.click()}
+                  >
+                    {(avatarPreview || customer?.avatarUrl) ? (
+                      <img src={avatarPreview || customer.avatarUrl} alt="Profile" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <User className="w-10 h-10 text-white/40" />
+                      </div>
+                    )}
+                    {/* Overlay */}
+                    <div className="absolute inset-0 flex items-center justify-center rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity bg-black/50">
+                      {avatarUploading ? (
+                        <Loader2 className="w-6 h-6 text-white animate-spin" />
+                      ) : (
+                        <Camera className="w-6 h-6 text-white" />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-1 space-y-2">
+                  <p className="text-sm text-white font-medium">{customer?.name || "No name set"}</p>
+                  <p className="text-xs text-white/40">{customer?.email}</p>
+                  <div className="flex gap-2 mt-3">
+                    <Button
+                      size="sm"
+                      onClick={() => avatarInputRef.current?.click()}
+                      disabled={avatarUploading}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white h-8 text-xs"
+                    >
+                      {avatarUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Camera className="w-3.5 h-3.5 mr-1" />}
+                      {customer?.avatarUrl || avatarPreview ? "Change Photo" : "Upload Photo"}
+                    </Button>
+                    {(customer?.avatarUrl || avatarPreview) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleAvatarRemove}
+                        disabled={avatarUploading}
+                        className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-8 text-xs"
+                      >
+                        <X className="w-3.5 h-3.5 mr-1" />Remove
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-white/25 mt-1">JPG, PNG, GIF or WebP · Max 5MB</p>
+                </div>
+              </div>
+
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                className="hidden"
+                onChange={handleAvatarUpload}
+              />
             </div>
 
             <div className="rounded-2xl border border-white/8 p-5 space-y-4" style={{ background: "rgba(255,255,255,.04)", backdropFilter: "blur(12px)" }}>

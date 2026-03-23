@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
@@ -12,7 +12,7 @@ import {
   Terminal, Info, TriangleAlert, Filter, Upload, Download,
   Search, BarChart2, Loader2, FileCheck, ClipboardCheck, Send,
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
-  Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2
+  Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -2393,6 +2393,45 @@ function CustomersTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [avatarTargetId, setAvatarTargetId] = useState<number | null>(null);
+  const adminAvatarInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleAdminAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !avatarTargetId) return;
+    const form = new FormData();
+    form.append("avatar", file);
+    try {
+      const res = await fetch(`/api/admin/customers/${avatarTargetId}/avatar`, {
+        method: "POST",
+        headers: { "x-admin-token": localStorage.getItem("adminToken") || "" },
+        body: form,
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast({ title: "Avatar updated!" });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
+      } else {
+        toast({ title: "Upload failed", description: data.error, variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Upload failed", variant: "destructive" });
+    }
+    setAvatarTargetId(null);
+    if (adminAvatarInputRef.current) adminAvatarInputRef.current.value = "";
+  }
+
+  async function handleAdminAvatarRemove(id: number) {
+    try {
+      const res = await fetch(`/api/admin/customers/${id}/avatar`, {
+        method: "DELETE",
+        headers: { "x-admin-token": localStorage.getItem("adminToken") || "", "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (data.success) { toast({ title: "Avatar removed" }); queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] }); }
+      else toast({ title: "Failed", description: data.error, variant: "destructive" });
+    } catch { toast({ title: "Failed", variant: "destructive" }); }
+  }
 
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["/api/admin/customers"],
@@ -2468,8 +2507,12 @@ function CustomersTab() {
                 <TableRow key={c.id} className="border-white/5 hover:bg-white/3" data-testid={`row-customer-${c.id}`}>
                   <TableCell>
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-indigo-600/20 flex items-center justify-center shrink-0">
-                        <span className="text-indigo-400 font-bold text-xs">{(c.email || "?")[0].toUpperCase()}</span>
+                      <div className="w-8 h-8 rounded-full bg-indigo-600/20 flex items-center justify-center shrink-0 overflow-hidden">
+                        {c.avatarUrl ? (
+                          <img src={c.avatarUrl} alt={c.name || c.email} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-indigo-400 font-bold text-xs">{(c.email || "?")[0].toUpperCase()}</span>
+                        )}
                       </div>
                       <div>
                         <p className="text-sm font-medium text-white" data-testid={`text-customer-email-${c.id}`}>{c.email}</p>
@@ -2500,6 +2543,23 @@ function CustomersTab() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {/* Avatar button */}
+                      <button
+                        onClick={() => { setAvatarTargetId(c.id); setTimeout(() => adminAvatarInputRef.current?.click(), 50); }}
+                        title="Change profile photo"
+                        className="p-1.5 rounded-lg transition-all text-white/30 hover:text-indigo-400 hover:bg-indigo-500/10"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                      </button>
+                      {c.avatarUrl && (
+                        <button
+                          onClick={() => handleAdminAvatarRemove(c.id)}
+                          title="Remove profile photo"
+                          className="p-1.5 rounded-lg transition-all text-white/30 hover:text-red-400 hover:bg-red-500/10"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       {!c.emailVerified && !c.suspended && (
                         <button
                           onClick={() => verifyMutation.mutate(c.id)}
@@ -2532,6 +2592,14 @@ function CustomersTab() {
           </Table>
         </div>
       )}
+      {/* Hidden file input for admin avatar upload */}
+      <input
+        ref={adminAvatarInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        className="hidden"
+        onChange={handleAdminAvatarUpload}
+      />
     </>
   );
 }

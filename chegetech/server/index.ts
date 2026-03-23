@@ -3,6 +3,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { initializeDatabase, migrateJsonToDb, storage } from "./storage";
+import path from "path";
+import fs from "fs";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -23,6 +25,13 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// Serve uploaded avatars statically
+const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+const AVATARS_DIR = path.join(UPLOADS_DIR, "avatars");
+if (!fs.existsSync(AVATARS_DIR)) fs.mkdirSync(AVATARS_DIR, { recursive: true });
+app.use("/uploads", express.static(UPLOADS_DIR));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

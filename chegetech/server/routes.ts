@@ -4,6 +4,9 @@ import crypto from "crypto";
 import axios from "axios";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import { storage, dbSettingsGet, dbSettingsSet } from "./storage";
 import { accountManager } from "./accounts";
 import { sendAccountEmail, sendPasswordResetEmail, sendSuspensionEmail, sendUnsuspensionEmail, sendBulkEmail } from "./email";
@@ -1188,7 +1191,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       notifyNewCustomer({ name: customer.name || "", email: customer.email }).catch(() => {});
 
-      res.json({ success: true, token, customer: { id: customer.id, email: customer.email, name: customer.name } });
+      res.json({ success: true, token, customer: { id: customer.id, email: customer.email, name: customer.name, avatarUrl: customer.avatarUrl || null } });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1237,7 +1240,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         } catch (_) {}
       })();
 
-      res.json({ success: true, token, customer: { id: customer.id, email: customer.email, name: customer.name } });
+      res.json({ success: true, token, customer: { id: customer.id, email: customer.email, name: customer.name, avatarUrl: customer.avatarUrl || null } });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1308,7 +1311,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Customer: Me ─────────────────────────────────────────────────────────
   app.get("/api/auth/me", customerAuthMiddleware, (req: any, res) => {
     const c = req.customer;
-    res.json({ success: true, customer: { id: c.id, email: c.email, name: c.name } });
+    res.json({ success: true, customer: { id: c.id, email: c.email, name: c.name, avatarUrl: c.avatarUrl || null } });
   });
 
   // ─── Customer: Order history ──────────────────────────────────────────────
@@ -1378,6 +1381,101 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ success: true, customer: { id: updated?.id, email: updated?.email, name: updated?.name } });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Avatar upload setup ─────────────────────────────────────────────────
+  const AVATARS_DIR = path.join(process.cwd(), "uploads", "avatars");
+  if (!fs.existsSync(AVATARS_DIR)) fs.mkdirSync(AVATARS_DIR, { recursive: true });
+
+  const avatarStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, AVATARS_DIR),
+    filename: (req: any, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+      cb(null, `${req.customer?.id || "admin"}-${Date.now()}${ext}`);
+    },
+  });
+  const avatarUpload = multer({
+    storage: avatarStorage,
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      cb(null, allowed.includes(file.mimetype));
+    },
+  });
+
+  // ─── Customer: Upload avatar ──────────────────────────────────────────────
+  app.post("/api/customer/avatar", customerAuthMiddleware, (req: any, res) => {
+    avatarUpload.single("avatar")(req, res, async (err) => {
+      if (err) return res.status(400).json({ success: false, error: err.message || "Upload failed" });
+      if (!req.file) return res.status(400).json({ success: false, error: "No image file provided" });
+      try {
+        const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+        // Remove old avatar file if present
+        const customer = req.customer;
+        if (customer.avatarUrl) {
+          const oldPath = path.join(process.cwd(), customer.avatarUrl.replace(/^\//, ""));
+          if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+        const updated = await storage.updateCustomer(customer.id, { avatarUrl });
+        res.json({ success: true, avatarUrl, customer: { id: updated?.id, email: updated?.email, name: updated?.name, avatarUrl: updated?.avatarUrl } });
+      } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+      }
+    });
+  });
+
+  // ─── Customer: Remove avatar ──────────────────────────────────────────────
+  app.delete("/api/customer/avatar", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const customer = req.customer;
+      if (customer.avatarUrl) {
+        const oldPath = path.join(process.cwd(), customer.avatarUrl.replace(/^\//, ""));
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+      const updated = await storage.updateCustomer(customer.id, { avatarUrl: null as any });
+      res.json({ success: true, customer: { id: updated?.id, email: updated?.email, name: updated?.name, avatarUrl: null } });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // ─── Admin: Upload avatar for a customer ─────────────────────────────────
+  app.post("/api/admin/customers/:id/avatar", adminAuthMiddleware, (req: any, res) => {
+    avatarUpload.single("avatar")(req, res, async (err) => {
+      if (err) return res.status(400).json({ success: false, error: err.message || "Upload failed" });
+      if (!req.file) return res.status(400).json({ success: false, error: "No image file provided" });
+      try {
+        const customerId = parseInt(req.params.id);
+        const customer = await storage.getCustomerById(customerId);
+        if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
+        if (customer.avatarUrl) {
+          const oldPath = path.join(process.cwd(), customer.avatarUrl.replace(/^\//, ""));
+          if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+        const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+        const updated = await storage.updateCustomer(customerId, { avatarUrl });
+        res.json({ success: true, avatarUrl, customer: { id: updated?.id, email: updated?.email, avatarUrl: updated?.avatarUrl } });
+      } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+      }
+    });
+  });
+
+  // ─── Admin: Remove avatar for a customer ─────────────────────────────────
+  app.delete("/api/admin/customers/:id/avatar", adminAuthMiddleware, async (req, res) => {
+    try {
+      const customerId = parseInt(req.params.id);
+      const customer = await storage.getCustomerById(customerId);
+      if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
+      if (customer.avatarUrl) {
+        const oldPath = path.join(process.cwd(), customer.avatarUrl.replace(/^\//, ""));
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+      await storage.updateCustomer(customerId, { avatarUrl: null as any });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 
@@ -1489,6 +1587,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         emailVerified: c.emailVerified,
         suspended: c.suspended,
         totpEnabled: c.totpEnabled,
+        avatarUrl: c.avatarUrl || null,
         createdAt: c.createdAt,
       }));
       res.json({ success: true, customers: safeList });

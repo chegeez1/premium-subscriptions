@@ -38,6 +38,7 @@ export const customers = sqliteTable("customers", {
   totpEnabled: integer("totp_enabled", { mode: "boolean" }).default(false),
   passwordResetCode: text("password_reset_code"),
   passwordResetExpires: text("password_reset_expires"),
+  avatarUrl: text("avatar_url"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
 });
 
