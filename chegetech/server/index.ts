@@ -1,8 +1,6 @@
+import dotenv from "dotenv";
 // Load .env in development — Render injects env vars natively in production
-if (process.env.NODE_ENV !== "production") {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  require("dotenv").config();
-}
+if (process.env.NODE_ENV !== "production") dotenv.config();
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";

@@ -4599,7 +4599,7 @@ function DomainsTab() {
   const authFetchD = (url: string, opts: any = {}) =>
     fetch(url, {
       ...opts,
-      headers: { "Content-Type": "application/json", "x-admin-token": localStorage.getItem("adminToken") || "", ...(opts.headers || {}) },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken") || ""}`, ...(opts.headers || {}) },
       body: opts.body,
     }).then((r) => r.json());
 
