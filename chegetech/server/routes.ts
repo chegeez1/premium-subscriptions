@@ -368,10 +368,13 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
       const referrerId = dbSettingsGet(`referral_by_${transaction.customerEmail}`);
       if (referrerId && referrerId !== "") {
         const ONGOING_REWARD = 50;
-        const stats = await storage.getReferralStats(referrerId);
+        const referrerIdNum = parseInt(referrerId, 10);
+        if (!isNaN(referrerIdNum)) {
+        const stats = await storage.getReferralStats(referrerIdNum);
         const tierInfo = getAffiliateTier(stats.completedReferrals);
         const ongoingReward = Math.round(ONGOING_REWARD * tierInfo.multiplier);
-        await storage.creditWallet(referrerId, ongoingReward, `${tierInfo.label} ongoing commission — ${transaction.customerEmail} purchased ${transaction.planName}`, transaction.reference);
+        await storage.creditWallet(referrerIdNum, ongoingReward, `${tierInfo.label} ongoing commission — ${transaction.customerEmail} purchased ${transaction.planName}`, transaction.reference);
+        }
       }
     }
   } catch (refErr: any) {
@@ -1005,7 +1008,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           : `Resend failed: ${emailResult.error || "unknown error"}`,
         metadata: { recipientEmail: tx.customerEmail, triggeredBy: "admin" },
       });
-      logAdminAction({ action: `Credentials resent to ${tx.customerEmail} for ${tx.planName}`, category: "transactions", status: "success" });
+      logAdminAction({ action: `Credentials resent to ${tx.customerEmail} for ${tx.planName}`, category: "transactions", details: `Transaction: ${tx.reference}`, status: "success" });
       res.json({ success: true, emailSent: emailResult.success });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1042,7 +1045,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           method: verificationMethod,
         });
       } else {
-        logAdminAction({ action: `Manual verification attempted for ${tx.reference}`, category: "transactions", status: "failed", details: delivery.error });
+        logAdminAction({ action: `Manual verification attempted for ${tx.reference}`, category: "transactions", status: "error", details: delivery.error || "Failed to deliver account" });
         res.json({ success: false, error: delivery.error || "Failed to deliver account" });
       }
     } catch (err: any) {
@@ -1239,12 +1242,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const passwordHash = await bcrypt.hash(password, 10);
       const verificationCode = generateVerificationCode();
-      const verificationExpires = new Date(Date.now() + 15 * 60 * 1000);
+      const verificationExpiresDate = new Date(Date.now() + 15 * 60 * 1000);
+      const verificationExpires = verificationExpiresDate.toISOString();
 
       if (existing && !existing.emailVerified) {
         await storage.updateCustomer(existing.id, { passwordHash, verificationCode, verificationExpires, name });
       } else {
-        await storage.createCustomer({ email, name, passwordHash, verificationCode, verificationExpires });
+        await storage.createCustomer({ email, name, passwordHash, verificationCode, verificationExpires: verificationExpiresDate });
       }
 
       if (referralCode && typeof referralCode === "string") {
@@ -1348,7 +1352,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const code = generateVerificationCode();
-      const expires = new Date(Date.now() + 15 * 60 * 1000);
+      const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       await storage.updateCustomer(customer.id, { passwordResetCode: code, passwordResetExpires: expires });
       res.json({ success: true, message: "Reset code sent to your email" });
       sendPasswordResetEmail(email, code, customer.name || undefined).catch(() => {});
@@ -1748,14 +1752,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (emailList.length === 0) return res.status(400).json({ success: false, error: "No recipients found" });
       if (emailList.length > 500) return res.status(400).json({ success: false, error: "Maximum 500 recipients per blast" });
 
-      const uniqueEmails = [...new Set(emailList.map((e: string) => e.toLowerCase().trim()))].filter(Boolean);
+      const uniqueEmails = Array.from(new Set(emailList.map((e: string) => e.toLowerCase().trim()))).filter(Boolean);
 
       const htmlContent = content
         .replace(/\n/g, "<br>")
         .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
 
       const result = await sendBulkEmail(uniqueEmails, subject, htmlContent);
-      logAdminAction({ action: "Bulk email sent", category: "email", details: `Subject: "${subject}" — Sent: ${result.sent}, Failed: ${result.failed}`, status: result.failed > 0 ? "warning" : "success" });
+      logAdminAction({ action: "Bulk email sent", category: "settings", details: `Subject: "${subject}" — Sent: ${result.sent}, Failed: ${result.failed}`, status: result.failed > 0 ? "warning" : "success" });
       const success = result.sent > 0;
       res.json({ success, sent: result.sent, failed: result.failed, total: uniqueEmails.length, errors: result.errors.slice(0, 5) });
     } catch (err: any) {
@@ -1891,7 +1895,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const { phoneNumber } = req.body;
     try {
       await connectWhatsApp(phoneNumber);
-      logAdminAction({ action: "WhatsApp connection initiated", category: "settings", status: "success" });
+      logAdminAction({ action: "WhatsApp connection initiated", category: "settings", details: `Phone: ${phoneNumber}`, status: "success" });
       res.json({ success: true, message: "Connecting... scan the QR code or use the pairing code." });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1902,7 +1906,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/admin/whatsapp/disconnect", adminAuthMiddleware, async (_req, res) => {
     try {
       await disconnectWhatsApp();
-      logAdminAction({ action: "WhatsApp disconnected", category: "settings", status: "warning" });
+      logAdminAction({ action: "WhatsApp disconnected", category: "settings", details: "Admin triggered disconnect", status: "warning" });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1921,7 +1925,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     try {
       await sendWhatsAppNotification(adminPhone, "✅ *Chege Tech WhatsApp Bot is active!*\n\nYou will receive order notifications here.");
-      logAdminAction({ action: "WhatsApp test message sent", category: "settings", status: "success" });
+      logAdminAction({ action: "WhatsApp test message sent", category: "settings", details: `Sent to: ${adminPhone}`, status: "success" });
       res.json({ success: true, message: "Test message sent! Check your WhatsApp." });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1935,7 +1939,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     const result = await sendTelegramMessage(`✅ <b>Chege Tech Telegram Connected!</b>\n\nAdmin notifications are now active. You'll receive alerts for new orders, registrations, and low stock.`);
     if (result.success) {
-      logAdminAction({ action: "Telegram test message sent", category: "settings", status: "success" });
+      logAdminAction({ action: "Telegram test message sent", category: "settings", details: "Admin triggered test notification", status: "success" });
       res.json({ success: true, message: "Test message sent! Check your Telegram." });
     } else {
       res.status(400).json({ success: false, error: result.error });
@@ -1969,7 +1973,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const passwordHash = await bcrypt.hash(password, 10);
       const subAdmin = await storage.createSubAdmin({ email, name, passwordHash, permissions: permissions || [] });
-      logAdminAction({ action: `Sub-admin created: ${email}`, category: "settings", status: "success" });
+      logAdminAction({ action: `Sub-admin created: ${email}`, category: "settings", details: `Name: ${name || "—"}, permissions: ${(permissions || []).join(", ") || "none"}`, status: "success" });
       res.json({ success: true, subAdmin: { ...subAdmin, passwordHash: undefined } });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1988,7 +1992,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const updated = await storage.updateSubAdmin(id, updateData);
       if (!updated) return res.status(404).json({ success: false, error: "Sub-admin not found" });
-      logAdminAction({ action: `Sub-admin updated: ${updated.email}`, category: "settings", status: "success" });
+      logAdminAction({ action: `Sub-admin updated: ${updated.email}`, category: "settings", details: `ID: ${id}`, status: "success" });
       res.json({ success: true, subAdmin: { ...updated, passwordHash: undefined } });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -2001,7 +2005,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const subAdmin = await storage.getSubAdminById(id);
       if (!subAdmin) return res.status(404).json({ success: false, error: "Sub-admin not found" });
       await storage.deleteSubAdmin(id);
-      logAdminAction({ action: `Sub-admin deleted: ${subAdmin.email}`, category: "settings", status: "warning" });
+      logAdminAction({ action: `Sub-admin deleted: ${subAdmin.email}`, category: "settings", details: `ID: ${id}`, status: "warning" });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -2379,7 +2383,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/admin/vps/:id/ping", adminAuthMiddleware, superAdminOnly, async (req, res) => {
     try {
       const result = await vpsManager.ping(req.params.id);
-      res.json({ success: true, ...result });
+      res.json({ success: true, ping: result });
     } catch (err: any) {
       res.status(500).json({ success: false });
     }
@@ -2505,7 +2509,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const entry: CustomDomain = { id: uuidv4(), domain: clean, label: label || clean, addedAt: new Date().toISOString(), primary: existing.length === 0 };
     existing.push(entry);
     saveDomains(existing);
-    logAdminAction({ action: `Custom domain added: ${clean}`, category: "settings", status: "success" });
+    logAdminAction({ action: `Custom domain added: ${clean}`, category: "settings", details: `Label: ${label || clean}`, status: "success" });
     res.json({ success: true, domain: entry });
   });
 
@@ -2522,7 +2526,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const filtered = all.filter((d) => d.id !== req.params.id);
     if (target.primary && filtered.length > 0) filtered[0].primary = true;
     saveDomains(filtered);
-    logAdminAction({ action: `Custom domain removed: ${target.domain}`, category: "settings", status: "warning" });
+    logAdminAction({ action: `Custom domain removed: ${target.domain}`, category: "settings", details: `ID: ${target.id}`, status: "warning" });
     res.json({ success: true });
   });
 
@@ -2824,7 +2828,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const all = getCampaigns();
       all.unshift(campaign);
       saveCampaigns(all);
-      logAdminAction({ action: `Campaign created: ${campaign.name}`, category: "settings", status: "success" });
+      logAdminAction({ action: `Campaign created: ${campaign.name}`, category: "settings", details: `Segment: ${campaign.segment}, Send now: ${sendNow}`, status: "success" });
 
       if (sendNow) {
         const { checkScheduledCampaigns } = await import("./cron");
@@ -2866,7 +2870,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const allKeys = await storage.getAllApiKeys?.() || [];
     const found = allKeys.find((k: any) => k.key === apiKey && k.active);
     if (!found) return res.status(401).json({ success: false, error: "Invalid or inactive API key" });
-    const customer = await storage.getCustomerById(found.customerId);
+    const customer = await storage.getCustomerById(found.customerId!);
     if (!customer || customer.suspended) return res.status(403).json({ success: false, error: "Account suspended or not found" });
     req.resellerCustomer = customer;
     next();
@@ -2966,7 +2970,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!email) return res.status(400).json({ success: false, error: "Email required" });
       const result = await banCustomerByEmail(email, reason || "Flagged by security bot");
       if (result.success) {
-        logAdminAction(req.admin?.email || "bot", "ban_customer", `Security bot banned: ${email} — ${reason || "unusual activity"}`);
+        logAdminAction({ action: `Security bot banned: ${email}`, category: "customers", details: reason || "Flagged by security bot — unusual activity", status: "warning" });
       }
       res.json(result);
     } catch (err: any) {

@@ -16,6 +16,7 @@ export interface CredentialsOverride {
   whatsappVerifyToken?: string;
   whatsappAdminPhone?: string;
   openaiApiKey?: string;
+  externalDatabaseUrl?: string;
 }
 
 export function getCredentialsOverride(): CredentialsOverride {

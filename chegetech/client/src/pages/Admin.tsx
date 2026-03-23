@@ -43,7 +43,7 @@ function authHeaders() {
 async function authFetch(url: string, options: RequestInit = {}) {
   const res = await fetch(url, {
     ...options,
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) },
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) } as HeadersInit,
   });
   if (res.status === 401) { clearToken(); window.location.reload(); }
   return res.json();
@@ -368,7 +368,7 @@ function AdminMonitorBot() {
     try {
       const res = await authFetch("/api/admin/bot/ban", { method: "POST", body: JSON.stringify({ email, reason }) });
       if (res.success) {
-        setBannedEmails(prev => new Set([...prev, email]));
+        setBannedEmails(prev => new Set<string>(Array.from(prev).concat([email])));
         setThreats(prev => prev.map(t => t.email === email ? { ...t, canBan: false } : t));
       }
     } catch { /* silent */ }
@@ -777,7 +777,9 @@ function AdminProfileSection({ inputCls }: { inputCls: string }) {
   const [form, setForm] = useState<{ name: string; avatar: string; bio: string } | null>(null);
   const [dirty, setDirty] = useState(false);
 
-  if (data?.success && !form) setForm({ name: data.name || "", avatar: data.avatar || "CT", bio: data.bio || "" });
+  useEffect(() => {
+    if (data?.success && !form) setForm({ name: data.name || "", avatar: data.avatar || "CT", bio: data.bio || "" });
+  }, [data]);
 
   function update(key: string, value: string) {
     setForm(prev => prev ? { ...prev, [key]: value } : prev);
@@ -1011,7 +1013,9 @@ function SettingsTab() {
   });
   const [appCfg, setAppCfg] = useState<any>(null);
   const [cfgDirty, setCfgDirty] = useState(false);
-  if (configData?.config && !appCfg) setAppCfg(configData.config);
+  useEffect(() => {
+    if (configData?.config && !appCfg) setAppCfg(configData.config);
+  }, [configData]);
 
   const saveCfgMutation = useMutation({
     mutationFn: () => authFetch("/api/admin/app-config", { method: "PUT", body: JSON.stringify(appCfg) }),
