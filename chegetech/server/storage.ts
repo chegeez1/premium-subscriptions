@@ -168,6 +168,7 @@ export async function initializeDatabase() {
 
       // Migrate: add avatar_url column if missing (safe for existing PG DBs)
       await pgPool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS avatar_url TEXT");
+      await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS expires_at TEXT");
 
       const drizzlePgModule = await import("drizzle-orm/node-postgres");
       const drizzlePg = drizzlePgModule.drizzle;
@@ -345,6 +346,8 @@ function initSqlite() {
   `);
   // Migrate: add avatar_url column if missing (safe for existing DBs)
   try { sqliteInstance!.prepare("ALTER TABLE customers ADD COLUMN avatar_url TEXT").run(); } catch {}
+  // Migrate: add expires_at to transactions
+  try { sqliteInstance!.prepare("ALTER TABLE transactions ADD COLUMN expires_at TEXT").run(); } catch {}
   console.log("[db] Connected to SQLite");
 }
 

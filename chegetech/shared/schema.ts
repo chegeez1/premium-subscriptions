@@ -21,6 +21,7 @@ export const transactions = sqliteTable("transactions", {
   emailSent: integer("email_sent", { mode: "boolean" }).default(false),
   accountAssigned: integer("account_assigned", { mode: "boolean" }).default(false),
   paystackReference: text("paystack_reference"),
+  expiresAt: text("expires_at"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").default(sql`(datetime('now'))`),
 });

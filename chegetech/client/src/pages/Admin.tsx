@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "emailblast" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
   success: { label: "Completed", icon: CheckCircle, color: "text-emerald-400" },
@@ -101,6 +101,7 @@ export default function Admin() {
     { id: "apikeys", label: "API Keys", icon: Key },
     { id: "customers", label: "Customers", icon: Users },
     { id: "emailblast", label: "Email Blast", icon: Send },
+    { id: "campaigns", label: "Campaigns", icon: Send },
     { id: "support", label: "Support", icon: MessageCircle },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
@@ -185,6 +186,7 @@ export default function Admin() {
           {activeTab === "apikeys" && <ApiKeysTab />}
           {activeTab === "customers" && <CustomersTab />}
           {activeTab === "emailblast" && <EmailBlastTab />}
+          {activeTab === "campaigns" && <CampaignsTab />}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "logs" && <LogsTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
@@ -2686,6 +2688,17 @@ function CustomersTab() {
             className="glass border-white/10 bg-white/5 text-white placeholder:text-white/25 w-60"
             data-testid="input-search-customers"
           />
+          <Button size="sm" variant="outline" onClick={() => {
+            const link = document.createElement("a");
+            link.href = "/api/admin/export/customers";
+            fetch("/api/admin/export/customers", { headers: { Authorization: `Bearer ${getToken()}` } })
+              .then(r => r.blob()).then(blob => {
+                const url = URL.createObjectURL(blob);
+                link.href = url; link.download = "customers.csv"; link.click(); URL.revokeObjectURL(url);
+              });
+          }} className="glass border-white/10 text-white/60 hover:text-white shrink-0">
+            <Download className="w-3.5 h-3.5 mr-1.5" />Export
+          </Button>
         </div>
       </div>
 
@@ -4288,6 +4301,148 @@ function DomainsTab() {
           ))}
         </ol>
       </div>
+    </div>
+  );
+}
+
+function CampaignsTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [segment, setSegment] = useState("all");
+  const [name, setName] = useState("");
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/campaigns"],
+    queryFn: () => authFetch("/api/admin/campaigns"),
+    refetchInterval: 10000,
+  });
+
+  async function createCampaign(sendNow = false) {
+    if (!subject.trim() || !body.trim()) { toast({ title: "Subject and body are required", variant: "destructive" }); return; }
+    setCreating(true);
+    try {
+      const res = await authFetch("/api/admin/campaigns", {
+        method: "POST",
+        body: JSON.stringify({ name: name || subject, subject, body, segment, scheduledAt: scheduledAt || undefined, sendNow }),
+      });
+      if (res.success) {
+        toast({ title: sendNow ? "Campaign sending..." : "Campaign saved!" });
+        setSubject(""); setBody(""); setName(""); setScheduledAt(""); setShowForm(false);
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/campaigns"] });
+      } else toast({ title: res.error || "Failed", variant: "destructive" });
+    } catch { toast({ title: "Failed", variant: "destructive" }); }
+    finally { setCreating(false); }
+  }
+
+  async function sendNow(id: string) {
+    const res = await authFetch(`/api/admin/campaigns/${id}/send`, { method: "POST" });
+    if (res.success) { toast({ title: "Sending..." }); queryClient.invalidateQueries({ queryKey: ["/api/admin/campaigns"] }); }
+    else toast({ title: res.error || "Failed", variant: "destructive" });
+  }
+
+  async function deleteCampaign(id: string) {
+    const res = await authFetch(`/api/admin/campaigns/${id}`, { method: "DELETE" });
+    if (res.success) { toast({ title: "Deleted" }); queryClient.invalidateQueries({ queryKey: ["/api/admin/campaigns"] }); }
+  }
+
+  const campaigns = data?.campaigns ?? [];
+  const segmentLabels: Record<string, string> = { all: "All Customers", active: "Active Buyers", recent: "Last 30 Days" };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-white">Email Campaigns</h1>
+          <p className="text-xs text-white/40 mt-0.5">Schedule or send bulk email campaigns to customer segments</p>
+        </div>
+        <Button onClick={() => setShowForm(!showForm)} className="bg-indigo-600 hover:bg-indigo-500 text-white">
+          <Plus className="w-4 h-4 mr-2" />New Campaign
+        </Button>
+      </div>
+
+      {showForm && (
+        <div className="glass-card rounded-2xl p-6 space-y-4 border border-indigo-500/20">
+          <h2 className="text-base font-bold text-white">Create Campaign</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-white/40 uppercase mb-1.5 block">Campaign Name</label>
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. December Promo" className="glass border-white/10 bg-white/5 text-white placeholder:text-white/25" />
+            </div>
+            <div>
+              <label className="text-xs text-white/40 uppercase mb-1.5 block">Audience</label>
+              <select value={segment} onChange={e => setSegment(e.target.value)} className="w-full h-10 px-3 rounded-lg glass border border-white/10 bg-white/5 text-white text-sm">
+                {Object.entries(segmentLabels).map(([v, l]) => <option key={v} value={v} className="bg-gray-900">{l}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-white/40 uppercase mb-1.5 block">Subject Line</label>
+            <Input value={subject} onChange={e => setSubject(e.target.value)} placeholder="🔥 Special offer just for you!" className="glass border-white/10 bg-white/5 text-white placeholder:text-white/25" />
+          </div>
+          <div>
+            <label className="text-xs text-white/40 uppercase mb-1.5 block">Email Body</label>
+            <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} placeholder="Write your email message here..." className="w-full px-3 py-2.5 rounded-lg glass border border-white/10 bg-white/5 text-white placeholder:text-white/25 text-sm resize-none focus:outline-none focus:border-indigo-500/50" />
+          </div>
+          <div>
+            <label className="text-xs text-white/40 uppercase mb-1.5 block">Schedule (optional — leave empty to save as draft)</label>
+            <Input type="datetime-local" value={scheduledAt} onChange={e => setScheduledAt(e.target.value)} className="glass border-white/10 bg-white/5 text-white" />
+          </div>
+          <div className="flex gap-3">
+            <Button onClick={() => createCampaign(false)} disabled={creating} variant="outline" className="glass border-white/10 text-white/70 hover:text-white">
+              {scheduledAt ? "Schedule" : "Save Draft"}
+            </Button>
+            <Button onClick={() => createCampaign(true)} disabled={creating} className="bg-emerald-600 hover:bg-emerald-500 text-white">
+              {creating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Sending...</> : "Send Now"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-16 glass rounded-xl animate-pulse" />)}</div>
+      ) : campaigns.length === 0 ? (
+        <div className="text-center py-20 glass-card rounded-2xl">
+          <Send className="w-10 h-10 text-white/20 mx-auto mb-3" />
+          <p className="text-white/40">No campaigns yet. Create your first one!</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {campaigns.map((c: any) => (
+            <div key={c.id} className="glass-card rounded-xl p-4 flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="font-semibold text-white text-sm truncate">{c.name}</p>
+                  <Badge className={`text-xs px-2 py-0 border-0 ${
+                    c.status === "sent" ? "bg-emerald-500/20 text-emerald-400" :
+                    c.status === "sending" ? "bg-blue-500/20 text-blue-400" :
+                    c.status === "scheduled" ? "bg-amber-500/20 text-amber-400" :
+                    "bg-white/5 text-white/40"}`}>{c.status}</Badge>
+                </div>
+                <p className="text-xs text-white/40 truncate">{c.subject}</p>
+                <p className="text-xs text-white/30 mt-0.5">
+                  {segmentLabels[c.segment] ?? c.segment}
+                  {c.sentCount && ` · ${c.sentCount} sent`}
+                  {c.scheduledAt && c.status === "scheduled" && ` · Scheduled ${new Date(c.scheduledAt).toLocaleString()}`}
+                  {c.sentAt && ` · Sent ${new Date(c.sentAt).toLocaleDateString()}`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {(c.status === "draft" || c.status === "scheduled") && (
+                  <Button size="sm" onClick={() => sendNow(c.id)} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs h-7 px-3">Send Now</Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => deleteCampaign(c.id)} className="text-red-400/60 hover:text-red-400 hover:bg-red-500/10 h-7 w-7 p-0">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

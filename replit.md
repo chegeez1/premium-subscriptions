@@ -9,19 +9,31 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 Standalone Express + React subscription store app (NOT in pnpm workspace). Runs on port 5000.
 
 **Key features added:**
-1. **Referral System** — Customers get unique referral links. Referrer earns KES 100 wallet credit when referee makes first purchase. Referee gets KES 50 welcome bonus.
-2. **Customer Wallet** — Balance tracking with credit/debit history. Stored in `wallets` and `wallet_transactions` SQLite/PG tables.
-3. **Payment History** — Dashboard tab showing all subscription purchases + wallet transactions.
-4. **Replit AI Chatbot** — Uses `AI_INTEGRATIONS_OPENAI_BASE_URL` and `AI_INTEGRATIONS_OPENAI_API_KEY` env vars (Replit's built-in AI proxy). No OpenAI API key needed.
+1. **Referral System** — Ongoing commissions: referrer earns coins on EVERY purchase by referred customer. Affiliate tiers: Silver (5+ refs, 1.25x), Gold (15+, 1.5x), Platinum (30+, 2x). Tier badge shown in Dashboard.
+2. **Customer Wallet** — Balance tracking with top-up via Paystack and wallet payment in checkout. Stored in `wallets` and `wallet_transactions` SQLite/PG tables.
+3. **Wallet Top-Up** — `POST /api/customer/wallet/topup/initiate` + `/verify`; Paystack popup in Dashboard; wallet payment option in Checkout.tsx.
+4. **PDF Receipts** — `GET /api/customer/orders/:reference/receipt` streams a PDFKit receipt. Download button on Dashboard order cards.
+5. **CSV Exports** — Admin routes: `GET /api/admin/export/customers`, `/orders`, `/transactions`. Export buttons in Admin Customers tab and Transactions tab.
+6. **Auto-Expiry Tracking** — `expires_at` column on transactions. `deliverAccount()` sets expiry from plan duration.
+7. **Cron Jobs** — Daily 9am expiry alerts via email; Sunday 8am weekly Telegram/email report; every-5min campaign scheduler (`chegetech/server/cron.ts`).
+8. **Dark/Light Mode** — Toggle button (sun/moon) in Store.tsx header; theme stored in localStorage; `ct-light` CSS class in index.css applies light theme across storefront.
+9. **Email Campaigns** — Admin Campaigns tab: create/schedule/send bulk emails by segment (all/active/recent). Stored in settings, cron picks up scheduled ones.
+10. **Public Reseller API** — `GET /api/v1/plans`, `POST /api/v1/orders` with X-API-Key auth for resellers.
+11. **Replit AI Chatbot** — Uses `AI_INTEGRATIONS_OPENAI_BASE_URL` and `AI_INTEGRATIONS_OPENAI_API_KEY` env vars.
 
-**New dashboard tabs:** Wallet, Referral, Payments (in addition to existing My Products, API Keys, Security, Profile)
+**Dashboard tabs:** Wallet, Referral (with tier badge), Payments, My Products, API Keys, Security, Profile
 
-**New API endpoints:**
-- `GET /api/customer/wallet` — balance + transaction history
-- `GET /api/customer/referral` — referral code, link, stats
-- `GET /api/customer/payment-history` — orders + wallet transactions
+**Admin tabs:** Dashboard, Plans, Accounts, Promos, Transactions, API Keys, Customers, Email Blast, Campaigns, Support, Logs, Settings, Sub-Admins, Geo Restrict, VPS Manager, Domains
 
-**New DB tables:** `wallets`, `wallet_transactions`, `referrals` (both SQLite and PG)
+**New API endpoints (server):**
+- `POST /api/customer/wallet/topup/initiate` + `/verify` — Paystack wallet top-up
+- `POST /api/customer/wallet/pay` — pay for order from wallet balance
+- `GET /api/customer/orders/:reference/receipt` — PDF receipt download
+- `GET /api/admin/export/customers|orders|transactions` — CSV exports
+- `GET/POST/DELETE /api/admin/campaigns` + `/:id/send` — campaign management
+- `GET /api/v1/plans`, `POST /api/v1/orders` — public reseller API
+
+**New DB tables:** `wallets`, `wallet_transactions`, `referrals` (both SQLite and PG); `transactions.expires_at` column added
 
 ## Stack
 

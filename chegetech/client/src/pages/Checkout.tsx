@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ArrowLeft, CheckCircle, Lock, Mail, User, Zap, CreditCard,
-  AlertCircle, BadgePercent, Tag, X,
+  AlertCircle, BadgePercent, Tag, X, Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,8 @@ interface Plan {
   categoryKey?: string;
 }
 
+function getCustomerToken() { try { return localStorage.getItem("customer_token") || ""; } catch { return ""; } }
+
 export default function Checkout() {
   const [, setLocation] = useLocation();
   const search = useSearch();
@@ -51,6 +53,7 @@ export default function Checkout() {
   const planId = params.get("planId") ?? "";
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [useWallet, setUseWallet] = useState(false);
 
   const [promoInput, setPromoInput] = useState("");
   const [appliedPromo, setAppliedPromo] = useState<{
@@ -59,8 +62,18 @@ export default function Checkout() {
   const [promoError, setPromoError] = useState("");
   const [promoLoading, setPromoLoading] = useState(false);
 
+  const customerToken = getCustomerToken();
+
   const { data: plansData, isLoading } = useQuery<{ categories: Record<string, any> }>({ queryKey: ["/api/plans"] });
   const { data: configData } = useQuery<{ paystackPublicKey: string | null; paystackConfigured: boolean }>({ queryKey: ["/api/config"] });
+  const { data: dashData } = useQuery<any>({
+    queryKey: ["/api/customer/dashboard"],
+    queryFn: async () => {
+      const r = await fetch("/api/customer/dashboard", { headers: { Authorization: `Bearer ${customerToken}` } });
+      return r.json();
+    },
+    enabled: !!customerToken,
+  });
 
   let selectedPlan: (Plan & { categoryName?: string }) | null = null;
   if (plansData?.categories) {
@@ -141,9 +154,27 @@ export default function Checkout() {
     handler.openIframe();
   }
 
+  const walletMutation = useMutation({
+    mutationFn: async (data: CheckoutForm) => {
+      const r = await fetch("/api/customer/wallet/pay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
+        body: JSON.stringify({ planId, email: data.email, customerName: data.customerName, promoCode: appliedPromo?.code ?? null }),
+      });
+      return r.json();
+    },
+    onSuccess: (data: any) => {
+      setIsProcessing(false);
+      if (data.success) setLocation(`/payment/success?plan=${encodeURIComponent(data.planName || "")}&email=${encodeURIComponent(form.getValues("email"))}`);
+      else toast({ title: "Wallet payment failed", description: data.error, variant: "destructive" });
+    },
+    onError: () => { setIsProcessing(false); toast({ title: "Payment failed", variant: "destructive" }); },
+  });
+
   function onSubmit(values: CheckoutForm) {
     if (!selectedPlan?.inStock) { toast({ title: "Out of Stock", variant: "destructive" }); return; }
     setIsProcessing(true);
+    if (useWallet) { walletMutation.mutate(values); return; }
     initMutation.mutate(values);
   }
 
@@ -340,7 +371,33 @@ export default function Checkout() {
                     )}
                   </div>
 
-                  {configData && !configData.paystackConfigured && (
+                  {/* Wallet payment option */}
+                  {customerToken && dashData?.wallet !== undefined && (
+                    <div className={`rounded-xl border p-4 transition-all ${useWallet ? "bg-indigo-500/10 border-indigo-500/30" : "bg-white/3 border-white/8"}`}>
+                      <label className="flex items-center gap-3 cursor-pointer select-none">
+                        <div
+                          onClick={() => setUseWallet(v => !v)}
+                          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${useWallet ? "bg-indigo-500 border-indigo-500" : "border-white/20 bg-transparent"}`}
+                        >
+                          {useWallet && <CheckCircle className="w-3 h-3 text-white" />}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <Wallet className="w-4 h-4 text-indigo-400" />
+                            <span className="text-sm font-semibold text-white">Pay with Wallet</span>
+                            <Badge className="bg-indigo-500/20 text-indigo-400 border-0 text-xs ml-auto">
+                              Balance: KES {(dashData.wallet ?? 0).toLocaleString()}
+                            </Badge>
+                          </div>
+                          {(dashData.wallet ?? 0) < finalAmount && (
+                            <p className="text-xs text-amber-400 mt-1">Insufficient balance — top up in your dashboard first.</p>
+                          )}
+                        </div>
+                      </label>
+                    </div>
+                  )}
+
+                  {!useWallet && configData && !configData.paystackConfigured && (
                     <div className="flex items-start gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/25 text-sm text-red-300">
                       <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                       <div>
@@ -352,13 +409,19 @@ export default function Checkout() {
 
                   <Button
                     type="submit"
-                    className={`w-full h-12 bg-gradient-to-r ${gradient} border-0 text-white font-bold text-base shadow-xl hover:opacity-90 transition-opacity`}
+                    className={`w-full h-12 border-0 text-white font-bold text-base shadow-xl hover:opacity-90 transition-opacity ${useWallet ? "bg-indigo-600 hover:bg-indigo-700" : `bg-gradient-to-r ${gradient}`}`}
                     style={{ boxShadow: "0 0 24px rgba(99,102,241,0.3)" }}
-                    disabled={isProcessing || initMutation.isPending || verifyMutation.isPending || (configData !== undefined && !configData?.paystackConfigured)}
+                    disabled={
+                      isProcessing || initMutation.isPending || verifyMutation.isPending || walletMutation.isPending ||
+                      (useWallet && (dashData?.wallet ?? 0) < finalAmount) ||
+                      (!useWallet && configData !== undefined && !configData?.paystackConfigured)
+                    }
                     data-testid="button-pay"
                   >
-                    {isProcessing || initMutation.isPending || verifyMutation.isPending ? (
+                    {isProcessing || initMutation.isPending || verifyMutation.isPending || walletMutation.isPending ? (
                       <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />Processing...</>
+                    ) : useWallet ? (
+                      <><Wallet className="w-4 h-4 mr-2" />Pay KES {finalAmount.toLocaleString()} from Wallet</>
                     ) : (
                       <><CreditCard className="w-4 h-4 mr-2" />Pay KES {finalAmount.toLocaleString()} with Paystack</>
                     )}

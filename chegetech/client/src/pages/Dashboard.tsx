@@ -10,8 +10,9 @@ import {
   Wallet, Link2, History, TrendingUp, Gift, ArrowUpCircle, ArrowDownCircle,
   MessageCircle, Send, PlusCircle, Ticket,
   Bell, BellDot, ShoppingCart, TrendingDown, Star,
-  MapPin, Monitor, Globe, Wifi, Camera, X
+  MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy
 } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,6 +70,10 @@ export default function Dashboard() {
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  // Wallet top-up state
+  const [topupAmount, setTopupAmount] = useState("");
+  const [topupLoading, setTopupLoading] = useState(false);
 
   // TOTP state
   const [totpStep, setTotpStep] = useState<"idle" | "qr" | "verify">("idle");
@@ -154,6 +159,52 @@ export default function Dashboard() {
     queryFn: () => customerFetch("/api/customer/stats"),
     enabled: tab === "wallet",
   });
+
+  const { data: configData } = useQuery<any>({
+    queryKey: ["/api/config"],
+    queryFn: () => fetch("/api/config").then(r => r.json()),
+  });
+
+  const { data: referralTier } = useQuery<any>({
+    queryKey: ["/api/customer/referral/tier"],
+    queryFn: () => customerFetch("/api/customer/referral/tier"),
+    enabled: tab === "referral",
+  });
+
+  async function initiateWalletTopup() {
+    const amount = parseInt(topupAmount);
+    if (!amount || amount < 50) { toast({ title: "Minimum top-up is KES 50", variant: "destructive" }); return; }
+    setTopupLoading(true);
+    try {
+      const data = await customerFetch("/api/customer/wallet/topup/initiate", { method: "POST", body: JSON.stringify({ amount }) });
+      if (!data.success) { toast({ title: data.error || "Failed to initiate top-up", variant: "destructive" }); return; }
+      if (!data.paystackConfigured || !data.authorizationUrl) {
+        toast({ title: "Payment gateway not configured. Contact admin.", variant: "destructive" }); return;
+      }
+      if (window.PaystackPop && configData?.paystackPublicKey) {
+        const handler = window.PaystackPop.setup({
+          key: configData.paystackPublicKey,
+          email: customer.email,
+          amount: amount * 100,
+          ref: data.reference,
+          currency: "KES",
+          callback: async (response: any) => {
+            const verifyData = await customerFetch("/api/customer/wallet/topup/verify", { method: "POST", body: JSON.stringify({ reference: response.reference }) });
+            if (verifyData.success) {
+              toast({ title: `KES ${amount} added to your wallet! 💰` });
+              queryClient.invalidateQueries({ queryKey: ["/api/customer/wallet"] });
+              setTopupAmount("");
+            } else { toast({ title: verifyData.error || "Top-up verification failed", variant: "destructive" }); }
+          },
+          onClose: () => toast({ title: "Top-up cancelled" }),
+        });
+        handler.openIframe();
+      } else {
+        window.location.href = data.authorizationUrl;
+      }
+    } catch { toast({ title: "Failed to initiate top-up", variant: "destructive" }); }
+    finally { setTopupLoading(false); }
+  }
 
   const { data: loginHistoryData, isLoading: loginHistoryLoading } = useQuery<any>({
     queryKey: ["/api/customer/login-history"],
@@ -603,15 +654,36 @@ export default function Dashboard() {
                             {statusConf.label}
                           </div>
                           {order.status === "success" && (
-                            <button
-                              onClick={() => toggleCredentials(order.reference)}
-                              disabled={isLoadingCreds}
-                              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/10 transition-all"
-                              data-testid={`button-view-creds-${order.id}`}
-                            >
-                              {isLoadingCreds ? <Loader2 className="w-3 h-3 animate-spin" /> : isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                              {isExpanded ? "Hide" : "Credentials"}
-                            </button>
+                            <>
+                              <button
+                                onClick={() => toggleCredentials(order.reference)}
+                                disabled={isLoadingCreds}
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/10 transition-all"
+                                data-testid={`button-view-creds-${order.id}`}
+                              >
+                                {isLoadingCreds ? <Loader2 className="w-3 h-3 animate-spin" /> : isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                {isExpanded ? "Hide" : "Credentials"}
+                              </button>
+                              <a
+                                href={`/api/customer/orders/${order.reference}/receipt`}
+                                download
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={async (e) => {
+                                  e.preventDefault();
+                                  const resp = await fetch(`/api/customer/orders/${order.reference}/receipt`, { headers: { Authorization: `Bearer ${getToken()}` } });
+                                  const blob = await resp.blob();
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  a.href = url; a.download = `receipt-${order.reference}.pdf`; a.click();
+                                  URL.revokeObjectURL(url);
+                                }}
+                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-emerald-400/70 border border-emerald-500/20 hover:bg-emerald-500/10 transition-all"
+                                title="Download PDF receipt"
+                              >
+                                <Download className="w-3 h-3" />
+                              </a>
+                            </>
                           )}
                         </div>
                       </div>
@@ -663,12 +735,42 @@ export default function Dashboard() {
             ) : (
               <>
                 <div className="rounded-2xl p-6 border border-white/10" style={{ background: "linear-gradient(135deg, rgba(99,102,241,.25), rgba(168,85,247,.15))" }}>
-                  <div className="flex items-center gap-3 mb-2">
-                    <Wallet className="w-6 h-6 text-indigo-400" />
-                    <span className="text-white/60 text-sm font-medium">Available Balance</span>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
+                      <Wallet className="w-6 h-6 text-indigo-400" />
+                      <span className="text-white/60 text-sm font-medium">Available Balance</span>
+                    </div>
                   </div>
                   <p className="text-4xl font-bold text-white">KES {(walletData?.balance ?? 0).toLocaleString()}</p>
-                  <p className="text-white/40 text-xs mt-2">Earn by referring friends. Balance is applied to purchases.</p>
+                  <p className="text-white/40 text-xs mt-2">Earn by referring friends • Top up with Paystack • Use at checkout</p>
+                </div>
+
+                {/* Top-Up Section */}
+                <div className="rounded-xl p-5 border border-emerald-500/20" style={{ background: "rgba(16,185,129,.06)" }}>
+                  <h3 className="text-sm font-semibold text-emerald-300 mb-3 flex items-center gap-2">
+                    <Plus className="w-4 h-4" /> Top Up Wallet
+                  </h3>
+                  <div className="flex gap-2 mb-3">
+                    {[500, 1000, 2000, 5000].map(amt => (
+                      <button key={amt} onClick={() => setTopupAmount(String(amt))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${topupAmount === String(amt) ? "bg-emerald-600 border-emerald-500 text-white" : "border-white/10 text-white/50 hover:border-emerald-500/50 hover:text-white/80"}`}>
+                        {amt >= 1000 ? `${amt/1000}K` : amt}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      placeholder="Custom amount (min KES 50)"
+                      value={topupAmount}
+                      onChange={e => setTopupAmount(e.target.value)}
+                      className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-white/25"
+                    />
+                    <Button onClick={initiateWalletTopup} disabled={topupLoading || !topupAmount}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-4 shrink-0">
+                      {topupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Top Up"}
+                    </Button>
+                  </div>
                 </div>
 
                 {spendingStats && (
@@ -726,7 +828,21 @@ export default function Dashboard() {
         {/* REFERRAL TAB */}
         {tab === "referral" && (
           <div className="space-y-4">
-            <h2 className="text-lg font-bold text-white">Referral Program</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Referral Program</h2>
+              {referralTier && (
+                <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+                  referralTier.tier === "Platinum" ? "bg-violet-500/20 border-violet-500/40 text-violet-300" :
+                  referralTier.tier === "Gold" ? "bg-amber-500/20 border-amber-500/40 text-amber-300" :
+                  referralTier.tier === "Silver" ? "bg-slate-400/20 border-slate-400/40 text-slate-300" :
+                  "bg-white/5 border-white/10 text-white/50"
+                }`}>
+                  <Trophy className="w-3 h-3" />
+                  {referralTier.tier} Affiliate
+                  {referralTier.multiplier > 1 && <span className="opacity-70">· {referralTier.multiplier}x</span>}
+                </div>
+              )}
+            </div>
             {referralLoading ? (
               <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
             ) : (
@@ -743,6 +859,24 @@ export default function Dashboard() {
                       <p className="text-xs text-white/40">{label}</p>
                     </div>
                   ))}
+                </div>
+
+                {/* Affiliate Tiers Card */}
+                <div className="rounded-xl p-4 border border-white/10" style={{ background: "rgba(255,255,255,.03)" }}>
+                  <h3 className="text-sm font-semibold text-white/70 mb-3 flex items-center gap-2"><Trophy className="w-3.5 h-3.5 text-amber-400" /> Affiliate Tiers</h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { tier: "Silver", min: 5, multiplier: 1.25, color: "text-slate-300", bg: "rgba(148,163,184,.1)", border: "border-slate-400/20" },
+                      { tier: "Gold", min: 15, multiplier: 1.5, color: "text-amber-300", bg: "rgba(245,158,11,.1)", border: "border-amber-500/20" },
+                      { tier: "Platinum", min: 30, multiplier: 2.0, color: "text-violet-300", bg: "rgba(139,92,246,.1)", border: "border-violet-500/20" },
+                    ].map(t => (
+                      <div key={t.tier} className={`p-3 rounded-lg border ${t.border} text-center`} style={{ background: t.bg }}>
+                        <p className={`text-sm font-bold ${t.color}`}>{t.tier}</p>
+                        <p className="text-xs text-white/40">{t.min}+ referrals</p>
+                        <p className={`text-xs font-semibold ${t.color} mt-1`}>{t.multiplier}x reward</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 <div className="rounded-xl p-5 border border-white/10" style={{ background: "rgba(255,255,255,.04)" }}>
                   <h3 className="text-sm font-semibold text-white mb-3">Your Referral Link</h3>
@@ -785,8 +919,10 @@ export default function Dashboard() {
                   <ul className="space-y-1.5 text-xs text-white/50">
                     <li>• Share your referral link with friends</li>
                     <li>• They sign up using your link and make their first purchase</li>
-                    <li>• You earn <span className="text-emerald-400 font-semibold">KES 100</span> wallet credit automatically</li>
+                    <li>• You earn <span className="text-emerald-400 font-semibold">KES 100</span> wallet credit on their first purchase</li>
+                    <li>• Earn <span className="text-emerald-400 font-semibold">KES 50</span> every time your referral makes any future purchase</li>
                     <li>• Your friend also gets <span className="text-emerald-400 font-semibold">KES 50</span> as a welcome bonus</li>
+                    <li>• Reach <span className="text-amber-400 font-semibold">Silver/Gold/Platinum</span> tier for higher commission multipliers</li>
                     <li>• Get <span className="text-amber-400 font-semibold">10 referrals</span> and receive a <span className="text-amber-400 font-semibold">FREE Netflix or Showmax</span> account!</li>
                   </ul>
                 </div>

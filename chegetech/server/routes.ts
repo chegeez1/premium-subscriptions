@@ -41,10 +41,36 @@ import { logDelivery, getDeliveryProof, getDeliveryLogs } from "./delivery-log";
 import { getAIChatResponse } from "./openai-chat";
 import { getAdminAIResponse, clearAdminAISession } from "./admin-ai";
 import speakeasy from "speakeasy";
+import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 
 function generateVerificationCode(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function parseDurationMs(duration: string): number {
+  const d = duration.toLowerCase();
+  if (d.includes("year")) return parseInt(d) * 365 * 86400000;
+  if (d.includes("month")) return parseInt(d) * 30 * 86400000;
+  if (d.includes("week")) return parseInt(d) * 7 * 86400000;
+  if (d.includes("day")) return parseInt(d) * 86400000;
+  return 30 * 86400000;
+}
+
+function getAffiliateTier(completedReferrals: number): { tier: string; multiplier: number; label: string } {
+  const raw = dbSettingsGet("affiliate_tiers");
+  const tiers = raw ? JSON.parse(raw) : [
+    { name: "Silver", min: 5, multiplier: 1.25 },
+    { name: "Gold", min: 15, multiplier: 1.5 },
+    { name: "Platinum", min: 30, multiplier: 2.0 },
+  ];
+  tiers.sort((a: any, b: any) => b.min - a.min);
+  for (const t of tiers) {
+    if (completedReferrals >= t.min) {
+      return { tier: t.name, multiplier: t.multiplier, label: `${t.name} Affiliate` };
+    }
+  }
+  return { tier: "Basic", multiplier: 1.0, label: "Basic Affiliate" };
 }
 
 function getBaseUrl(req: any): string {
@@ -259,37 +285,60 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
     metadata: { recipientEmail: transaction.customerEmail },
   });
 
+  // ─── Compute expiry date from plan duration ───────────────────────
+  let expiresAt: string | null = null;
+  try {
+    const cats = buildPlansResponse();
+    for (const cat of Object.values(cats) as any[]) {
+      if (cat.plans[transaction.planId]) {
+        const dur = cat.plans[transaction.planId].duration || "1 Month";
+        expiresAt = new Date(Date.now() + parseDurationMs(dur)).toISOString();
+        break;
+      }
+    }
+  } catch (_) {}
+
   await storage.updateTransaction(transaction.reference, {
     status: "success",
     accountAssigned: true,
     emailSent: emailResult.success,
     paystackReference: transaction.reference,
+    ...(expiresAt ? { expiresAt } : {}),
   });
 
-  // ─── Referral reward: check if this is the customer's first successful purchase ──
+  // ─── Referral rewards: first purchase + ongoing commissions ────────
   try {
     const customerOrders = await storage.getTransactionsByEmail(transaction.customerEmail);
     const successfulOrders = customerOrders.filter((o: any) => o.status === "success" && o.reference !== transaction.reference);
-    if (successfulOrders.length === 0) {
+    const isFirstPurchase = successfulOrders.length === 0;
+
+    if (isFirstPurchase) {
+      // First purchase: complete the referral + welcome bonus
       const pendingReferralKey = `referral_pending_${transaction.customerEmail}`;
       const pendingCode = dbSettingsGet(pendingReferralKey);
       if (pendingCode && pendingCode !== "") {
         const referral = await storage.getReferralByCode(pendingCode);
         if (referral && referral.status === "pending") {
-          const REFERRER_REWARD = 100;
+          const BASE_REFERRER_REWARD = 100;
           const REFEREE_REWARD = 50;
-          await storage.completeReferral(pendingCode, transaction.customerEmail, REFERRER_REWARD);
-          await storage.creditWallet(referral.referrerId, REFERRER_REWARD, `Referral reward — ${transaction.customerEmail} made their first purchase`, transaction.reference);
+          const stats = await storage.getReferralStats(referral.referrerId);
+          const tierInfo = getAffiliateTier(stats.completedReferrals);
+          const referrerReward = Math.round(BASE_REFERRER_REWARD * tierInfo.multiplier);
+
+          await storage.completeReferral(pendingCode, transaction.customerEmail, referrerReward);
+          await storage.creditWallet(referral.referrerId, referrerReward, `${tierInfo.label} referral reward — ${transaction.customerEmail} first purchase`, transaction.reference);
           const refereeCustomer = await storage.getCustomerByEmail(transaction.customerEmail);
           if (refereeCustomer) {
             await storage.creditWallet(refereeCustomer.id, REFEREE_REWARD, "Welcome bonus — referral credit on first purchase", transaction.reference);
           }
           dbSettingsSet(pendingReferralKey, "");
+          // Store permanent referrer mapping for ongoing commissions
+          dbSettingsSet(`referral_by_${transaction.customerEmail}`, String(referral.referrerId));
 
-          // ─── 10-referral milestone: auto-assign a free Netflix or Showmax account ──
+          // ─── 10-referral milestone ────────────────────────────────
           try {
-            const stats = await storage.getReferralStats(referral.referrerId);
-            if (stats.completedReferrals === 10) {
+            const updatedStats = await storage.getReferralStats(referral.referrerId);
+            if (updatedStats.completedReferrals === 10) {
               const referrerCustomer = await storage.getCustomerById(referral.referrerId);
               if (referrerCustomer) {
                 const milestoneKey = `referral_milestone_10_${referral.referrerId}`;
@@ -313,6 +362,16 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
             console.error("[referral] Milestone check error:", milestoneErr.message);
           }
         }
+      }
+    } else {
+      // Repeat purchase: give ongoing commission to referrer (50 KES × tier multiplier)
+      const referrerId = dbSettingsGet(`referral_by_${transaction.customerEmail}`);
+      if (referrerId && referrerId !== "") {
+        const ONGOING_REWARD = 50;
+        const stats = await storage.getReferralStats(referrerId);
+        const tierInfo = getAffiliateTier(stats.completedReferrals);
+        const ongoingReward = Math.round(ONGOING_REWARD * tierInfo.multiplier);
+        await storage.creditWallet(referrerId, ongoingReward, `${tierInfo.label} ongoing commission — ${transaction.customerEmail} purchased ${transaction.planName}`, transaction.reference);
       }
     }
   } catch (refErr: any) {
@@ -2430,6 +2489,407 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     saveDomains(filtered);
     logAdminAction({ action: `Custom domain removed: ${target.domain}`, category: "settings", status: "warning" });
     res.json({ success: true });
+  });
+
+  // ─── Customer: Wallet Top-Up ──────────────────────────────────────────────
+  app.post("/api/customer/wallet/topup/initiate", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { amount } = req.body;
+      const customerId = req.customer.id;
+      const customer = await storage.getCustomerById(customerId);
+      if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
+
+      const amountNum = parseInt(amount);
+      if (!amountNum || amountNum < 50) return res.status(400).json({ success: false, error: "Minimum top-up is KES 50" });
+
+      const paystackSecret = getPaystackSecretKey();
+      const reference = `TOPUP-${customerId}-${Date.now()}`;
+
+      await storage.createTransaction({
+        reference,
+        planId: "WALLET_TOPUP",
+        planName: "Wallet Top-Up",
+        customerEmail: customer.email,
+        customerName: customer.name || "Customer",
+        amount: amountNum,
+        status: "pending",
+        emailSent: false,
+        accountAssigned: false,
+      });
+
+      if (!paystackSecret) {
+        return res.json({ success: true, paystackConfigured: false, reference, authorizationUrl: null });
+      }
+
+      const psRes = await axios.post(
+        "https://api.paystack.co/transaction/initialize",
+        {
+          email: customer.email,
+          amount: amountNum * 100,
+          reference,
+          currency: "KES",
+          metadata: { type: "wallet_topup", customerId, amount: amountNum },
+          callback_url: `${getBaseUrl(req)}/dashboard?tab=wallet&topup=success`,
+        },
+        { headers: { Authorization: `Bearer ${paystackSecret}` } }
+      );
+
+      res.json({ success: true, reference, authorizationUrl: psRes.data.data.authorization_url, accessCode: psRes.data.data.access_code, paystackConfigured: true, amount: amountNum });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/customer/wallet/topup/verify", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { reference } = req.body;
+      const customerId = req.customer.id;
+
+      const transaction = await storage.getTransaction(reference);
+      if (!transaction || transaction.planId !== "WALLET_TOPUP") {
+        return res.status(404).json({ success: false, error: "Top-up transaction not found" });
+      }
+      if (transaction.status === "success") {
+        return res.json({ success: true, alreadyProcessed: true, amount: transaction.amount });
+      }
+
+      const verify = await verifyPaystackPayment(reference);
+      if (!verify.configured) return res.status(503).json({ success: false, error: "Payment gateway not configured" });
+      if (!verify.success) {
+        await storage.updateTransaction(reference, { status: "failed" });
+        return res.json({ success: false, error: "Payment was not successful" });
+      }
+
+      await storage.creditWallet(customerId, transaction.amount, `Wallet top-up — KES ${transaction.amount}`, reference);
+      await storage.updateTransaction(reference, { status: "success", accountAssigned: true, emailSent: true });
+      await storage.createNotification(customerId, "wallet", "Wallet Topped Up 💰", `KES ${transaction.amount} has been added to your wallet.`);
+
+      res.json({ success: true, amount: transaction.amount });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Pay with Wallet ────────────────────────────────────────────
+  app.post("/api/customer/wallet/pay", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { planId, customerName } = req.body;
+      const customerId = req.customer.id;
+      const customer = await storage.getCustomerById(customerId);
+      if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
+
+      const categories = buildPlansResponse();
+      let plan: any = null;
+      for (const cat of Object.values(categories) as any[]) {
+        if (cat.plans[planId]) { plan = cat.plans[planId]; break; }
+      }
+      if (!plan) return res.status(400).json({ success: false, error: "Invalid plan" });
+
+      const avail = accountManager.checkAvailability(planId);
+      if (!avail.available) return res.status(400).json({ success: false, error: "This plan is currently out of stock", outOfStock: true });
+
+      const wallet = await storage.getWallet(customerId);
+      if ((wallet.balance || 0) < plan.price) {
+        return res.status(400).json({ success: false, error: `Insufficient wallet balance. You need KES ${plan.price} but have KES ${wallet.balance}.`, insufficientFunds: true });
+      }
+
+      const reference = `WALLET-${planId.toUpperCase()}-${Date.now()}`;
+      const transaction = await storage.createTransaction({
+        reference,
+        planId,
+        planName: plan.name,
+        customerEmail: customer.email,
+        customerName: customerName || customer.name || "Customer",
+        amount: plan.price,
+        status: "pending",
+        emailSent: false,
+        accountAssigned: false,
+      });
+
+      await storage.debitWallet(customerId, plan.price, `Purchase: ${plan.name}`, reference);
+      const delivery = await deliverAccount(transaction);
+      if (!delivery.success) {
+        await storage.creditWallet(customerId, plan.price, `Refund: ${plan.name} (delivery failed)`, reference);
+        return res.json({ success: false, error: delivery.error });
+      }
+
+      res.json({ success: true, planName: plan.name, reference });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: PDF Receipt ────────────────────────────────────────────────
+  app.get("/api/customer/orders/:reference/receipt", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { reference } = req.params;
+      const customer = await storage.getCustomerById(req.customer.id);
+      if (!customer) return res.status(404).json({ success: false, error: "Not found" });
+
+      const transaction = await storage.getTransaction(reference);
+      if (!transaction || transaction.customerEmail !== customer.email) {
+        return res.status(404).json({ success: false, error: "Order not found" });
+      }
+      if (transaction.status !== "success") {
+        return res.status(400).json({ success: false, error: "Receipt only available for completed orders" });
+      }
+
+      const { siteName } = getAppConfig();
+      const doc = new PDFDocument({ margin: 50, size: "A4" });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="receipt-${reference}.pdf"`);
+      doc.pipe(res);
+
+      doc.rect(0, 0, doc.page.width, 100).fill("#4F46E5");
+      doc.fillColor("#ffffff").fontSize(24).font("Helvetica-Bold").text(siteName, 50, 35);
+      doc.fontSize(11).font("Helvetica").text("Payment Receipt", 50, 65);
+
+      doc.fillColor("#1f2937").fontSize(18).font("Helvetica-Bold").text("RECEIPT", 50, 120);
+      doc.fontSize(10).font("Helvetica").fillColor("#6b7280")
+        .text(`Reference: ${reference}`, 50, 145)
+        .text(`Date: ${new Date(transaction.createdAt || Date.now()).toLocaleDateString("en-KE", { year: "numeric", month: "long", day: "numeric" })}`, 50, 160);
+
+      doc.moveTo(50, 185).lineTo(545, 185).strokeColor("#e5e7eb").lineWidth(1).stroke();
+
+      doc.fillColor("#1f2937").fontSize(13).font("Helvetica-Bold").text("Customer Details", 50, 200);
+      doc.fontSize(10).font("Helvetica").fillColor("#374151")
+        .text(`Name: ${transaction.customerName || customer.name || "Customer"}`, 50, 220)
+        .text(`Email: ${transaction.customerEmail}`, 50, 235);
+
+      doc.moveTo(50, 255).lineTo(545, 255).strokeColor("#e5e7eb").stroke();
+
+      doc.fillColor("#1f2937").fontSize(13).font("Helvetica-Bold").text("Order Details", 50, 270);
+      doc.rect(50, 290, 495, 36).fill("#f3f4f6");
+      doc.fillColor("#374151").fontSize(10).font("Helvetica-Bold")
+        .text("Description", 60, 301).text("Amount", 460, 301);
+      doc.fillColor("#374151").fontSize(10).font("Helvetica")
+        .text(transaction.planName, 60, 328)
+        .text(`KES ${(transaction.amount || 0).toLocaleString()}`, 460, 328);
+
+      doc.moveTo(50, 355).lineTo(545, 355).strokeColor("#e5e7eb").stroke();
+      doc.rect(380, 365, 165, 40).fill("#4F46E5");
+      doc.fillColor("#ffffff").fontSize(12).font("Helvetica-Bold")
+        .text("TOTAL PAID", 390, 373).text(`KES ${(transaction.amount || 0).toLocaleString()}`, 460, 373);
+
+      if (transaction.expiresAt) {
+        doc.fillColor("#374151").fontSize(10).font("Helvetica")
+          .text(`Subscription expires: ${new Date(transaction.expiresAt).toLocaleDateString("en-KE", { year: "numeric", month: "long", day: "numeric" })}`, 50, 420);
+      }
+
+      doc.moveTo(50, doc.page.height - 80).lineTo(545, doc.page.height - 80).strokeColor("#e5e7eb").stroke();
+      doc.fillColor("#9ca3af").fontSize(9).font("Helvetica")
+        .text("Thank you for your purchase! For support, contact us via WhatsApp or email.", 50, doc.page.height - 65, { align: "center" });
+      doc.end();
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Admin: CSV Exports ───────────────────────────────────────────────────
+  function toCSV(headers: string[], rows: any[][]): string {
+    const escape = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    return [headers.map(escape).join(","), ...rows.map((r) => r.map(escape).join(","))].join("\n");
+  }
+
+  app.get("/api/admin/export/customers", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const customers = await storage.getAllCustomers();
+      const csv = toCSV(
+        ["ID", "Email", "Name", "Email Verified", "Suspended", "Created At"],
+        customers.map((c: any) => [c.id, c.email, c.name || "", c.emailVerified ? "Yes" : "No", c.suspended ? "Yes" : "No", c.createdAt || ""])
+      );
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=customers.csv");
+      res.send(csv);
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.get("/api/admin/export/orders", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const txs = await storage.getAllTransactions();
+      const csv = toCSV(
+        ["Reference", "Plan", "Customer Email", "Customer Name", "Amount (KES)", "Status", "Email Sent", "Expires At", "Created At"],
+        txs.map((t: any) => [t.reference, t.planName, t.customerEmail, t.customerName || "", t.amount, t.status, t.emailSent ? "Yes" : "No", t.expiresAt || "", t.createdAt || ""])
+      );
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=orders.csv");
+      res.send(csv);
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.get("/api/admin/export/transactions", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const txs = await storage.getAllTransactions();
+      const success = txs.filter((t: any) => t.status === "success");
+      const csv = toCSV(
+        ["Reference", "Plan", "Customer Email", "Amount (KES)", "Expires At", "Date"],
+        success.map((t: any) => [t.reference, t.planName, t.customerEmail, t.amount, t.expiresAt || "", t.createdAt || ""])
+      );
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=transactions.csv");
+      res.send(csv);
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  // ─── Admin: Affiliate Tier Config ─────────────────────────────────────────
+  app.get("/api/admin/affiliate-tiers", adminAuthMiddleware, (_req, res) => {
+    const raw = dbSettingsGet("affiliate_tiers");
+    const tiers = raw ? JSON.parse(raw) : [
+      { name: "Silver", min: 5, multiplier: 1.25 },
+      { name: "Gold", min: 15, multiplier: 1.5 },
+      { name: "Platinum", min: 30, multiplier: 2.0 },
+    ];
+    res.json({ success: true, tiers });
+  });
+
+  app.put("/api/admin/affiliate-tiers", adminAuthMiddleware, (req, res) => {
+    const { tiers } = req.body;
+    if (!Array.isArray(tiers)) return res.status(400).json({ success: false, error: "tiers must be an array" });
+    dbSettingsSet("affiliate_tiers", JSON.stringify(tiers));
+    res.json({ success: true });
+  });
+
+  // ─── Customer: Referral Tier ───────────────────────────────────────────────
+  app.get("/api/customer/referral/tier", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const stats = await storage.getReferralStats(req.customer.id);
+      const tier = getAffiliateTier(stats.completedReferrals);
+      res.json({ success: true, tier: tier.tier, multiplier: tier.multiplier, label: tier.label, completedReferrals: stats.completedReferrals });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  // ─── Admin: Email Campaigns ───────────────────────────────────────────────
+  type Campaign = { id: string; name: string; subject: string; body: string; segment: string; status: string; scheduledAt?: string; sentAt?: string; sentCount?: number; createdAt: string };
+
+  function getCampaigns(): Campaign[] {
+    try { return JSON.parse(dbSettingsGet("email_campaigns") || "[]"); } catch { return []; }
+  }
+  function saveCampaigns(c: Campaign[]) { dbSettingsSet("email_campaigns", JSON.stringify(c)); }
+
+  app.get("/api/admin/campaigns", adminAuthMiddleware, (_req, res) => {
+    res.json({ success: true, campaigns: getCampaigns() });
+  });
+
+  app.post("/api/admin/campaigns", adminAuthMiddleware, async (req, res) => {
+    try {
+      const { name, subject, body, segment, scheduledAt, sendNow } = req.body;
+      if (!subject || !body) return res.status(400).json({ success: false, error: "Subject and body are required" });
+
+      const campaign: Campaign = {
+        id: uuidv4(),
+        name: name || "Campaign",
+        subject,
+        body,
+        segment: segment || "all",
+        status: sendNow ? "sending" : scheduledAt ? "scheduled" : "draft",
+        scheduledAt: scheduledAt || undefined,
+        createdAt: new Date().toISOString(),
+      };
+
+      const all = getCampaigns();
+      all.unshift(campaign);
+      saveCampaigns(all);
+      logAdminAction({ action: `Campaign created: ${campaign.name}`, category: "settings", status: "success" });
+
+      if (sendNow) {
+        const { checkScheduledCampaigns } = await import("./cron");
+        const allWithSending = getCampaigns();
+        const idx = allWithSending.findIndex((c) => c.id === campaign.id);
+        if (idx !== -1) allWithSending[idx].scheduledAt = new Date().toISOString();
+        saveCampaigns(allWithSending);
+        checkScheduledCampaigns().catch(() => {});
+      }
+
+      res.json({ success: true, campaign });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.post("/api/admin/campaigns/:id/send", adminAuthMiddleware, async (req, res) => {
+    try {
+      const campaigns = getCampaigns();
+      const idx = campaigns.findIndex((c) => c.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
+      campaigns[idx].status = "sending";
+      campaigns[idx].scheduledAt = new Date().toISOString();
+      saveCampaigns(campaigns);
+      const { checkScheduledCampaigns } = await import("./cron");
+      checkScheduledCampaigns().catch(() => {});
+      res.json({ success: true });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.delete("/api/admin/campaigns/:id", adminAuthMiddleware, (req, res) => {
+    const all = getCampaigns().filter((c) => c.id !== req.params.id);
+    saveCampaigns(all);
+    res.json({ success: true });
+  });
+
+  // ─── Public: Reseller API ─────────────────────────────────────────────────
+  async function resellerApiKeyMiddleware(req: any, res: any, next: any) {
+    const apiKey = req.headers["x-api-key"] as string;
+    if (!apiKey) return res.status(401).json({ success: false, error: "API key required. Include X-API-Key header." });
+    const allKeys = await storage.getAllApiKeys?.() || [];
+    const found = allKeys.find((k: any) => k.key === apiKey && k.active);
+    if (!found) return res.status(401).json({ success: false, error: "Invalid or inactive API key" });
+    const customer = await storage.getCustomerById(found.customerId);
+    if (!customer || customer.suspended) return res.status(403).json({ success: false, error: "Account suspended or not found" });
+    req.resellerCustomer = customer;
+    next();
+  }
+
+  app.get("/api/v1/plans", resellerApiKeyMiddleware, (_req, res) => {
+    const categories = buildPlansResponse();
+    const plans: any[] = [];
+    for (const [catKey, cat] of Object.entries(categories) as any[]) {
+      for (const [planId, plan] of Object.entries(cat.plans)) {
+        plans.push({ planId, ...(plan as any), category: cat.category, categoryKey: catKey });
+      }
+    }
+    res.json({ success: true, plans });
+  });
+
+  app.post("/api/v1/orders", resellerApiKeyMiddleware, async (req: any, res) => {
+    try {
+      const { planId, customerEmail, customerName } = req.body;
+      if (!planId || !customerEmail) return res.status(400).json({ success: false, error: "planId and customerEmail are required" });
+
+      const categories = buildPlansResponse();
+      let plan: any = null;
+      for (const cat of Object.values(categories) as any[]) {
+        if (cat.plans[planId]) { plan = cat.plans[planId]; break; }
+      }
+      if (!plan) return res.status(400).json({ success: false, error: "Invalid planId" });
+
+      const avail = accountManager.checkAvailability(planId);
+      if (!avail.available) return res.status(400).json({ success: false, error: "Plan out of stock", outOfStock: true });
+
+      const wallet = await storage.getWallet(req.resellerCustomer.id);
+      if ((wallet.balance || 0) < plan.price) {
+        return res.status(402).json({ success: false, error: `Insufficient wallet balance. Need KES ${plan.price}, have KES ${wallet.balance}.`, insufficientFunds: true });
+      }
+
+      const reference = `API-${planId.toUpperCase()}-${Date.now()}`;
+      const transaction = await storage.createTransaction({
+        reference,
+        planId,
+        planName: plan.name,
+        customerEmail,
+        customerName: customerName || "Customer",
+        amount: plan.price,
+        status: "pending",
+        emailSent: false,
+        accountAssigned: false,
+      });
+
+      await storage.debitWallet(req.resellerCustomer.id, plan.price, `API Order: ${plan.name} for ${customerEmail}`, reference);
+      const delivery = await deliverAccount(transaction);
+      if (!delivery.success) {
+        await storage.creditWallet(req.resellerCustomer.id, plan.price, `Refund: ${plan.name} (delivery failed)`, reference);
+        return res.status(500).json({ success: false, error: delivery.error });
+      }
+
+      res.json({ success: true, reference, planName: plan.name, amount: plan.price, customerEmail, message: "Order placed and credentials sent to customer email." });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
   });
 
   // ─── Public: AI Support Chat ─────────────────────────────────────────

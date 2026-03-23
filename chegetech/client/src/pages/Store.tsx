@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import {
   Play, Music, Briefcase, Shield, Gamepad2, Search, Star,
   CheckCircle, Zap, ShoppingCart, X, ChevronRight, Package,
-  Sparkles, Plus, Minus, Trash2, User, LogIn
+  Sparkles, Plus, Minus, Trash2, User, LogIn, Sun, Moon
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,12 +71,27 @@ function getCustomerData() {
   try { return JSON.parse(localStorage.getItem("customer_data") || "null"); } catch { return null; }
 }
 
+function getStoredTheme(): "dark" | "light" {
+  try { return (localStorage.getItem("ct_theme") as "dark" | "light") || "dark"; } catch { return "dark"; }
+}
+
 export default function Store() {
   const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => getCartFromStorage());
   const [cartOpen, setCartOpen] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(getStoredTheme);
+
+  function toggleTheme() {
+    setTheme(t => {
+      const next = t === "dark" ? "light" : "dark";
+      localStorage.setItem("ct_theme", next);
+      return next;
+    });
+  }
+
+  const isLight = theme === "light";
 
   const customer = getCustomerData();
 
@@ -145,23 +160,26 @@ export default function Store() {
   }
 
   return (
-    <div className="min-h-screen bg-background relative overflow-x-hidden">
-      {/* Background orbs */}
-      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-        <div className="bg-orb w-[600px] h-[600px] bg-indigo-600 top-[-200px] left-[-100px]" />
-        <div className="bg-orb w-[500px] h-[500px] bg-violet-600 bottom-[-100px] right-[-100px]" style={{ animationDelay: "2s" }} />
-        <div className="bg-orb w-[400px] h-[400px] bg-blue-600 top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2" style={{ opacity: 0.15 }} />
-      </div>
+    <div className={`min-h-screen relative overflow-x-hidden${isLight ? " ct-light" : " bg-background"}`}>
+      {/* Background orbs — hidden in light mode */}
+      {!isLight && (
+        <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+          <div className="bg-orb w-[600px] h-[600px] bg-indigo-600 top-[-200px] left-[-100px]" />
+          <div className="bg-orb w-[500px] h-[500px] bg-violet-600 bottom-[-100px] right-[-100px]" style={{ animationDelay: "2s" }} />
+          <div className="bg-orb w-[400px] h-[400px] bg-blue-600 top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2" style={{ opacity: 0.15 }} />
+        </div>
+      )}
+      {isLight && <div className="fixed inset-0 pointer-events-none z-0 bg-slate-50" />}
 
       {/* Header */}
-      <header className="sticky top-0 z-50 glass-nav">
+      <header className={`sticky top-0 z-50 ${isLight ? "bg-white/90 backdrop-blur-xl border-b border-slate-200 shadow-sm" : "glass-nav"}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <img src="/favicon.png" alt="Chege Tech" className="w-9 h-9 rounded-xl shadow-lg" style={{ boxShadow: "0 0 14px rgba(99,102,241,0.3)" }} />
-            <span className="font-bold text-lg hidden sm:block bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+            <span className={`font-bold text-lg hidden sm:block ${isLight ? "text-slate-800" : "bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent"}`}>
               Chege Tech
             </span>
-            <span className="font-bold text-lg sm:hidden text-white">CT</span>
+            <span className={`font-bold text-lg sm:hidden ${isLight ? "text-slate-800" : "text-white"}`}>CT</span>
           </div>
           <div className="flex-1 max-w-sm relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -190,10 +208,20 @@ export default function Store() {
               <span>Support</span>
             </a>
 
+            {/* Theme toggle */}
+            <button
+              onClick={toggleTheme}
+              title={isLight ? "Switch to dark mode" : "Switch to light mode"}
+              className={`flex items-center justify-center w-9 h-9 rounded-lg transition-all ${isLight ? "bg-slate-100 hover:bg-slate-200 text-slate-600" : "glass border border-white/10 text-white/60 hover:text-white"}`}
+              data-testid="button-theme-toggle"
+            >
+              {isLight ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+            </button>
+
             {/* Cart button */}
             <button
               onClick={() => setCartOpen(true)}
-              className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg glass border border-white/10 text-white/70 hover:text-white text-sm font-medium transition-all"
+              className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${isLight ? "bg-indigo-600 text-white hover:bg-indigo-700" : "glass border border-white/10 text-white/70 hover:text-white"}`}
               data-testid="button-cart"
             >
               <ShoppingCart className="w-4 h-4" />

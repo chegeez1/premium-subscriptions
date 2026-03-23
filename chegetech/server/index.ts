@@ -136,6 +136,11 @@ app.use((req, res, next) => {
         startTelegramBot();
         log("[telegram-bot] polling started");
       }).catch(() => {});
+
+      // Start cron jobs (expiry alerts, weekly reports, campaigns)
+      import("./cron").then(({ startCronJobs }) => {
+        startCronJobs();
+      }).catch((err) => log(`[cron] Failed to start: ${err.message}`));
     },
   );
 })();
