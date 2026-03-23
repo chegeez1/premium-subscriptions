@@ -22,7 +22,27 @@ function getDb() {
 }
 
 export async function initializeDatabase() {
-  const externalDbUrl = process.env.EXTERNAL_DATABASE_URL;
+  // Primary source: environment variable
+  let externalDbUrl = process.env.EXTERNAL_DATABASE_URL;
+
+  // Fallback: read the URL saved via the admin panel from SQLite (bootstrap)
+  if (!externalDbUrl) {
+    try {
+      const sqlitePath = path.join(process.cwd(), "data", "database.sqlite");
+      if (fs.existsSync(sqlitePath)) {
+        const tmpDb = new Database(sqlitePath, { readonly: true });
+        const row = tmpDb.prepare("SELECT value FROM settings WHERE key = ?").get("credentials") as any;
+        tmpDb.close();
+        if (row?.value) {
+          const parsed = JSON.parse(row.value);
+          if (parsed.externalDatabaseUrl) {
+            externalDbUrl = parsed.externalDatabaseUrl;
+            console.log("[db] Using database URL from admin settings (bootstrap)");
+          }
+        }
+      }
+    } catch { /* ignore — SQLite may not exist yet */ }
+  }
 
   if (externalDbUrl) {
     try {
