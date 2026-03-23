@@ -852,6 +852,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true, role: "subadmin", permissions: subAdmin.permissions, name: subAdmin.name, email: subAdmin.email });
   });
 
+  // ─── Admin: Profile ───────────────────────────────────────────────────────
+  app.get("/api/admin/profile", adminAuthMiddleware, async (req: any, res) => {
+    if (req.adminRole === "super") {
+      const override = (() => { try { return JSON.parse(dbSettingsGet("credentials_override") || "{}"); } catch { return {}; } })();
+      return res.json({
+        success: true,
+        role: "super",
+        name: dbSettingsGet("admin_name") || "Super Admin",
+        avatar: dbSettingsGet("admin_avatar") || "CT",
+        bio: dbSettingsGet("admin_bio") || "",
+        email: override.adminEmail || process.env.ADMIN_EMAIL || "",
+      });
+    }
+    const subAdmin = await storage.getSubAdminById(req.subAdminId);
+    if (!subAdmin) return res.status(404).json({ success: false, error: "Not found" });
+    res.json({ success: true, role: "subadmin", name: subAdmin.name, avatar: subAdmin.name?.slice(0, 2).toUpperCase() || "SA", bio: "", email: subAdmin.email });
+  });
+
+  app.put("/api/admin/profile", adminAuthMiddleware, async (req: any, res) => {
+    const { name, avatar, bio } = req.body;
+    if (req.adminRole === "super") {
+      if (name !== undefined) dbSettingsSet("admin_name", name.trim() || "Super Admin");
+      if (avatar !== undefined) dbSettingsSet("admin_avatar", avatar.trim() || "CT");
+      if (bio !== undefined) dbSettingsSet("admin_bio", bio.trim());
+      return res.json({ success: true });
+    }
+    if (name !== undefined) await storage.updateSubAdmin(req.subAdminId, { name: name.trim() });
+    res.json({ success: true });
+  });
+
   // ─── Admin: Get secrets status ────────────────────────────────────────────
   app.get("/api/admin/secrets", adminAuthMiddleware, superAdminOnly, (_req, res) => {
     res.json({ success: true, secrets: getSecretsStatus() });

@@ -69,6 +69,7 @@ export default function Admin() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [adminRole, setAdminRole] = useState<"super" | "subadmin" | null>(null);
   const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
+  const [adminProfile, setAdminProfile] = useState<{ name: string; avatar: string; email: string } | null>(null);
   const [, setLocation] = useLocation();
 
   useEffect(() => {
@@ -78,6 +79,9 @@ export default function Admin() {
           setAdminRole(d.role);
           if (d.role === "subadmin") setAdminPermissions(d.permissions || []);
         }
+      }).catch(() => {});
+      authFetch("/api/admin/profile").then((d) => {
+        if (d.success) setAdminProfile({ name: d.name, avatar: d.avatar, email: d.email });
       }).catch(() => {});
     }
   }, [token]);
@@ -128,15 +132,32 @@ export default function Admin() {
 
       {/* Sidebar */}
       <aside className="relative z-10 w-56 shrink-0 glass-nav border-r border-white/8 flex flex-col">
-        <div className="p-4 border-b border-white/8">
-          <div className="flex items-center gap-2.5">
-            <img src="/favicon.png" alt="Chege Tech" className="w-9 h-9 rounded-xl shadow-lg" style={{ boxShadow: "0 0 14px rgba(99,102,241,0.4)" }} />
-            <div>
-              <p className="font-bold text-sm text-white">Admin Panel</p>
-              <p className="text-xs text-white/40">{adminRole === "subadmin" ? "Sub-Admin" : "Super Admin"}</p>
+        {/* Brand */}
+        <div className="p-4 border-b border-white/8 flex items-center gap-2.5">
+          <img src="/favicon.svg" alt="Chege Tech" className="w-8 h-8 rounded-xl shadow-lg" style={{ boxShadow: "0 0 14px rgba(99,102,241,0.4)" }} />
+          <p className="font-bold text-sm text-white tracking-tight">Chege Tech</p>
+        </div>
+        {/* Admin Profile Card */}
+        <button
+          onClick={() => setActiveTab("settings")}
+          className="p-3 border-b border-white/8 flex items-center gap-3 hover:bg-white/5 transition-all text-left group"
+          title="Edit profile"
+        >
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-lg">
+            {adminProfile?.avatar || (adminRole === "subadmin" ? "SA" : "CT")}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white truncate">{adminProfile?.name || (adminRole === "subadmin" ? "Sub-Admin" : "Super Admin")}</p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${adminRole === "subadmin" ? "bg-blue-500/20 text-blue-300" : "bg-violet-500/20 text-violet-300"}`}>
+                {adminRole === "subadmin" ? "Sub-Admin" : "Super Admin"}
+              </span>
             </div>
           </div>
-        </div>
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+            <svg className="w-3.5 h-3.5 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+          </div>
+        </button>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {visibleTabs.map(({ id, label, icon: Icon }) => (
@@ -547,6 +568,140 @@ function LoginFlow({ onLogin }: { onLogin: (token: string, role?: string) => voi
 // ═══════════════════════════════════════════════════════════════
 // SETTINGS TAB  (2FA setup + Paystack config)
 // ═══════════════════════════════════════════════════════════════
+function AdminProfileSection({ inputCls }: { inputCls: string }) {
+  const { toast } = useToast();
+  const AVATAR_PRESETS = ["CT", "AT", "SA", "MG", "🚀", "⚡", "🔥", "💎", "👑", "🛡️"];
+
+  const { data, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/profile"],
+    queryFn: () => authFetch("/api/admin/profile"),
+  });
+
+  const [form, setForm] = useState<{ name: string; avatar: string; bio: string } | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  if (data?.success && !form) setForm({ name: data.name || "", avatar: data.avatar || "CT", bio: data.bio || "" });
+
+  function update(key: string, value: string) {
+    setForm(prev => prev ? { ...prev, [key]: value } : prev);
+    setDirty(true);
+  }
+
+  const saveMutation = useMutation({
+    mutationFn: () => authFetch("/api/admin/profile", { method: "PUT", body: JSON.stringify(form) }),
+    onSuccess: (d) => {
+      if (d.success) { toast({ title: "Profile saved" }); setDirty(false); refetch(); }
+      else toast({ title: "Failed", description: d.error, variant: "destructive" });
+    },
+  });
+
+  const isSuperAdmin = data?.role === "super";
+
+  return (
+    <div className="glass-card rounded-2xl overflow-hidden">
+      <div className="p-5 border-b border-white/8 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 flex items-center justify-center">
+            <UserCircle className="w-5 h-5 text-indigo-400" />
+          </div>
+          <div>
+            <p className="font-semibold text-white">Admin Profile</p>
+            <p className="text-xs text-white/40">Your display name, avatar, and bio</p>
+          </div>
+        </div>
+        {dirty && (
+          <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}
+            className="bg-gradient-to-r from-indigo-600 to-violet-600 border-0 text-white text-xs h-8 px-3">
+            <Save className="w-3.5 h-3.5 mr-1.5" />{saveMutation.isPending ? "Saving..." : "Save Profile"}
+          </Button>
+        )}
+      </div>
+      {form ? (
+        <div className="p-5 space-y-5">
+          {/* Avatar + name row */}
+          <div className="flex items-start gap-4">
+            {/* Avatar preview */}
+            <div className="shrink-0">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-500/20">
+                {form.avatar || "CT"}
+              </div>
+              <p className="text-[10px] text-white/30 text-center mt-1.5">Preview</p>
+            </div>
+            <div className="flex-1 space-y-3">
+              <div>
+                <label className="text-xs text-white/40 block mb-1.5">Display Name</label>
+                <Input value={form.name} onChange={e => update("name", e.target.value)}
+                  placeholder="Super Admin" className={inputCls} maxLength={32} />
+              </div>
+              <div>
+                <label className="text-xs text-white/40 block mb-1.5">Role</label>
+                <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${data?.role === "super" ? "bg-violet-500/20 text-violet-300" : "bg-blue-500/20 text-blue-300"}`}>
+                  <Shield className="w-3 h-3" />
+                  {data?.role === "super" ? "Super Admin" : "Sub-Admin"}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Avatar picker */}
+          {isSuperAdmin && (
+            <div>
+              <label className="text-xs text-white/40 block mb-2">Avatar — pick initials or emoji</label>
+              <div className="flex flex-wrap gap-2">
+                {AVATAR_PRESETS.map(a => (
+                  <button key={a} onClick={() => update("avatar", a)}
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold transition-all border ${
+                      form.avatar === a
+                        ? "bg-gradient-to-br from-indigo-600 to-violet-600 text-white border-indigo-400/50 shadow-lg"
+                        : "glass border-white/10 text-white/60 hover:border-indigo-400/40 hover:text-white"
+                    }`}>
+                    {a}
+                  </button>
+                ))}
+                {/* Custom input */}
+                <input
+                  value={AVATAR_PRESETS.includes(form.avatar) ? "" : form.avatar}
+                  onChange={e => update("avatar", e.target.value.slice(0, 3))}
+                  placeholder="…"
+                  maxLength={3}
+                  className="w-10 h-10 rounded-xl glass border border-white/10 text-white text-sm font-bold text-center bg-transparent focus:border-indigo-400/50 outline-none placeholder:text-white/20"
+                  title="Custom avatar (up to 3 chars)"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Bio */}
+          {isSuperAdmin && (
+            <div>
+              <label className="text-xs text-white/40 block mb-1.5">Bio <span className="text-white/20">(optional)</span></label>
+              <textarea
+                value={form.bio}
+                onChange={e => update("bio", e.target.value)}
+                placeholder="Brief description about this admin account..."
+                maxLength={160}
+                rows={2}
+                className={`w-full rounded-xl px-3 py-2 text-sm resize-none ${inputCls}`}
+              />
+              <p className="text-[10px] text-white/25 mt-1">{form.bio.length}/160</p>
+            </div>
+          )}
+
+          {/* Email (read-only) */}
+          {data?.email && (
+            <div>
+              <label className="text-xs text-white/40 block mb-1.5">Email <span className="text-white/20">(change in Credentials section)</span></label>
+              <div className="glass rounded-xl px-3 py-2.5 text-sm text-white/50 font-mono">{data.email}</div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="p-5 text-center text-white/30 text-sm">Loading...</div>
+      )}
+    </div>
+  );
+}
+
 function AffiliateTiersSection({ inputCls }: { inputCls: string }) {
   const { toast } = useToast();
   const tierColors: Record<string, { bg: string; text: string; border: string; badge: string }> = {
@@ -718,6 +873,9 @@ function SettingsTab() {
     <>
       <h1 className="text-xl font-bold text-white mb-6">Settings</h1>
       <div className="space-y-5 max-w-2xl">
+
+        {/* ─── Admin Profile ───────────────────────────────── */}
+        <AdminProfileSection inputCls={inputCls} />
 
         {/* ─── App Config (Editable) ───────────────────────── */}
         <div className="glass-card rounded-2xl overflow-hidden">
