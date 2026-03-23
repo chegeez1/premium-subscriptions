@@ -252,216 +252,372 @@ function renderBotText(text: string) {
   });
 }
 
+type ThreatItem = {
+  id: string; severity: "critical"|"high"|"medium"|"low";
+  type: string; email: string; description: string; detail: string; canBan: boolean;
+};
+
+const SEVERITY_COLOR: Record<string, string> = {
+  critical: "bg-red-500/15 border-red-500/30 text-red-400",
+  high:     "bg-orange-500/15 border-orange-500/30 text-orange-400",
+  medium:   "bg-yellow-500/15 border-yellow-500/25 text-yellow-400",
+  low:      "bg-blue-500/10 border-blue-500/20 text-blue-400",
+};
+const SEVERITY_BADGE: Record<string, string> = {
+  critical: "bg-red-500 text-white",
+  high:     "bg-orange-500 text-white",
+  medium:   "bg-yellow-500 text-black",
+  low:      "bg-blue-500 text-white",
+};
+
 function AdminMonitorBot() {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<"monitor"|"security">("monitor");
   const [messages, setMessages] = useState<BotMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [alerts, setAlerts] = useState(0);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  // Security / protection mode
+  const [running, setRunning] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [threats, setThreats] = useState<ThreatItem[]>([]);
+  const [lastScan, setLastScan] = useState<Date | null>(null);
+  const [banningEmail, setBanningEmail] = useState<string | null>(null);
+  const [bannedEmails, setBannedEmails] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const monitorPoll = useRef<ReturnType<typeof setInterval> | null>(null);
+  const securityPoll = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch auto-status from server
   async function fetchStatus(silent = false) {
     try {
       const res = await authFetch("/api/admin/bot/status");
       if (res.success) {
         const botMsg: BotMessage = { role: "bot", content: res.response, ts: Date.now(), isAuto: true };
-        if (silent) {
-          setMessages(prev => {
-            const withoutOldAuto = prev.filter(m => !m.isAuto);
-            return [botMsg, ...withoutOldAuto];
-          });
-        } else {
-          setMessages(prev => [botMsg, ...prev.filter(m => !m.isAuto)]);
-        }
+        setMessages(prev => [botMsg, ...prev.filter(m => !m.isAuto)]);
         setLastRefresh(new Date());
-        // Count alert lines
-        const alertCount = (res.response.match(/🚨|⚠️|⏳|🔴|🟡/g) || []).length;
-        if (!open) setAlerts(alertCount);
+        const n = (res.response.match(/🚨|⚠️|⏳|🔴|🟡/g) || []).length;
+        if (!open) setAlerts(n);
       }
-    } catch { /* silent fail */ }
+    } catch { /* silent */ }
   }
 
-  // On open: fetch status immediately, start poll
+  async function runScan() {
+    setScanning(true);
+    try {
+      const res = await authFetch("/api/admin/bot/scan");
+      if (res.success) {
+        setThreats(res.threats || []);
+        setLastScan(new Date());
+        const critical = (res.threats || []).filter((t: ThreatItem) => t.severity === "critical" || t.severity === "high").length;
+        if (!open && critical > 0) setAlerts(prev => Math.max(prev, critical));
+      }
+    } catch { /* silent */ }
+    finally { setScanning(false); }
+  }
+
+  // Protection mode: run security scan on interval
+  useEffect(() => {
+    if (running) {
+      runScan();
+      securityPoll.current = setInterval(runScan, 60000);
+    } else {
+      if (securityPoll.current) clearInterval(securityPoll.current);
+    }
+    return () => { if (securityPoll.current) clearInterval(securityPoll.current); };
+  }, [running]);
+
   useEffect(() => {
     if (open) {
       setAlerts(0);
       fetchStatus(false);
       setTimeout(() => inputRef.current?.focus(), 150);
-      pollRef.current = setInterval(() => fetchStatus(true), 30000);
+      monitorPoll.current = setInterval(() => fetchStatus(true), 30000);
     } else {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (monitorPoll.current) clearInterval(monitorPoll.current);
     }
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => { if (monitorPoll.current) clearInterval(monitorPoll.current); };
   }, [open]);
 
-  // Background poll every 60s even when closed (for badge count)
   useEffect(() => {
     const bg = setInterval(() => { if (!open) fetchStatus(true); }, 60000);
     return () => clearInterval(bg);
   }, [open]);
 
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
   async function send(text: string) {
     const msg = text.trim();
     if (!msg || loading) return;
     setInput("");
-    const userMsg: BotMessage = { role: "user", content: msg, ts: Date.now() };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages(prev => [...prev, { role: "user", content: msg, ts: Date.now() }]);
     setLoading(true);
     try {
-      const res = await authFetch("/api/admin/ai-assistant", {
-        method: "POST",
-        body: JSON.stringify({ message: msg }),
-      });
-      const botMsg: BotMessage = {
-        role: "bot",
-        content: res.success ? res.response : `Error: ${res.error || "Something went wrong"}`,
-        ts: Date.now(),
-      };
-      setMessages(prev => [...prev, botMsg]);
+      const res = await authFetch("/api/admin/ai-assistant", { method: "POST", body: JSON.stringify({ message: msg }) });
+      setMessages(prev => [...prev, { role: "bot", content: res.success ? res.response : `Error: ${res.error}`, ts: Date.now() }]);
     } catch {
-      setMessages(prev => [...prev, { role: "bot", content: "Network error — check connection.", ts: Date.now() }]);
-    } finally {
-      setLoading(false);
-    }
+      setMessages(prev => [...prev, { role: "bot", content: "Network error.", ts: Date.now() }]);
+    } finally { setLoading(false); }
+  }
+
+  async function banCustomer(email: string, reason: string) {
+    setBanningEmail(email);
+    try {
+      const res = await authFetch("/api/admin/bot/ban", { method: "POST", body: JSON.stringify({ email, reason }) });
+      if (res.success) {
+        setBannedEmails(prev => new Set([...prev, email]));
+        setThreats(prev => prev.map(t => t.email === email ? { ...t, canBan: false } : t));
+      }
+    } catch { /* silent */ }
+    finally { setBanningEmail(null); }
   }
 
   const statusMsg = messages.find(m => m.isAuto);
   const chatMsgs = messages.filter(m => !m.isAuto);
+  const criticalCount = threats.filter(t => t.severity === "critical" || t.severity === "high").length;
+  const badgeCount = criticalCount || alerts;
 
   return (
     <>
       {/* Floating button */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 shadow-2xl shadow-indigo-900/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95 relative"
-        title="Admin Monitor Bot"
-      >
+      <button onClick={() => setOpen(o => !o)}
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-2xl shadow-black/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95 relative"
+        style={{ background: running ? "linear-gradient(135deg,#dc2626,#7c3aed)" : "#4f46e5" }}
+        title="Admin Monitor Bot">
         {open ? <Minimize2 className="w-5 h-5 text-white" /> : <Bot className="w-6 h-6 text-white" />}
-        {!open && alerts > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
-            {alerts}
+        {running && !open && <span className="absolute inset-0 rounded-full border-2 border-red-400 animate-ping opacity-60" />}
+        {!open && badgeCount > 0 && (
+          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse z-10">
+            {badgeCount}
           </span>
         )}
       </button>
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 w-[390px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#0d0d1b] shadow-2xl shadow-black/70 flex flex-col overflow-hidden"
-          style={{ height: "560px" }}>
+        <div className="fixed bottom-24 right-6 z-50 w-[400px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#0b0b18] shadow-2xl shadow-black/80 flex flex-col overflow-hidden"
+          style={{ height: "580px" }}>
 
           {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 bg-indigo-700/20 border-b border-white/8 flex-shrink-0">
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 relative">
-              <Bot className="w-4 h-4 text-white" />
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-[#0d0d1b]" />
+          <div className="px-4 py-2.5 border-b border-white/8 flex-shrink-0"
+            style={{ background: running ? "rgba(220,38,38,0.12)" : "rgba(79,70,229,0.12)" }}>
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 relative"
+                style={{ background: running ? "#dc2626" : "#4f46e5" }}>
+                <Bot className="w-3.5 h-3.5 text-white" />
+                <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border-2 border-[#0b0b18] ${running ? "bg-red-400 animate-pulse" : "bg-emerald-400"}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-white">Admin Protection Bot</p>
+                <p className={`text-[10px] ${running ? "text-red-400" : "text-emerald-400"}`}>
+                  {running ? `🛡️ Protection ACTIVE · scanning every 60s` : "Idle · press Run to start protection"}
+                  {lastRefresh && <span className="text-white/25 ml-1">{lastRefresh.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}</span>}
+                </p>
+              </div>
+              {/* RUN / STOP button */}
+              <button
+                onClick={() => { setRunning(r => !r); if (!running) { setTab("security"); } }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                  running
+                    ? "bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30"
+                    : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30"
+                }`}>
+                {running ? <><span className="w-2 h-2 rounded-sm bg-red-400" /> Stop</> : <><Play className="w-3 h-3" /> Run</>}
+              </button>
+              <button onClick={() => fetchStatus(false)} title="Refresh" className="text-white/25 hover:text-white/60 p-1 transition-colors">
+                <RotateCw className={`w-3 h-3 ${scanning ? "animate-spin text-indigo-400" : ""}`} />
+              </button>
+              <button onClick={() => setOpen(false)} className="text-white/25 hover:text-white/60 p-1 transition-colors">
+                <Minimize2 className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-white">Monitor Bot</p>
-              <p className="text-[10px] text-emerald-400">
-                Live · auto-updates every 30s
-                {lastRefresh && <span className="text-white/30"> · {lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
-              </p>
+
+            {/* Tabs */}
+            <div className="flex gap-1 mt-2">
+              {([["monitor","📡 Monitor"],["security","🛡️ Security"]] as [string,string][]).map(([t,label]) => (
+                <button key={t} onClick={() => setTab(t as any)}
+                  className={`text-[11px] px-3 py-1 rounded-lg transition-colors ${
+                    tab === t ? "bg-white/10 text-white font-medium" : "text-white/35 hover:text-white/60"
+                  }`}>
+                  {label}
+                  {t === "security" && criticalCount > 0 && (
+                    <span className="ml-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold inline-flex items-center justify-center">{criticalCount}</span>
+                  )}
+                </button>
+              ))}
             </div>
-            <button onClick={() => fetchStatus(false)} title="Refresh now"
-              className="text-white/30 hover:text-white/70 transition-colors p-1">
-              <RotateCw className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={() => setOpen(false)} className="text-white/30 hover:text-white/70 transition-colors p-1">
-              <Minimize2 className="w-4 h-4" />
-            </button>
           </div>
 
-          {/* Auto-status panel (always at top) */}
-          {statusMsg && (
-            <div className="px-3 pt-2.5 pb-2 border-b border-white/6 flex-shrink-0 bg-indigo-900/10">
-              <div className="text-[11px] text-white/75 leading-relaxed">
-                {renderBotText(statusMsg.content)}
-              </div>
-            </div>
-          )}
-          {!statusMsg && (
-            <div className="px-3 pt-2.5 pb-2 border-b border-white/6 flex-shrink-0 flex items-center gap-2">
-              <Loader2 className="w-3 h-3 text-indigo-400 animate-spin" />
-              <p className="text-[11px] text-white/30">Loading live status…</p>
-            </div>
-          )}
-
-          {/* Chat history */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-            {chatMsgs.length === 0 && (
-              <div className="pt-1">
-                <p className="text-[10px] text-white/25 mb-2 text-center">Quick commands</p>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {QUICK_CMDS.map(q => (
-                    <button key={q.cmd} onClick={() => send(q.cmd)}
-                      className="text-left text-[11px] text-indigo-300 bg-indigo-600/10 hover:bg-indigo-600/25 border border-indigo-500/20 rounded-lg px-2.5 py-1.5 transition-colors">
-                      {q.label}
-                    </button>
-                  ))}
+          {/* ── MONITOR TAB ── */}
+          {tab === "monitor" && (
+            <>
+              {statusMsg ? (
+                <div className="px-3 py-2 border-b border-white/6 flex-shrink-0 bg-white/2 text-[11px] text-white/70 leading-relaxed max-h-36 overflow-y-auto">
+                  {renderBotText(statusMsg.content)}
                 </div>
-              </div>
-            )}
-
-            {chatMsgs.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
-                {m.role === "bot" && (
-                  <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 mt-1">
-                    <Bot className="w-3 h-3 text-white" />
+              ) : (
+                <div className="px-3 py-2 border-b border-white/6 flex-shrink-0 flex items-center gap-2">
+                  <Loader2 className="w-3 h-3 text-indigo-400 animate-spin" />
+                  <p className="text-[11px] text-white/25">Loading live status…</p>
+                </div>
+              )}
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {chatMsgs.length === 0 && (
+                  <div>
+                    <p className="text-[10px] text-white/20 mb-2 text-center">Quick commands</p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {QUICK_CMDS.map(q => (
+                        <button key={q.cmd} onClick={() => send(q.cmd)}
+                          className="text-left text-[11px] text-indigo-300 bg-indigo-600/10 hover:bg-indigo-600/25 border border-indigo-500/20 rounded-lg px-2.5 py-1.5 transition-colors">
+                          {q.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
-                <div className={`max-w-[84%] rounded-xl px-3 py-2 text-[11px] leading-relaxed ${
-                  m.role === "user"
-                    ? "bg-indigo-600 text-white rounded-br-sm"
-                    : "bg-white/7 text-white/85 rounded-bl-sm border border-white/6"
-                }`}>
-                  {m.role === "bot" ? renderBotText(m.content) : <p>{m.content}</p>}
-                </div>
+                {chatMsgs.map((m, i) => (
+                  <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
+                    {m.role === "bot" && (
+                      <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Bot className="w-3 h-3 text-white" />
+                      </div>
+                    )}
+                    <div className={`max-w-[84%] rounded-xl px-3 py-2 text-[11px] leading-relaxed ${m.role === "user" ? "bg-indigo-600 text-white" : "bg-white/7 text-white/85 border border-white/6"}`}>
+                      {m.role === "bot" ? renderBotText(m.content) : <p>{m.content}</p>}
+                    </div>
+                  </div>
+                ))}
+                {loading && (
+                  <div className="flex gap-2">
+                    <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
+                      <Bot className="w-3 h-3 text-white" />
+                    </div>
+                    <div className="bg-white/7 border border-white/6 rounded-xl px-3 py-2 flex gap-1 items-center">
+                      {[0,150,300].map(d => <span key={d} className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay:`${d}ms` }} />)}
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
               </div>
-            ))}
-
-            {loading && (
-              <div className="flex justify-start gap-2">
-                <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
-                  <Bot className="w-3 h-3 text-white" />
-                </div>
-                <div className="bg-white/7 border border-white/6 rounded-xl rounded-bl-sm px-3 py-2 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "300ms" }} />
-                </div>
+              <div className="px-3 pb-3 pt-2 border-t border-white/6 flex-shrink-0">
+                <form onSubmit={e => { e.preventDefault(); send(input); }} className="flex gap-2">
+                  <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
+                    placeholder="stats · orders · stock · expiring…" disabled={loading}
+                    className="flex-1 bg-white/6 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-indigo-500/50 transition-colors" />
+                  <button type="submit" disabled={loading || !input.trim()}
+                    className="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 flex items-center justify-center transition-colors self-center flex-shrink-0">
+                    <Send className="w-3.5 h-3.5 text-white" />
+                  </button>
+                </form>
               </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
+            </>
+          )}
 
-          {/* Input */}
-          <div className="px-3 pb-3 pt-2 border-t border-white/6 flex-shrink-0">
-            <form onSubmit={e => { e.preventDefault(); send(input); }} className="flex gap-2">
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                placeholder="Type a command, e.g. expiring 3 days…"
-                disabled={loading}
-                className="flex-1 bg-white/6 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-indigo-500/60 transition-colors"
-              />
-              <button type="submit" disabled={loading || !input.trim()}
-                className="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 flex items-center justify-center transition-colors flex-shrink-0 self-center">
-                <Send className="w-3.5 h-3.5 text-white" />
-              </button>
-            </form>
-            <p className="text-[9px] text-white/15 text-center mt-1">Rule-based · reads live database · no AI API needed</p>
-          </div>
+          {/* ── SECURITY TAB ── */}
+          {tab === "security" && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Scan bar */}
+              <div className="px-3 py-2 border-b border-white/6 flex-shrink-0 flex items-center gap-2">
+                <button onClick={runScan} disabled={scanning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[11px] font-medium transition-colors">
+                  {scanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                  {scanning ? "Scanning…" : "Scan Now"}
+                </button>
+                <div className="flex-1 min-w-0">
+                  {lastScan ? (
+                    <p className="text-[10px] text-white/35">
+                      Last scan: {lastScan.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" })}
+                      {running && <span className="text-emerald-400 ml-1">· auto every 60s</span>}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-white/25">Press Run or Scan Now to detect threats</p>
+                  )}
+                </div>
+                {threats.length > 0 && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/25">
+                    {threats.length} threat{threats.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+
+              {/* Threats list */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {!lastScan && !scanning && (
+                  <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
+                    <div className="w-12 h-12 rounded-full bg-indigo-600/15 border border-indigo-500/20 flex items-center justify-center">
+                      <Shield className="w-6 h-6 text-indigo-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-white">Protection Bot</p>
+                      <p className="text-xs text-white/35 mt-1">Click <strong className="text-white/50">Run</strong> for continuous protection<br/>or <strong className="text-white/50">Scan Now</strong> for a one-time check</p>
+                    </div>
+                    <div className="text-[10px] text-white/25 space-y-0.5">
+                      <p>Detects: card testing · rapid purchases</p>
+                      <p>spend spikes · suspended accounts active</p>
+                      <p>fake signups · chargeback risks</p>
+                    </div>
+                  </div>
+                )}
+
+                {scanning && threats.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full gap-2">
+                    <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                    <p className="text-sm text-white/50">Scanning for threats…</p>
+                  </div>
+                )}
+
+                {lastScan && !scanning && threats.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full gap-2 text-center">
+                    <div className="w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center">
+                      <CheckCircle className="w-6 h-6 text-emerald-400" />
+                    </div>
+                    <p className="text-sm font-medium text-white">All Clear</p>
+                    <p className="text-xs text-white/35">No suspicious activity detected</p>
+                  </div>
+                )}
+
+                {threats.map(t => {
+                  const isBanned = bannedEmails.has(t.email);
+                  return (
+                    <div key={t.id} className={`rounded-xl border p-3 space-y-1.5 ${SEVERITY_COLOR[t.severity]}`}>
+                      <div className="flex items-start gap-2">
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wide flex-shrink-0 mt-0.5 ${SEVERITY_BADGE[t.severity]}`}>
+                          {t.severity}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] font-semibold text-white">{t.type}</p>
+                          <p className="text-[10px] opacity-80 truncate">{t.email}</p>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-white/70">{t.description}</p>
+                      <p className="text-[10px] text-white/40 italic">{t.detail}</p>
+                      {t.canBan && (
+                        <button
+                          disabled={isBanned || banningEmail === t.email}
+                          onClick={() => banCustomer(t.email, `${t.type}: ${t.description}`)}
+                          className={`mt-1 w-full py-1.5 rounded-lg text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                            isBanned
+                              ? "bg-white/5 text-white/25 cursor-default border border-white/10"
+                              : "bg-red-600 hover:bg-red-500 text-white active:scale-95"
+                          }`}>
+                          {banningEmail === t.email ? (
+                            <><Loader2 className="w-3 h-3 animate-spin" /> Banning…</>
+                          ) : isBanned ? (
+                            <><CheckCircle className="w-3 h-3" /> Banned</>
+                          ) : (
+                            <><Ban className="w-3 h-3" /> Ban Account</>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </>

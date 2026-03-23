@@ -294,3 +294,183 @@ export function processAdminCommand(input: string): string {
     `- **help** — full list`,
   ].join("\n");
 }
+
+// ── Security Scanner ─────────────────────────────────────────────────────────
+
+export interface ThreatItem {
+  id: string;
+  severity: "critical" | "high" | "medium" | "low";
+  type: string;
+  email: string;
+  customerId?: number;
+  description: string;
+  detail: string;
+  detectedAt: string;
+  canBan: boolean;
+}
+
+export function runSecurityScan(): ThreatItem[] {
+  const threats: ThreatItem[] = [];
+  const now = new Date();
+  const ts = now.toISOString();
+
+  // ── 1. Card testing — many failed/pending transactions in 24h ──────────────
+  const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const cardTesters = runSql(`
+    SELECT customer_email, COUNT(*) as cnt
+    FROM transactions
+    WHERE status IN ('pending','failed') AND created_at >= ?
+    GROUP BY customer_email
+    HAVING cnt >= 3
+    ORDER BY cnt DESC
+  `, [since24h]);
+  for (const r of cardTesters) {
+    threats.push({
+      id: `card-test-${r.customer_email}`,
+      severity: r.cnt >= 6 ? "critical" : "high",
+      type: "Card Testing",
+      email: r.customer_email,
+      description: `${r.cnt} failed/pending payments in 24 hours`,
+      detail: `Possible stolen card or payment fraud. ${r.cnt} attempts without completion.`,
+      detectedAt: ts,
+      canBan: true,
+    });
+  }
+
+  // ── 2. Rapid purchases — 4+ paid orders in 1 hour ─────────────────────────
+  const since1h = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  const rapidBuyers = runSql(`
+    SELECT customer_email, COUNT(*) as cnt, SUM(amount) as total
+    FROM transactions
+    WHERE status='paid' AND created_at >= ?
+    GROUP BY customer_email
+    HAVING cnt >= 4
+    ORDER BY cnt DESC
+  `, [since1h]);
+  for (const r of rapidBuyers) {
+    threats.push({
+      id: `rapid-${r.customer_email}`,
+      severity: "high",
+      type: "Rapid Purchase",
+      email: r.customer_email,
+      description: `${r.cnt} purchases (${fmt(r.total)}) in the last hour`,
+      detail: `Unusual buying speed. Could be bulk reselling or account farming.`,
+      detectedAt: ts,
+      canBan: true,
+    });
+  }
+
+  // ── 3. Paid but never assigned — possible chargeback risk ─────────────────
+  const unassigned = runSql(`
+    SELECT customer_email, COUNT(*) as cnt
+    FROM transactions
+    WHERE status='paid' AND account_assigned=0 AND created_at < ?
+    GROUP BY customer_email
+    HAVING cnt >= 2
+  `, [new Date(now.getTime() - 60 * 60 * 1000).toISOString()]);
+  for (const r of unassigned) {
+    threats.push({
+      id: `unassigned-${r.customer_email}`,
+      severity: "medium",
+      type: "Unassigned Orders",
+      email: r.customer_email,
+      description: `${r.cnt} paid orders with no account assigned (>1h old)`,
+      detail: `Customer paid but received nothing. High chargeback/dispute risk.`,
+      detectedAt: ts,
+      canBan: false,
+    });
+  }
+
+  // ── 4. Suspended customers still placing orders ────────────────────────────
+  const suspendedActive = runSql(`
+    SELECT c.email, COUNT(t.id) as cnt
+    FROM customers c
+    JOIN transactions t ON t.customer_email = c.email
+    WHERE c.suspended = 1 AND t.created_at >= ?
+    GROUP BY c.email
+  `, [since24h]);
+  for (const r of suspendedActive) {
+    threats.push({
+      id: `suspended-active-${r.email}`,
+      severity: "critical",
+      type: "Suspended Account Active",
+      email: r.email,
+      description: `Suspended account made ${r.cnt} transaction(s) in 24h`,
+      detail: `This account is suspended but is still placing orders. Immediate action required.`,
+      detectedAt: ts,
+      canBan: true,
+    });
+  }
+
+  // ── 5. Many accounts, zero completions — likely fake signups ──────────────
+  const zeroCompletion = runSql(`
+    SELECT c.id, c.email, COUNT(t.id) as attempts
+    FROM customers c
+    LEFT JOIN transactions t ON t.customer_email = c.email AND t.status='pending'
+    WHERE c.email_verified = 0 AND c.created_at < ?
+    GROUP BY c.id
+    HAVING attempts >= 2
+    ORDER BY attempts DESC
+    LIMIT 10
+  `, [new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString()]);
+  for (const r of zeroCompletion) {
+    threats.push({
+      id: `fake-signup-${r.email}`,
+      severity: "low",
+      type: "Unverified + Pending",
+      email: r.email,
+      customerId: r.id,
+      description: `Unverified account with ${r.attempts} pending transaction(s)`,
+      detail: `Account email never verified but keeps placing orders. Likely bot or fake signup.`,
+      detectedAt: ts,
+      canBan: true,
+    });
+  }
+
+  // ── 6. Single email, huge spend spike vs history ──────────────────────────
+  const spendSpike = runSql(`
+    SELECT customer_email,
+      SUM(CASE WHEN created_at >= ? THEN amount ELSE 0 END) as today_spend,
+      SUM(CASE WHEN created_at < ? THEN amount ELSE 0 END) / MAX(1, (julianday('now') - julianday(MIN(created_at)))) as daily_avg
+    FROM transactions
+    WHERE status='paid'
+    GROUP BY customer_email
+    HAVING today_spend > 0 AND daily_avg > 0 AND today_spend > daily_avg * 5
+    ORDER BY today_spend DESC
+    LIMIT 5
+  `, [since24h, since24h]);
+  for (const r of spendSpike) {
+    threats.push({
+      id: `spend-spike-${r.customer_email}`,
+      severity: "medium",
+      type: "Spend Spike",
+      email: r.customer_email,
+      description: `Spent ${fmt(r.today_spend)} today vs avg ${fmt(Math.round(r.daily_avg))}/day`,
+      detail: `5× above normal daily spend. May indicate shared/stolen payment method.`,
+      detectedAt: ts,
+      canBan: false,
+    });
+  }
+
+  // Sort: critical first
+  const order = { critical: 0, high: 1, medium: 2, low: 3 };
+  threats.sort((a, b) => order[a.severity] - order[b.severity]);
+
+  return threats;
+}
+
+// Look up customer ID by email for banning
+export async function banCustomerByEmail(email: string, reason: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const rows = runSql("SELECT id, suspended FROM customers WHERE email = ? LIMIT 1", [email]);
+    if (rows.length === 0) return { success: false, error: "Customer not found" };
+    const { id, suspended } = rows[0];
+    if (suspended) return { success: false, error: "Already suspended" };
+    // Use the storage directly
+    const { storage } = await import("./storage");
+    await storage.updateCustomer(id, { suspended: true });
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}

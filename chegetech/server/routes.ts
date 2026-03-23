@@ -39,7 +39,7 @@ import { getCredentialsOverride, saveCredentialsOverride } from "./credentials-s
 import { logAdminAction, getAdminLogs } from "./admin-logger";
 import { logDelivery, getDeliveryProof, getDeliveryLogs } from "./delivery-log";
 import { getAIChatResponse } from "./openai-chat";
-import { processAdminCommand, getAutoStatus } from "./admin-bot";
+import { processAdminCommand, getAutoStatus, runSecurityScan, banCustomerByEmail } from "./admin-bot";
 import speakeasy from "speakeasy";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
@@ -2946,6 +2946,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/admin/bot/status", adminAuthMiddleware, (_req: any, res: any) => {
     try {
       res.json({ success: true, response: getAutoStatus() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/admin/bot/scan", adminAuthMiddleware, (_req: any, res: any) => {
+    try {
+      const threats = runSecurityScan();
+      res.json({ success: true, threats, scannedAt: new Date().toISOString() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message, threats: [] });
+    }
+  });
+
+  app.post("/api/admin/bot/ban", adminAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const { email, reason } = req.body;
+      if (!email) return res.status(400).json({ success: false, error: "Email required" });
+      const result = await banCustomerByEmail(email, reason || "Flagged by security bot");
+      if (result.success) {
+        logAdminAction(req.admin?.email || "bot", "ban_customer", `Security bot banned: ${email} — ${reason || "unusual activity"}`);
+      }
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
