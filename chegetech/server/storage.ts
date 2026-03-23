@@ -12,11 +12,11 @@ import {
 let db: any;
 let sqliteInstance: any = null;
 let pgPool: any = null;
-let dbType: "sqlite" | "pg" = "sqlite";
+export let dbType: "sqlite" | "pg" = "sqlite";
 
 const settingsCache: Map<string, string> = new Map();
 
-function getDb() {
+export function getDb() {
   if (db) return db;
   throw new Error("Database not initialized. Call initializeDatabase() first.");
 }

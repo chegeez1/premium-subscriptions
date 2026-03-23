@@ -219,7 +219,7 @@ export default function Admin() {
       </main>
 
       {/* Floating Admin AI Bot */}
-      <AdminAIBot />
+      <AdminMonitorBot />
     </div>
   );
 }
@@ -228,44 +228,80 @@ export default function Admin() {
 // ADMIN AI BOT
 // ═══════════════════════════════════════════════════════════════
 
-type AIChatMessage = { role: "user" | "assistant"; content: string; ts: number };
+type BotMessage = { role: "user" | "bot"; content: string; ts: number; isAuto?: boolean };
 
-const QUICK_ACTIONS = [
-  "📊 Show today's stats",
-  "📦 Check stock levels",
-  "🎫 Show open tickets",
-  "👥 List recent customers",
-  "📋 Show recent orders",
-  "🏷️ List promo codes",
+const QUICK_CMDS = [
+  { label: "📊 Today's stats", cmd: "stats" },
+  { label: "📦 Stock levels", cmd: "stock" },
+  { label: "⏳ Pending orders", cmd: "pending orders" },
+  { label: "👥 Recent customers", cmd: "customers" },
+  { label: "⚠️ Expiring accounts", cmd: "expiring 7 days" },
+  { label: "🏷️ Promo codes", cmd: "promo codes" },
 ];
 
 function renderBotText(text: string) {
-  const lines = text.split("\n");
-  return lines.map((line, i) => {
-    const boldLine = line.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/`(.*?)`/g, "<code style='background:rgba(255,255,255,0.1);padding:1px 4px;border-radius:3px;font-size:11px'>$1</code>");
+  return text.split("\n").map((line, i) => {
+    const html = line
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/`(.*?)`/g, "<code style='background:rgba(99,102,241,0.2);padding:1px 5px;border-radius:3px;font-size:10px;color:#a5b4fc'>$1</code>");
     const isBullet = /^[-•*]\s/.test(line) || /^\d+\.\s/.test(line);
     return (
-      <p key={i} className={`${isBullet ? "ml-2" : ""} ${i < lines.length - 1 ? "mb-1" : ""}`}
-        dangerouslySetInnerHTML={{ __html: boldLine || "&nbsp;" }} />
+      <p key={i} className={`${isBullet ? "ml-3" : ""} ${i < text.split("\n").length - 1 ? "mb-0.5" : ""}`}
+        dangerouslySetInnerHTML={{ __html: html || "&nbsp;" }} />
     );
   });
 }
 
-function AdminAIBot() {
+function AdminMonitorBot() {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<AIChatMessage[]>([]);
+  const [messages, setMessages] = useState<BotMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [unread, setUnread] = useState(0);
+  const [alerts, setAlerts] = useState(0);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Fetch auto-status from server
+  async function fetchStatus(silent = false) {
+    try {
+      const res = await authFetch("/api/admin/bot/status");
+      if (res.success) {
+        const botMsg: BotMessage = { role: "bot", content: res.response, ts: Date.now(), isAuto: true };
+        if (silent) {
+          setMessages(prev => {
+            const withoutOldAuto = prev.filter(m => !m.isAuto);
+            return [botMsg, ...withoutOldAuto];
+          });
+        } else {
+          setMessages(prev => [botMsg, ...prev.filter(m => !m.isAuto)]);
+        }
+        setLastRefresh(new Date());
+        // Count alert lines
+        const alertCount = (res.response.match(/🚨|⚠️|⏳|🔴|🟡/g) || []).length;
+        if (!open) setAlerts(alertCount);
+      }
+    } catch { /* silent fail */ }
+  }
+
+  // On open: fetch status immediately, start poll
   useEffect(() => {
     if (open) {
-      setUnread(0);
-      setTimeout(() => inputRef.current?.focus(), 100);
+      setAlerts(0);
+      fetchStatus(false);
+      setTimeout(() => inputRef.current?.focus(), 150);
+      pollRef.current = setInterval(() => fetchStatus(true), 30000);
+    } else {
+      if (pollRef.current) clearInterval(pollRef.current);
     }
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [open]);
+
+  // Background poll every 60s even when closed (for badge count)
+  useEffect(() => {
+    const bg = setInterval(() => { if (!open) fetchStatus(true); }, 60000);
+    return () => clearInterval(bg);
   }, [open]);
 
   useEffect(() => {
@@ -278,122 +314,127 @@ function AdminAIBot() {
     const msg = text.trim();
     if (!msg || loading) return;
     setInput("");
-    const userMsg: AIChatMessage = { role: "user", content: msg, ts: Date.now() };
+    const userMsg: BotMessage = { role: "user", content: msg, ts: Date.now() };
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
-
     try {
       const res = await authFetch("/api/admin/ai-assistant", {
         method: "POST",
-        body: JSON.stringify({ message: msg, sessionId }),
+        body: JSON.stringify({ message: msg }),
       });
-      if (res.success) {
-        setSessionId(res.sessionId);
-        const botMsg: AIChatMessage = { role: "assistant", content: res.response, ts: Date.now() };
-        setMessages(prev => [...prev, botMsg]);
-        if (!open) setUnread(n => n + 1);
-      } else {
-        setMessages(prev => [...prev, { role: "assistant", content: `Error: ${res.error || "Something went wrong"}`, ts: Date.now() }]);
-      }
+      const botMsg: BotMessage = {
+        role: "bot",
+        content: res.success ? res.response : `Error: ${res.error || "Something went wrong"}`,
+        ts: Date.now(),
+      };
+      setMessages(prev => [...prev, botMsg]);
     } catch {
-      setMessages(prev => [...prev, { role: "assistant", content: "Network error. Please try again.", ts: Date.now() }]);
+      setMessages(prev => [...prev, { role: "bot", content: "Network error — check connection.", ts: Date.now() }]);
     } finally {
       setLoading(false);
     }
   }
 
-  function clearChat() {
-    if (sessionId) {
-      authFetch(`/api/admin/ai-assistant/session/${sessionId}`, { method: "DELETE" }).catch(() => {});
-    }
-    setMessages([]);
-    setSessionId(null);
-    setUnread(0);
-  }
+  const statusMsg = messages.find(m => m.isAuto);
+  const chatMsgs = messages.filter(m => !m.isAuto);
 
   return (
     <>
       {/* Floating button */}
       <button
         onClick={() => setOpen(o => !o)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 shadow-2xl shadow-indigo-900/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
-        title="Admin AI Assistant"
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 shadow-2xl shadow-indigo-900/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95 relative"
+        title="Admin Monitor Bot"
       >
         {open ? <Minimize2 className="w-5 h-5 text-white" /> : <Bot className="w-6 h-6 text-white" />}
-        {!open && unread > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-            {unread}
+        {!open && alerts > 0 && (
+          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+            {alerts}
           </span>
         )}
       </button>
 
-      {/* Chat panel */}
+      {/* Panel */}
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 w-[380px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#0f0f1a] shadow-2xl shadow-black/60 flex flex-col overflow-hidden"
-          style={{ height: "520px" }}>
+        <div className="fixed bottom-24 right-6 z-50 w-[390px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#0d0d1b] shadow-2xl shadow-black/70 flex flex-col overflow-hidden"
+          style={{ height: "560px" }}>
 
           {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 bg-indigo-600/20 border-b border-white/8">
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
-              <Sparkles className="w-4 h-4 text-white" />
+          <div className="flex items-center gap-3 px-4 py-3 bg-indigo-700/20 border-b border-white/8 flex-shrink-0">
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 relative">
+              <Bot className="w-4 h-4 text-white" />
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-[#0d0d1b]" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-white">Admin Assistant</p>
-              <p className="text-[10px] text-indigo-300">Powered by AI · Full panel access</p>
+              <p className="text-sm font-semibold text-white">Monitor Bot</p>
+              <p className="text-[10px] text-emerald-400">
+                Live · auto-updates every 30s
+                {lastRefresh && <span className="text-white/30"> · {lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
+              </p>
             </div>
-            <button onClick={clearChat} title="Clear chat" className="text-white/30 hover:text-white/70 transition-colors p-1">
-              <Trash2 className="w-4 h-4" />
+            <button onClick={() => fetchStatus(false)} title="Refresh now"
+              className="text-white/30 hover:text-white/70 transition-colors p-1">
+              <RotateCw className="w-3.5 h-3.5" />
             </button>
             <button onClick={() => setOpen(false)} className="text-white/30 hover:text-white/70 transition-colors p-1">
               <Minimize2 className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {messages.length === 0 && (
-              <div className="flex flex-col items-center justify-center h-full gap-4 pb-4">
-                <div className="w-12 h-12 rounded-full bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
-                  <Bot className="w-6 h-6 text-indigo-400" />
-                </div>
-                <div className="text-center">
-                  <p className="text-sm font-medium text-white">Hi! I'm your Admin Assistant</p>
-                  <p className="text-xs text-white/40 mt-1">I can manage customers, orders, tickets,<br/>promos, stock and more. Just ask!</p>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5 w-full px-2">
-                  {QUICK_ACTIONS.map(action => (
-                    <button key={action} onClick={() => send(action)}
-                      className="text-left text-[11px] text-indigo-300 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 rounded-lg px-2.5 py-1.5 transition-colors truncate">
-                      {action}
+          {/* Auto-status panel (always at top) */}
+          {statusMsg && (
+            <div className="px-3 pt-2.5 pb-2 border-b border-white/6 flex-shrink-0 bg-indigo-900/10">
+              <div className="text-[11px] text-white/75 leading-relaxed">
+                {renderBotText(statusMsg.content)}
+              </div>
+            </div>
+          )}
+          {!statusMsg && (
+            <div className="px-3 pt-2.5 pb-2 border-b border-white/6 flex-shrink-0 flex items-center gap-2">
+              <Loader2 className="w-3 h-3 text-indigo-400 animate-spin" />
+              <p className="text-[11px] text-white/30">Loading live status…</p>
+            </div>
+          )}
+
+          {/* Chat history */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+            {chatMsgs.length === 0 && (
+              <div className="pt-1">
+                <p className="text-[10px] text-white/25 mb-2 text-center">Quick commands</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {QUICK_CMDS.map(q => (
+                    <button key={q.cmd} onClick={() => send(q.cmd)}
+                      className="text-left text-[11px] text-indigo-300 bg-indigo-600/10 hover:bg-indigo-600/25 border border-indigo-500/20 rounded-lg px-2.5 py-1.5 transition-colors">
+                      {q.label}
                     </button>
                   ))}
                 </div>
               </div>
             )}
 
-            {messages.map((m, i) => (
+            {chatMsgs.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
-                {m.role === "assistant" && (
-                  <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <Sparkles className="w-3 h-3 text-white" />
+                {m.role === "bot" && (
+                  <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 mt-1">
+                    <Bot className="w-3 h-3 text-white" />
                   </div>
                 )}
-                <div className={`max-w-[82%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${
+                <div className={`max-w-[84%] rounded-xl px-3 py-2 text-[11px] leading-relaxed ${
                   m.role === "user"
                     ? "bg-indigo-600 text-white rounded-br-sm"
-                    : "bg-white/8 text-white/85 rounded-bl-sm border border-white/5"
+                    : "bg-white/7 text-white/85 rounded-bl-sm border border-white/6"
                 }`}>
-                  {m.role === "assistant" ? renderBotText(m.content) : <p>{m.content}</p>}
+                  {m.role === "bot" ? renderBotText(m.content) : <p>{m.content}</p>}
                 </div>
               </div>
             ))}
 
             {loading && (
               <div className="flex justify-start gap-2">
-                <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
-                  <Sparkles className="w-3 h-3 text-white" />
+                <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
+                  <Bot className="w-3 h-3 text-white" />
                 </div>
-                <div className="bg-white/8 border border-white/5 rounded-2xl rounded-bl-sm px-3 py-2.5 flex items-center gap-1">
+                <div className="bg-white/7 border border-white/6 rounded-xl rounded-bl-sm px-3 py-2 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "0ms" }} />
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "150ms" }} />
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "300ms" }} />
@@ -404,22 +445,22 @@ function AdminAIBot() {
           </div>
 
           {/* Input */}
-          <div className="px-3 pb-3 pt-2 border-t border-white/6">
+          <div className="px-3 pb-3 pt-2 border-t border-white/6 flex-shrink-0">
             <form onSubmit={e => { e.preventDefault(); send(input); }} className="flex gap-2">
               <input
                 ref={inputRef}
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                placeholder="Ask me anything or give a command…"
+                placeholder="Type a command, e.g. expiring 3 days…"
                 disabled={loading}
-                className="flex-1 bg-white/6 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/25 focus:outline-none focus:border-indigo-500/60 transition-colors"
+                className="flex-1 bg-white/6 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-indigo-500/60 transition-colors"
               />
               <button type="submit" disabled={loading || !input.trim()}
-                className="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors flex-shrink-0 self-center">
+                className="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 flex items-center justify-center transition-colors flex-shrink-0 self-center">
                 <Send className="w-3.5 h-3.5 text-white" />
               </button>
             </form>
-            <p className="text-[9px] text-white/20 text-center mt-1.5">AI can make changes · always review results</p>
+            <p className="text-[9px] text-white/15 text-center mt-1">Rule-based · reads live database · no AI API needed</p>
           </div>
         </div>
       )}
