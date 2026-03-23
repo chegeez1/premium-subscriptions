@@ -267,6 +267,33 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
             await storage.creditWallet(refereeCustomer.id, REFEREE_REWARD, "Welcome bonus — referral credit on first purchase", transaction.reference);
           }
           dbSettingsSet(pendingReferralKey, "");
+
+          // ─── 10-referral milestone: auto-assign a free Netflix or Showmax account ──
+          try {
+            const stats = await storage.getReferralStats(referral.referrerId);
+            if (stats.completedReferrals === 10) {
+              const referrerCustomer = await storage.getCustomerById(referral.referrerId);
+              if (referrerCustomer) {
+                const milestoneKey = `referral_milestone_10_${referral.referrerId}`;
+                if (!dbSettingsGet(milestoneKey)) {
+                  dbSettingsSet(milestoneKey, "claimed");
+                  const FREE_PLAN_IDS = ["netflix-shared-1m", "netflix-shared", "showmax-1m", "showmax-shared", "netflix", "showmax"];
+                  let freeAccount: any = null;
+                  let freePlanName = "";
+                  for (const pid of FREE_PLAN_IDS) {
+                    freeAccount = accountManager.assignAccount(pid, referrerCustomer.email, referrerCustomer.name || "Customer");
+                    if (freeAccount) { freePlanName = pid.replace(/-/g, " ").toUpperCase(); break; }
+                  }
+                  if (freeAccount) {
+                    await sendAccountEmail(referrerCustomer.email, `${freePlanName} (10-Referral Reward)`, freeAccount, referrerCustomer.name || "Customer");
+                    await storage.creditWallet(referral.referrerId, 0, "🎉 10-referral milestone unlocked — free subscription sent to your email!");
+                  }
+                }
+              }
+            }
+          } catch (milestoneErr: any) {
+            console.error("[referral] Milestone check error:", milestoneErr.message);
+          }
         }
       }
     }
@@ -1115,6 +1142,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!customer) return res.status(401).json({ success: false, error: "Invalid email or password" });
       if (!customer.emailVerified) return res.status(403).json({ success: false, error: "Please verify your email first", needsVerification: true, email });
       if (!customer.passwordHash) return res.status(401).json({ success: false, error: "Invalid account" });
+      if (customer.suspended) return res.status(403).json({ success: false, error: "Your account has been suspended. Please contact support to resolve this.", suspended: true });
 
       const valid = await bcrypt.compare(password, customer.passwordHash);
       if (!valid) return res.status(401).json({ success: false, error: "Invalid email or password" });
@@ -1905,6 +1933,62 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         id: c.id, email: c.email, name: c.name, emailVerified: c.emailVerified, createdAt: c.createdAt,
       })),
     });
+  });
+
+  // ─── Customer: Support Tickets ───────────────────────────────────────
+  app.get("/api/customer/tickets", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const tickets = await storage.getTicketsByEmail(req.customer.email);
+      res.json({ success: true, tickets });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/customer/tickets/:id/messages", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getTicketById(ticketId);
+      if (!ticket || ticket.customerEmail !== req.customer.email) {
+        return res.status(403).json({ success: false, error: "Ticket not found" });
+      }
+      const messages = await storage.getMessages(ticketId);
+      res.json({ success: true, ticket, messages });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/customer/tickets", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { subject, message } = req.body;
+      if (!message) return res.status(400).json({ success: false, error: "Message is required" });
+      const ticket = await storage.createTicket({
+        customerEmail: req.customer.email,
+        customerName: req.customer.name || undefined,
+        subject: subject || "Support Request",
+      });
+      await storage.addMessage({ ticketId: ticket.id, sender: "customer", message });
+      res.json({ success: true, ticket });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/customer/tickets/:id/reply", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getTicketById(ticketId);
+      if (!ticket || ticket.customerEmail !== req.customer.email) {
+        return res.status(403).json({ success: false, error: "Ticket not found" });
+      }
+      const { message } = req.body;
+      if (!message) return res.status(400).json({ success: false, error: "Message is required" });
+      const msg = await storage.addMessage({ ticketId, sender: "customer", message });
+      res.json({ success: true, message: msg });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // ─── Customer: Wallet ────────────────────────────────────────────────

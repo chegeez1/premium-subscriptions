@@ -24,6 +24,7 @@ export default function Auth() {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [suspended, setSuspended] = useState(false);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [referralCode, setReferralCode] = useState(() => {
     const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
@@ -121,6 +122,9 @@ export default function Auth() {
       } else if (data.needsVerification) {
         setMode("verify");
         toast({ title: "Verify your email", description: "Enter the code sent to your email" });
+      } else if (data.suspended) {
+        toast({ title: "Account Suspended", description: "Your account has been suspended. Please contact support to resolve this.", variant: "destructive" });
+        setSuspended(true);
       } else {
         toast({ title: "Login failed", description: data.error, variant: "destructive" });
       }
@@ -437,6 +441,19 @@ export default function Auth() {
           {/* LOGIN FORM */}
           {mode === "login" && (
             <form onSubmit={handleLogin} className="space-y-4">
+              {suspended && (
+                <div className="rounded-xl p-4 border border-red-500/30" style={{ background: "rgba(239,68,68,.1)" }}>
+                  <p className="text-red-400 text-sm font-semibold mb-1">Account Suspended</p>
+                  <p className="text-red-300/80 text-xs">Your account has been suspended. Please contact our support team to resolve this issue.</p>
+                  <button
+                    type="button"
+                    onClick={() => window.open("https://wa.me/" + "254114291301", "_blank")}
+                    className="mt-2 text-xs text-red-300 underline hover:text-red-200"
+                  >
+                    Contact Support on WhatsApp →
+                  </button>
+                </div>
+              )}
               <div>
                 <label className="text-xs text-white/60 block mb-1.5">Email Address</label>
                 <NeonInput icon={<Mail className="w-4 h-4" />} type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} required testId="input-login-email" />

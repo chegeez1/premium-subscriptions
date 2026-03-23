@@ -194,6 +194,7 @@ Reply with a number:
 1️⃣ - My Orders / Get Credentials
 2️⃣ - Browse Plans & Prices
 3️⃣ - Contact Support
+4️⃣ - My Support Tickets
 
 Type *menu* anytime to see options again.`;
 
@@ -236,11 +237,54 @@ async function handleMessage(from: string, text: string) {
       return;
     }
     if (msg === "3") {
-      sessionState[from] = { step: "await_support" };
-      await sendMessage(from, "💬 Type your message and we'll reply shortly:");
+      sessionState[from] = { step: "await_support_email" };
+      await sendMessage(from, "📧 Please enter your *email address* so we can track your request:");
       return;
     }
-    await sendMessage(from, "Please reply with *1*, *2*, or *3*.\n\nType *menu* to see options again.");
+    if (msg === "4") {
+      sessionState[from] = { step: "await_ticket_email" };
+      await sendMessage(from, "📧 Enter your *email address* to view your support tickets:");
+      return;
+    }
+    await sendMessage(from, "Please reply with *1*, *2*, *3*, or *4*.\n\nType *menu* to see options again.");
+    return;
+  }
+
+  if (state.step === "await_ticket_email") {
+    const email = text.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      await sendMessage(from, "❌ Invalid email. Please try again:");
+      return;
+    }
+    try {
+      const tickets = await storage.getTicketsByEmail(email);
+      if (!tickets.length) {
+        await sendMessage(from, `😔 No support tickets found for *${email}*.\n\nType *3* from the menu to create one.\n\nType *menu* to go back.`);
+      } else {
+        const lines = ["📋 *Your Support Tickets:*", ""];
+        for (const t of tickets.slice(0, 5)) {
+          const statusEmoji = t.status === "open" ? "🟡" : t.status === "escalated" ? "🔴" : "✅";
+          lines.push(`${statusEmoji} *#${t.id}* — ${t.subject || "Support Request"} (${t.status})`);
+          lines.push(`   ${new Date(t.createdAt).toLocaleDateString()}`);
+        }
+        lines.push("", "Reply via our website to see full ticket messages.");
+        await sendMessage(from, lines.join("\n"));
+      }
+    } catch {
+      await sendMessage(from, "❌ Could not look up tickets. Please try again later.\n\nType *menu* to go back.");
+    }
+    sessionState[from] = { step: "menu" };
+    return;
+  }
+
+  if (state.step === "await_support_email") {
+    const email = text.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      await sendMessage(from, "❌ Invalid email. Please try again:");
+      return;
+    }
+    sessionState[from] = { step: "await_support_message", data: { email } };
+    await sendMessage(from, "✅ Got it! Now type your *support message* and we'll create a ticket for you:");
     return;
   }
 
@@ -272,10 +316,21 @@ async function handleMessage(from: string, text: string) {
     return;
   }
 
-  if (state.step === "await_support") {
+  if (state.step === "await_support_message") {
+    const email = state.data?.email || "";
     const phone = from.replace("@s.whatsapp.net", "");
-    await sendTelegramMessage(`💬 <b>WhatsApp Support</b>\n\nFrom: +${phone}\n\n${text}`).catch(() => {});
-    await sendMessage(from, "✅ Message received! We'll get back to you shortly.\n\nType *menu* to go back.");
+    try {
+      const ticket = await storage.createTicket({
+        customerEmail: email,
+        customerName: `WhatsApp +${phone}`,
+        subject: "WhatsApp Support Request",
+      });
+      await storage.addMessage({ ticketId: ticket.id, sender: "customer", message: `📱 Via WhatsApp (+${phone}): ${text}` });
+      await sendTelegramMessage(`💬 <b>WhatsApp Support Ticket #${ticket.id}</b>\n\nEmail: ${email}\nPhone: +${phone}\n\n${text}`).catch(() => {});
+      await sendMessage(from, `✅ *Ticket #${ticket.id} created!*\n\nWe'll get back to you shortly.\n\nYou can view your ticket history by selecting *4* from the menu.\n\nType *menu* to go back.`);
+    } catch {
+      await sendMessage(from, "✅ Message received! We'll get back to you shortly.\n\nType *menu* to go back.");
+    }
     sessionState[from] = { step: "menu" };
     return;
   }

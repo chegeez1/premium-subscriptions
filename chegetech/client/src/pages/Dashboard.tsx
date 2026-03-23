@@ -7,7 +7,8 @@ import {
   CheckCircle, Clock, XCircle, Shield, Eye, EyeOff,
   Loader2, ArrowLeft, QrCode, Lock, AlertTriangle,
   ChevronDown, ChevronUp, AlertCircle, Save, Package,
-  Wallet, Link2, History, TrendingUp, Gift, ArrowUpCircle, ArrowDownCircle
+  Wallet, Link2, History, TrendingUp, Gift, ArrowUpCircle, ArrowDownCircle,
+  MessageCircle, Send, PlusCircle, Ticket
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ async function customerFetch(url: string, opts: RequestInit = {}) {
   return res.json();
 }
 
-type DashTab = "orders" | "wallet" | "referral" | "payment-history" | "apikeys" | "security" | "profile";
+type DashTab = "orders" | "wallet" | "referral" | "payment-history" | "support" | "apikeys" | "security" | "profile";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   success: { label: "Completed", color: "text-emerald-400", icon: CheckCircle },
@@ -127,6 +128,57 @@ export default function Dashboard() {
     toast({ title: "Referral link copied!" });
     setTimeout(() => setCopiedReferral(false), 2000);
   }
+
+  const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
+  const [newTicketSubject, setNewTicketSubject] = useState("");
+  const [newTicketMessage, setNewTicketMessage] = useState("");
+  const [showNewTicket, setShowNewTicket] = useState(false);
+  const [replyText, setReplyText] = useState("");
+
+  const { data: ticketsData, isLoading: ticketsLoading, refetch: refetchTickets } = useQuery<any>({
+    queryKey: ["/api/customer/tickets"],
+    queryFn: () => customerFetch("/api/customer/tickets"),
+    enabled: tab === "support",
+  });
+
+  const { data: ticketMessagesData, isLoading: ticketMsgsLoading, refetch: refetchTicketMsgs } = useQuery<any>({
+    queryKey: ["/api/customer/tickets", selectedTicketId, "messages"],
+    queryFn: () => customerFetch(`/api/customer/tickets/${selectedTicketId}/messages`),
+    enabled: !!selectedTicketId,
+  });
+
+  const createTicketMutation = useMutation({
+    mutationFn: () => customerFetch("/api/customer/tickets", {
+      method: "POST",
+      body: JSON.stringify({ subject: newTicketSubject.trim() || "Support Request", message: newTicketMessage.trim() }),
+    }),
+    onSuccess: (data) => {
+      if (data.success) {
+        toast({ title: "Ticket created!", description: `Ticket #${data.ticket.id} has been opened` });
+        setShowNewTicket(false);
+        setNewTicketSubject("");
+        setNewTicketMessage("");
+        refetchTickets();
+      } else {
+        toast({ title: "Failed", description: data.error, variant: "destructive" });
+      }
+    },
+  });
+
+  const replyTicketMutation = useMutation({
+    mutationFn: (ticketId: number) => customerFetch(`/api/customer/tickets/${ticketId}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ message: replyText.trim() }),
+    }),
+    onSuccess: (data) => {
+      if (data.success) {
+        setReplyText("");
+        refetchTicketMsgs();
+      } else {
+        toast({ title: "Failed", description: data.error, variant: "destructive" });
+      }
+    },
+  });
 
   const generateKeyMutation = useMutation({
     mutationFn: () => customerFetch("/api/customer/api-keys", {
@@ -323,6 +375,7 @@ export default function Dashboard() {
             { id: "wallet", label: "Wallet", icon: Wallet },
             { id: "referral", label: "Referral", icon: Gift },
             { id: "payment-history", label: "Payments", icon: History },
+            { id: "support", label: "Support", icon: MessageCircle },
             { id: "apikeys", label: "API Keys", icon: Key },
             { id: "security", label: "Security", icon: Shield },
             { id: "profile", label: "Profile", icon: User },
@@ -536,6 +589,24 @@ export default function Dashboard() {
                   </div>
                   <p className="text-xs text-white/30 mt-2">Referral code: <span className="font-mono text-white/60">{referralData?.code ?? "—"}</span></p>
                 </div>
+                <div className="rounded-xl p-4 border border-amber-500/20" style={{ background: "rgba(245,158,11,.06)" }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold text-amber-300">🎯 10-Referral Milestone</h3>
+                    <span className="text-xs text-amber-400 font-bold">{referralData?.stats?.completedReferrals ?? 0}/10</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-white/10 mb-2">
+                    <div
+                      className="h-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all"
+                      style={{ width: `${Math.min(100, ((referralData?.stats?.completedReferrals ?? 0) / 10) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-amber-200/60">
+                    {(referralData?.stats?.completedReferrals ?? 0) >= 10
+                      ? "🎉 Milestone unlocked! Check your email for your free subscription."
+                      : `Refer ${10 - (referralData?.stats?.completedReferrals ?? 0)} more friend${10 - (referralData?.stats?.completedReferrals ?? 0) === 1 ? "" : "s"} to unlock a FREE Netflix or Showmax subscription!`
+                    }
+                  </p>
+                </div>
                 <div className="rounded-xl p-4 border border-indigo-500/20" style={{ background: "rgba(99,102,241,.08)" }}>
                   <h3 className="text-sm font-semibold text-indigo-300 mb-2">How it works</h3>
                   <ul className="space-y-1.5 text-xs text-white/50">
@@ -543,6 +614,7 @@ export default function Dashboard() {
                     <li>• They sign up using your link and make their first purchase</li>
                     <li>• You earn <span className="text-emerald-400 font-semibold">KES 100</span> wallet credit automatically</li>
                     <li>• Your friend also gets <span className="text-emerald-400 font-semibold">KES 50</span> as a welcome bonus</li>
+                    <li>• Get <span className="text-amber-400 font-semibold">10 referrals</span> and receive a <span className="text-amber-400 font-semibold">FREE Netflix or Showmax</span> account!</li>
                   </ul>
                 </div>
               </>
@@ -610,6 +682,148 @@ export default function Dashboard() {
                   )}
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {/* SUPPORT TICKETS TAB */}
+        {tab === "support" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Support Tickets</h2>
+              <Button
+                size="sm"
+                onClick={() => { setShowNewTicket(true); setSelectedTicketId(null); }}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white"
+                data-testid="button-new-ticket"
+              >
+                <PlusCircle className="w-4 h-4 mr-1.5" />New Ticket
+              </Button>
+            </div>
+
+            {showNewTicket && (
+              <div className="rounded-xl p-5 border border-indigo-500/30" style={{ background: "rgba(99,102,241,.08)" }}>
+                <h3 className="text-sm font-semibold text-white mb-3">Create New Support Ticket</h3>
+                <div className="space-y-3">
+                  <Input
+                    placeholder="Subject (e.g. Account activation issue)"
+                    value={newTicketSubject}
+                    onChange={(e) => setNewTicketSubject(e.target.value)}
+                    className="bg-white/5 border-white/10 text-white placeholder-white/30"
+                  />
+                  <textarea
+                    placeholder="Describe your issue in detail..."
+                    value={newTicketMessage}
+                    onChange={(e) => setNewTicketMessage(e.target.value)}
+                    rows={4}
+                    className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 bg-white/5 border border-white/10 resize-none outline-none focus:border-indigo-500/50"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => createTicketMutation.mutate()}
+                      disabled={!newTicketMessage.trim() || createTicketMutation.isPending}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white"
+                    >
+                      {createTicketMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      <span className="ml-1.5">Submit</span>
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setShowNewTicket(false)} className="text-white/40 hover:text-white">
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedTicketId && ticketMessagesData?.success && (
+              <div className="rounded-xl border border-white/10" style={{ background: "rgba(255,255,255,.03)" }}>
+                <div className="flex items-center gap-2 p-4 border-b border-white/8">
+                  <button onClick={() => setSelectedTicketId(null)} className="text-white/40 hover:text-white transition-colors">
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <div>
+                    <p className="text-sm font-semibold text-white">{ticketMessagesData.ticket?.subject || "Support Request"}</p>
+                    <p className="text-xs text-white/40">Ticket #{selectedTicketId} · {ticketMessagesData.ticket?.status}</p>
+                  </div>
+                </div>
+                <div className="p-4 space-y-3 max-h-64 overflow-y-auto">
+                  {ticketMsgsLoading ? (
+                    <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /></div>
+                  ) : (ticketMessagesData.messages ?? []).map((msg: any) => (
+                    <div key={msg.id} className={`flex ${msg.sender === "customer" ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-xs rounded-xl px-3 py-2 text-sm ${msg.sender === "customer" ? "bg-indigo-600/40 text-white" : "bg-white/8 text-white/80"}`}>
+                        <p className={`text-xs mb-1 ${msg.sender === "customer" ? "text-indigo-300" : "text-emerald-400"}`}>
+                          {msg.sender === "customer" ? "You" : "Support"}
+                        </p>
+                        <p>{msg.message}</p>
+                        <p className="text-xs text-white/30 mt-1">{new Date(msg.createdAt).toLocaleTimeString()}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {ticketMessagesData.ticket?.status !== "closed" && (
+                  <div className="flex gap-2 p-4 border-t border-white/8">
+                    <Input
+                      placeholder="Type a reply..."
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      className="flex-1 bg-white/5 border-white/10 text-white placeholder-white/30"
+                      onKeyDown={(e) => { if (e.key === "Enter" && replyText.trim()) replyTicketMutation.mutate(selectedTicketId); }}
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => replyTicketMutation.mutate(selectedTicketId)}
+                      disabled={!replyText.trim() || replyTicketMutation.isPending}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white"
+                    >
+                      {replyTicketMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!selectedTicketId && (
+              ticketsLoading ? (
+                <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+              ) : (ticketsData?.tickets ?? []).length === 0 ? (
+                <div className="text-center py-16 rounded-2xl border border-white/8" style={{ background: "rgba(255,255,255,.03)" }}>
+                  <Ticket className="w-10 h-10 text-white/20 mx-auto mb-3" />
+                  <p className="text-white/40 font-medium">No support tickets yet</p>
+                  <p className="text-white/25 text-sm mt-1">Create a ticket if you need help with your account or order</p>
+                  <Button size="sm" className="mt-4 bg-indigo-600 hover:bg-indigo-500 text-white" onClick={() => setShowNewTicket(true)}>
+                    Open a Ticket
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {(ticketsData?.tickets ?? []).map((ticket: any) => {
+                    const statusColor = ticket.status === "open" ? "text-amber-400" : ticket.status === "escalated" ? "text-red-400" : "text-emerald-400";
+                    const statusDot = ticket.status === "open" ? "bg-amber-400" : ticket.status === "escalated" ? "bg-red-400" : "bg-emerald-400";
+                    return (
+                      <button
+                        key={ticket.id}
+                        onClick={() => { setSelectedTicketId(ticket.id); setShowNewTicket(false); }}
+                        className="w-full flex items-center justify-between p-4 rounded-xl border border-white/8 hover:border-white/15 transition-all text-left"
+                        style={{ background: "rgba(255,255,255,.03)" }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-2 h-2 rounded-full ${statusDot}`} />
+                          <div>
+                            <p className="text-sm font-medium text-white">{ticket.subject || "Support Request"}</p>
+                            <p className="text-xs text-white/30">#{ticket.id} · {new Date(ticket.createdAt).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-medium ${statusColor}`}>{ticket.status}</span>
+                          <ChevronDown className="w-4 h-4 text-white/20 rotate-[-90deg]" />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )
             )}
           </div>
         )}

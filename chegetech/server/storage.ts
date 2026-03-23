@@ -435,6 +435,7 @@ export interface IStorage {
   getTicketByToken(token: string): Promise<SupportTicket | undefined>;
   updateTicket(id: number, data: Partial<SupportTicket>): Promise<SupportTicket | undefined>;
   getOpenTickets(): Promise<SupportTicket[]>;
+  getTicketsByEmail(email: string): Promise<SupportTicket[]>;
   addMessage(data: { ticketId: number; sender: string; message: string }): Promise<SupportMessage>;
   getMessages(ticketId: number): Promise<SupportMessage[]>;
 
@@ -681,6 +682,19 @@ export class DbStorage implements IStorage {
       }));
     }
     const rows = sqliteInstance!.prepare("SELECT * FROM support_tickets WHERE status IN ('open', 'escalated') ORDER BY updated_at DESC").all() as any[];
+    return rows.map((row: any) => ({
+      id: row.id, token: row.token, customerEmail: row.customer_email, customerName: row.customer_name, subject: row.subject, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
+    }));
+  }
+
+  async getTicketsByEmail(email: string): Promise<SupportTicket[]> {
+    if (dbType === "pg" && pgPool) {
+      const result = await pgPool.query("SELECT * FROM support_tickets WHERE customer_email = $1 ORDER BY updated_at DESC", [email]);
+      return result.rows.map((row: any) => ({
+        id: row.id, token: row.token, customerEmail: row.customer_email, customerName: row.customer_name, subject: row.subject, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
+      }));
+    }
+    const rows = sqliteInstance!.prepare("SELECT * FROM support_tickets WHERE customer_email = ? ORDER BY updated_at DESC").all(email) as any[];
     return rows.map((row: any) => ({
       id: row.id, token: row.token, customerEmail: row.customer_email, customerName: row.customer_name, subject: row.subject, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
     }));
