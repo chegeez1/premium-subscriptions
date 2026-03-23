@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, Component } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
@@ -25,6 +25,25 @@ import { Switch } from "@/components/ui/switch";
 
 type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
 
+class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
+  constructor(props: any) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e: any) { return { error: e?.message || "Unknown error" }; }
+  componentDidCatch(e: any, info: any) { console.error("[Settings crash]", e, info); }
+  render() {
+    if (this.state.error) return (
+      <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/25 space-y-3">
+        <p className="text-red-400 font-semibold">Settings failed to load</p>
+        <p className="text-red-300/70 text-sm font-mono break-all">{this.state.error}</p>
+        <button onClick={() => this.setState({ error: null })}
+          className="text-xs px-3 py-1.5 rounded-lg bg-red-600/30 hover:bg-red-600/50 text-red-300 transition-colors">
+          Retry
+        </button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
 const STATUS_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
   success: { label: "Completed", icon: CheckCircle, color: "text-emerald-400" },
   pending: { label: "Pending", icon: Clock, color: "text-amber-400" },
@@ -39,13 +58,22 @@ function authHeaders() {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-// authFetch: for authenticated admin API calls (auto-logout on 401)
+// Module-level callback so authFetch can trigger graceful logout without reloading
+let _onSessionExpired: (() => void) | null = null;
+function registerSessionExpiredHandler(fn: () => void) { _onSessionExpired = fn; }
+
+// authFetch: for authenticated admin API calls (graceful logout on 401)
 async function authFetch(url: string, options: RequestInit = {}) {
   const res = await fetch(url, {
     ...options,
     headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) } as HeadersInit,
   });
-  if (res.status === 401) { clearToken(); window.location.reload(); }
+  if (res.status === 401) {
+    clearToken();
+    if (_onSessionExpired) _onSessionExpired();
+    else window.location.reload();
+    return {};
+  }
   return res.json();
 }
 
@@ -71,6 +99,15 @@ export default function Admin() {
   const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
   const [adminProfile, setAdminProfile] = useState<{ name: string; avatar: string; email: string } | null>(null);
   const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    registerSessionExpiredHandler(() => {
+      setTokenState(null);
+      setAdminRole(null);
+      setAdminPermissions([]);
+      setAdminProfile(null);
+    });
+  }, []);
 
   useEffect(() => {
     if (token) {
@@ -214,7 +251,7 @@ export default function Admin() {
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
           {activeTab === "vps" && adminRole === "super" && <VpsTab />}
           {activeTab === "domains" && adminRole === "super" && <DomainsTab />}
-          {activeTab === "settings" && adminRole === "super" && <SettingsTab />}
+          {activeTab === "settings" && adminRole === "super" && <SettingsErrorBoundary><SettingsTab /></SettingsErrorBoundary>}
         </div>
       </main>
 

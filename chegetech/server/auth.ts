@@ -115,7 +115,7 @@ export function createAdminToken(payload?: AdminTokenPayload): string {
 export function validateAdminToken(token: string): AdminTokenPayload | false {
   try {
     const decoded = Buffer.from(token, "base64").toString("utf8");
-    const maxAge = 24 * 60 * 60 * 1000;
+    const maxAge = 7 * 24 * 60 * 60 * 1000;
 
     if (decoded.startsWith("subadmin:")) {
       const parts = decoded.split(":");
