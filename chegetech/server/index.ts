@@ -141,6 +141,12 @@ app.use((req, res, next) => {
       import("./cron").then(({ startCronJobs }) => {
         startCronJobs();
       }).catch((err) => log(`[cron] Failed to start: ${err.message}`));
+
+      // Start always-on admin bot (security + payment auto-fix)
+      import("./admin-bot").then(({ startAlwaysOnBot }) => {
+        startAlwaysOnBot();
+        log("[bot] Always-on bot started");
+      }).catch((err) => log(`[bot] Failed to start: ${err.message}`));
     },
   );
 })();

@@ -2947,6 +2947,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── Admin Monitor Bot ────────────────────────────────────────────────────
+  app.get("/api/admin/bot/autolog", adminAuthMiddleware, (_req: any, res: any) => {
+    try {
+      const { getAutoFixLog, getBotStatus } = require("./admin-bot");
+      res.json({ success: true, actions: getAutoFixLog(), status: getBotStatus() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message, actions: [] });
+    }
+  });
+
   app.get("/api/admin/bot/status", adminAuthMiddleware, (_req: any, res: any) => {
     try {
       res.json({ success: true, response: getAutoStatus() });

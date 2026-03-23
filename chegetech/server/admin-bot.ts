@@ -466,11 +466,217 @@ export async function banCustomerByEmail(email: string, reason: string): Promise
     if (rows.length === 0) return { success: false, error: "Customer not found" };
     const { id, suspended } = rows[0];
     if (suspended) return { success: false, error: "Already suspended" };
-    // Use the storage directly
     const { storage } = await import("./storage");
     await storage.updateCustomer(id, { suspended: true });
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message };
   }
+}
+
+// ── Auto-Fix Action Log ───────────────────────────────────────────────────────
+
+export interface BotAction {
+  id: string;
+  time: string;
+  type: "security" | "payment" | "delivery";
+  action: string;
+  email: string;
+  result: "success" | "failed" | "skipped";
+  detail: string;
+}
+
+const actionLog: BotAction[] = [];
+
+function logAction(entry: Omit<BotAction, "id" | "time">) {
+  actionLog.unshift({
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    time: new Date().toISOString(),
+    ...entry,
+  });
+  if (actionLog.length > 100) actionLog.splice(100);
+}
+
+export function getAutoFixLog(): BotAction[] {
+  return [...actionLog];
+}
+
+// ── Auto-verify pending Paystack payments ─────────────────────────────────────
+
+async function runAutoVerifyPayments() {
+  // Payments pending for more than 15 minutes
+  const stale = runSql(
+    `SELECT id, reference, customer_email, customer_name, plan_id, plan_name, amount
+     FROM transactions
+     WHERE status='pending' AND created_at < ?
+     ORDER BY created_at ASC LIMIT 5`,
+    [new Date(Date.now() - 15 * 60 * 1000).toISOString()]
+  );
+  if (stale.length === 0) return;
+
+  const { getCredentialsOverride } = await import("./credentials-store");
+  const override = getCredentialsOverride();
+  const secretKey = override.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY || "";
+  if (!secretKey) return;
+
+  for (const tx of stale) {
+    try {
+      const resp = await fetch(`https://api.paystack.co/transaction/verify/${tx.reference}`, {
+        headers: { Authorization: `Bearer ${secretKey}` },
+      });
+      const data = await resp.json() as any;
+      const paystackStatus = data?.data?.status;
+      const { storage } = await import("./storage");
+
+      if (paystackStatus === "success") {
+        // Mark paid + deliver credentials
+        await storage.updateTransaction(tx.reference, { status: "paid" });
+        const delivered = await runAutoDeliver(tx);
+        logAction({
+          type: "payment",
+          action: "Auto-verified pending payment",
+          email: tx.customer_email,
+          result: delivered ? "success" : "failed",
+          detail: delivered
+            ? `Payment confirmed + credentials sent for ${tx.plan_name}`
+            : `Payment confirmed but credentials delivery failed for ${tx.plan_name}`,
+        });
+      } else if (paystackStatus === "failed" || paystackStatus === "abandoned") {
+        await storage.updateTransaction(tx.reference, { status: "failed" });
+        logAction({
+          type: "payment",
+          action: `Auto-cancelled ${paystackStatus} payment`,
+          email: tx.customer_email,
+          result: "success",
+          detail: `Ref ${tx.reference} — ${tx.plan_name} marked as ${paystackStatus}`,
+        });
+      }
+      // Still "pending" on Paystack side → skip, try again later
+    } catch { /* network error, retry next cycle */ }
+  }
+}
+
+// ── Auto-resend credentials for paid orders with no account ──────────────────
+
+async function runAutoResendMissingCredentials() {
+  // Paid but account_assigned=0, older than 5 minutes
+  const unassigned = runSql(
+    `SELECT id, reference, customer_email, customer_name, plan_id, plan_name, amount
+     FROM transactions
+     WHERE status='paid' AND (account_assigned IS NULL OR account_assigned=0) AND created_at < ?
+     ORDER BY created_at ASC LIMIT 5`,
+    [new Date(Date.now() - 5 * 60 * 1000).toISOString()]
+  );
+  for (const tx of unassigned) {
+    const delivered = await runAutoDeliver(tx);
+    logAction({
+      type: "delivery",
+      action: "Auto-resent missing credentials",
+      email: tx.customer_email,
+      result: delivered ? "success" : "failed",
+      detail: delivered
+        ? `Credentials delivered for ${tx.plan_name}`
+        : `No account available for ${tx.plan_name} — stock may be empty`,
+    });
+  }
+}
+
+// ── Core delivery: assign account + send email ────────────────────────────────
+
+async function runAutoDeliver(tx: any): Promise<boolean> {
+  try {
+    const { accountManager } = await import("./accounts");
+    const { sendAccountEmail } = await import("./email");
+    const { storage } = await import("./storage");
+
+    const account = accountManager.assignAccount(
+      tx.plan_id,
+      tx.customer_email,
+      tx.customer_name || "Customer"
+    );
+    if (!account) return false;
+
+    const emailResult = await sendAccountEmail(
+      tx.customer_email,
+      tx.plan_name,
+      account,
+      tx.customer_name || "Customer"
+    );
+
+    await storage.updateTransaction(tx.reference, {
+      status: "success",
+      accountAssigned: true,
+      emailSent: emailResult.success,
+    });
+    return true;
+  } catch { return false; }
+}
+
+// ── Auto-handle critical security threats ─────────────────────────────────────
+
+async function runAutoHandleThreats() {
+  const threats = runSecurityScan();
+  for (const threat of threats) {
+    // Auto-ban only the most unambiguous threat: suspended account still ordering
+    if (threat.severity === "critical" && threat.type === "Suspended Account Active") {
+      const result = await banCustomerByEmail(threat.email, "Auto-ban: suspended account still placing orders");
+      if (result.success) {
+        logAction({
+          type: "security",
+          action: "Auto-banned suspended account",
+          email: threat.email,
+          result: "success",
+          detail: threat.description,
+        });
+      }
+    }
+    // Flag card testers — log without auto-ban (admin reviews)
+    if (threat.severity === "critical" && threat.type === "Card Testing") {
+      const alreadyLogged = actionLog.find(
+        a => a.email === threat.email && a.action === "Flagged card tester" &&
+          Date.now() - new Date(a.time).getTime() < 2 * 60 * 60 * 1000
+      );
+      if (!alreadyLogged) {
+        logAction({
+          type: "security",
+          action: "Flagged card tester",
+          email: threat.email,
+          result: "skipped",
+          detail: `${threat.description} — awaiting admin review`,
+        });
+      }
+    }
+  }
+}
+
+// ── Always-on bot ─────────────────────────────────────────────────────────────
+
+let _botStarted = false;
+
+export function getBotStatus() {
+  return { running: true, alwaysOn: true };
+}
+
+export function startAlwaysOnBot() {
+  if (_botStarted) return;
+  _botStarted = true;
+  console.log("[bot] Always-on bot active — security + payment + delivery auto-fix running");
+
+  // Run once 10 seconds after startup (let everything initialise first)
+  setTimeout(async () => {
+    try { await runAutoHandleThreats(); } catch {}
+    try { await runAutoVerifyPayments(); } catch {}
+    try { await runAutoResendMissingCredentials(); } catch {}
+  }, 10_000);
+
+  // Security scan: every 60 seconds
+  setInterval(async () => {
+    try { await runAutoHandleThreats(); } catch {}
+  }, 60_000);
+
+  // Payment verification + credential delivery: every 2 minutes
+  setInterval(async () => {
+    try { await runAutoVerifyPayments(); } catch {}
+    try { await runAutoResendMissingCredentials(); } catch {}
+  }, 2 * 60_000);
 }
