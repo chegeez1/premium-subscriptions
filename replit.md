@@ -4,6 +4,25 @@
 
 pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
 
+## Chege Tech App (chegetech/)
+
+Standalone Express + React subscription store app (NOT in pnpm workspace). Runs on port 5000.
+
+**Key features added:**
+1. **Referral System** — Customers get unique referral links. Referrer earns KES 100 wallet credit when referee makes first purchase. Referee gets KES 50 welcome bonus.
+2. **Customer Wallet** — Balance tracking with credit/debit history. Stored in `wallets` and `wallet_transactions` SQLite/PG tables.
+3. **Payment History** — Dashboard tab showing all subscription purchases + wallet transactions.
+4. **Replit AI Chatbot** — Uses `AI_INTEGRATIONS_OPENAI_BASE_URL` and `AI_INTEGRATIONS_OPENAI_API_KEY` env vars (Replit's built-in AI proxy). No OpenAI API key needed.
+
+**New dashboard tabs:** Wallet, Referral, Payments (in addition to existing My Products, API Keys, Security, Profile)
+
+**New API endpoints:**
+- `GET /api/customer/wallet` — balance + transaction history
+- `GET /api/customer/referral` — referral code, link, stats
+- `GET /api/customer/payment-history` — orders + wallet transactions
+
+**New DB tables:** `wallets`, `wallet_transactions`, `referrals` (both SQLite and PG)
+
 ## Stack
 
 - **Monorepo tool**: pnpm workspaces
