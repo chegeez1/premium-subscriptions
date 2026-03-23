@@ -151,6 +151,18 @@ export async function initializeDatabase() {
           read INTEGER DEFAULT 0,
           created_at TEXT DEFAULT (NOW()::text)
         );
+
+        CREATE TABLE IF NOT EXISTS login_logs (
+          id SERIAL PRIMARY KEY,
+          customer_id INTEGER NOT NULL,
+          ip TEXT NOT NULL,
+          country TEXT,
+          country_code TEXT,
+          city TEXT,
+          isp TEXT,
+          user_agent TEXT,
+          created_at TEXT DEFAULT (NOW()::text)
+        );
       `);
 
       const drizzlePgModule = await import("drizzle-orm/node-postgres");
@@ -312,6 +324,18 @@ function initSqlite() {
       title TEXT NOT NULL,
       message TEXT NOT NULL,
       read INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS login_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      ip TEXT NOT NULL,
+      country TEXT,
+      country_code TEXT,
+      city TEXT,
+      isp TEXT,
+      user_agent TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
@@ -999,6 +1023,47 @@ export class DbStorage implements IStorage {
     } else {
       sqliteInstance!.prepare("UPDATE customer_notifications SET read = 1 WHERE customer_id = ?").run(customerId);
     }
+  }
+
+  async createLoginLog(customerId: number, data: {
+    ip: string; country?: string; countryCode?: string; city?: string; isp?: string; userAgent?: string;
+  }): Promise<void> {
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query(
+        "INSERT INTO login_logs (customer_id, ip, country, country_code, city, isp, user_agent) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        [customerId, data.ip, data.country || null, data.countryCode || null, data.city || null, data.isp || null, data.userAgent || null]
+      );
+    } else {
+      sqliteInstance!.prepare(
+        "INSERT INTO login_logs (customer_id, ip, country, country_code, city, isp, user_agent) VALUES (?,?,?,?,?,?,?)"
+      ).run(customerId, data.ip, data.country || null, data.countryCode || null, data.city || null, data.isp || null, data.userAgent || null);
+    }
+  }
+
+  async getLoginLogs(customerId: number): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "SELECT * FROM login_logs WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 20",
+        [customerId]
+      );
+      return r.rows.map((row: any) => ({
+        id: row.id, ip: row.ip, country: row.country, countryCode: row.country_code,
+        city: row.city, isp: row.isp, userAgent: row.user_agent, createdAt: row.created_at,
+      }));
+    }
+    const rows = sqliteInstance!.prepare(
+      "SELECT * FROM login_logs WHERE customer_id = ? ORDER BY created_at DESC LIMIT 20"
+    ).all(customerId) as any[];
+    return rows.map((row) => ({
+      id: row.id, ip: row.ip, country: row.country, countryCode: row.country_code,
+      city: row.city, isp: row.isp, userAgent: row.user_agent, createdAt: row.created_at,
+    }));
+  }
+
+  async getLoginLogsByEmail(email: string): Promise<any[]> {
+    const customer = await this.getCustomerByEmail(email);
+    if (!customer) return [];
+    return this.getLoginLogs(customer.id);
   }
 
   async getCustomerSpendingStats(email: string): Promise<{ totalSpent: number; totalOrders: number; topPlan: string | null }> {

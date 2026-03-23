@@ -1176,6 +1176,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       await storage.createCustomerSession(customer.id, token, expiresAt);
 
+      // ─── Login IP & geo detection ─────────────────────────────────────
+      const rawIp =
+        (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+        req.socket?.remoteAddress ||
+        "unknown";
+      const userAgent = req.headers["user-agent"] || "";
+      (async () => {
+        try {
+          let geoData: any = {};
+          if (rawIp && rawIp !== "unknown" && rawIp !== "127.0.0.1" && !rawIp.startsWith("::")) {
+            const geoRes = await fetch(`http://ip-api.com/json/${rawIp}?fields=status,country,countryCode,city,isp`);
+            if (geoRes.ok) geoData = await geoRes.json();
+          }
+          await storage.createLoginLog(customer.id, {
+            ip: rawIp,
+            country: geoData.country,
+            countryCode: geoData.countryCode,
+            city: geoData.city,
+            isp: geoData.isp,
+            userAgent,
+          });
+        } catch (_) {}
+      })();
+
       res.json({ success: true, token, customer: { id: customer.id, email: customer.email, name: customer.name } });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1519,6 +1543,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const id = parseInt(req.params.id);
       await storage.updateCustomer(id, { suspended: true });
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/admin/customers/:id/login-history", adminAuthMiddleware, requirePermission("customers"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const logs = await storage.getLoginLogs(id);
+      res.json({ success: true, logs });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2060,6 +2094,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const stats = await storage.getCustomerSpendingStats(req.customer.email);
       res.json({ success: true, ...stats });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Login History ──────────────────────────────────────────
+  app.get("/api/customer/login-history", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const logs = await storage.getLoginLogs(req.customer.id);
+      res.json({ success: true, logs });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

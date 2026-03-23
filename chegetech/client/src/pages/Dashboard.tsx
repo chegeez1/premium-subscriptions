@@ -9,7 +9,8 @@ import {
   ChevronDown, ChevronUp, AlertCircle, Save, Package,
   Wallet, Link2, History, TrendingUp, Gift, ArrowUpCircle, ArrowDownCircle,
   MessageCircle, Send, PlusCircle, Ticket,
-  Bell, BellDot, ShoppingCart, TrendingDown, Star
+  Bell, BellDot, ShoppingCart, TrendingDown, Star,
+  MapPin, Monitor, Globe, Wifi
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -147,6 +148,12 @@ export default function Dashboard() {
     queryKey: ["/api/customer/stats"],
     queryFn: () => customerFetch("/api/customer/stats"),
     enabled: tab === "wallet",
+  });
+
+  const { data: loginHistoryData, isLoading: loginHistoryLoading } = useQuery<any>({
+    queryKey: ["/api/customer/login-history"],
+    queryFn: () => customerFetch("/api/customer/login-history"),
+    enabled: tab === "security",
   });
 
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
@@ -1152,6 +1159,64 @@ export default function Dashboard() {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* Login History */}
+            <div className="rounded-2xl border border-white/8 overflow-hidden" style={{ background: "rgba(255,255,255,.04)", backdropFilter: "blur(12px)" }}>
+              <div className="p-4 border-b border-white/8 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(99,102,241,.2)" }}>
+                  <Globe className="w-4 h-4 text-indigo-400" />
+                </div>
+                <div>
+                  <p className="font-semibold text-white text-sm">Login History</p>
+                  <p className="text-xs text-white/40">Recent sign-ins to your account — last 20 sessions</p>
+                </div>
+              </div>
+              <div className="divide-y divide-white/5">
+                {loginHistoryLoading ? (
+                  <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /></div>
+                ) : (loginHistoryData?.logs ?? []).length === 0 ? (
+                  <div className="text-center py-10">
+                    <Globe className="w-7 h-7 text-white/15 mx-auto mb-2" />
+                    <p className="text-white/30 text-sm">No login history yet</p>
+                    <p className="text-white/20 text-xs mt-1">It will appear here after your next login</p>
+                  </div>
+                ) : (loginHistoryData?.logs ?? []).map((log: any, idx: number) => {
+                  const ua = log.userAgent || "";
+                  const isMobile = /mobile|android|iphone|ipad/i.test(ua);
+                  const browser = /chrome/i.test(ua) ? "Chrome" : /firefox/i.test(ua) ? "Firefox" : /safari/i.test(ua) ? "Safari" : /edge/i.test(ua) ? "Edge" : "Browser";
+                  const os = /windows/i.test(ua) ? "Windows" : /mac os/i.test(ua) ? "macOS" : /linux/i.test(ua) ? "Linux" : /android/i.test(ua) ? "Android" : /iphone|ipad/i.test(ua) ? "iOS" : "Unknown OS";
+                  const flagUrl = log.countryCode ? `https://flagcdn.com/16x12/${log.countryCode.toLowerCase()}.png` : null;
+                  return (
+                    <div key={log.id} className={`flex items-center justify-between gap-3 p-4 ${idx === 0 ? "bg-indigo-500/5" : ""}`}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(255,255,255,.06)" }}>
+                          {isMobile ? <Monitor className="w-4 h-4 text-white/40" /> : <Monitor className="w-4 h-4 text-white/40" />}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-white">{browser} on {os}</span>
+                            {idx === 0 && <Badge className="bg-emerald-600/70 text-white border-0 text-xs py-0">Current</Badge>}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {flagUrl && <img src={flagUrl} alt={log.countryCode} className="w-4 h-3 rounded-sm" />}
+                            <span className="text-xs text-white/40">
+                              {[log.city, log.country].filter(Boolean).join(", ") || "Unknown Location"}
+                            </span>
+                            <span className="text-xs text-white/25">·</span>
+                            <span className="text-xs text-white/30 font-mono">{log.ip}</span>
+                            {log.isp && <><span className="text-xs text-white/25">·</span><span className="text-xs text-white/30"><Wifi className="w-3 h-3 inline mr-0.5" />{log.isp}</span></>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs text-white/30">{new Date(log.createdAt).toLocaleDateString()}</p>
+                        <p className="text-xs text-white/20">{new Date(log.createdAt).toLocaleTimeString()}</p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
