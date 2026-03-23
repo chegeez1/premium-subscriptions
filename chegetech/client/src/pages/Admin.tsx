@@ -11,7 +11,8 @@ import {
   CreditCard, AlertTriangle, Lock, Unlock, Copy, Activity,
   Terminal, Info, TriangleAlert, Filter, Upload, Download,
   Search, BarChart2, Loader2, FileCheck, ClipboardCheck, Send,
-  MessageCircle
+  MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
+  Wifi, HardDrive, Cpu, MemoryStick
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "emailblast" | "logs" | "settings" | "support" | "subadmins";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "emailblast" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
   success: { label: "Completed", icon: CheckCircle, color: "text-emerald-400" },
@@ -102,6 +103,8 @@ export default function Admin() {
     { id: "support", label: "Support", icon: MessageCircle },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
+    { id: "geo-restrict", label: "Geo Restrict", icon: Globe, superOnly: true },
+    { id: "vps", label: "VPS Manager", icon: Server, superOnly: true },
     { id: "settings", label: "Settings", icon: Settings, superOnly: true },
   ];
 
@@ -183,6 +186,8 @@ export default function Admin() {
           {activeTab === "support" && <SupportTab />}
           {activeTab === "logs" && <LogsTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
+          {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
+          {activeTab === "vps" && adminRole === "super" && <VpsTab />}
           {activeTab === "settings" && adminRole === "super" && <SettingsTab />}
         </div>
       </main>
@@ -3327,6 +3332,432 @@ function GlassStatCard({ title, value, icon: Icon, gradient, glow }: { title: st
         </div>
       </div>
       <p className="text-2xl font-bold text-white">{value}</p>
+    </div>
+  );
+}
+
+// ─── Country / GEO RESTRICT TAB ──────────────────────────────────────────
+const COUNTRY_LIST = [
+  { code: "US", name: "United States" }, { code: "GB", name: "United Kingdom" },
+  { code: "CA", name: "Canada" }, { code: "AU", name: "Australia" },
+  { code: "DE", name: "Germany" }, { code: "FR", name: "France" },
+  { code: "IT", name: "Italy" }, { code: "ES", name: "Spain" },
+  { code: "NL", name: "Netherlands" }, { code: "SE", name: "Sweden" },
+  { code: "NO", name: "Norway" }, { code: "CH", name: "Switzerland" },
+  { code: "IN", name: "India" }, { code: "CN", name: "China" },
+  { code: "JP", name: "Japan" }, { code: "KR", name: "South Korea" },
+  { code: "SG", name: "Singapore" }, { code: "AE", name: "UAE" },
+  { code: "SA", name: "Saudi Arabia" }, { code: "ZA", name: "South Africa" },
+  { code: "KE", name: "Kenya" }, { code: "NG", name: "Nigeria" },
+  { code: "GH", name: "Ghana" }, { code: "TZ", name: "Tanzania" },
+  { code: "UG", name: "Uganda" }, { code: "ET", name: "Ethiopia" },
+  { code: "RW", name: "Rwanda" }, { code: "EG", name: "Egypt" },
+  { code: "MA", name: "Morocco" }, { code: "TN", name: "Tunisia" },
+  { code: "BR", name: "Brazil" }, { code: "MX", name: "Mexico" },
+  { code: "AR", name: "Argentina" }, { code: "CL", name: "Chile" },
+  { code: "RU", name: "Russia" }, { code: "UA", name: "Ukraine" },
+  { code: "PL", name: "Poland" }, { code: "TR", name: "Turkey" },
+  { code: "IR", name: "Iran" }, { code: "IQ", name: "Iraq" },
+  { code: "PK", name: "Pakistan" }, { code: "BD", name: "Bangladesh" },
+  { code: "ID", name: "Indonesia" }, { code: "PH", name: "Philippines" },
+  { code: "VN", name: "Vietnam" }, { code: "TH", name: "Thailand" },
+  { code: "MY", name: "Malaysia" }, { code: "MM", name: "Myanmar" },
+];
+
+function GeoRestrictTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const authFetch = (url: string, opts: any = {}) => fetch(url, {
+    ...opts,
+    headers: { "Content-Type": "application/json", "x-admin-token": localStorage.getItem("adminToken") || "", ...(opts.headers || {}) },
+    body: opts.body,
+  }).then((r) => r.json());
+
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/country-restrictions"],
+    queryFn: () => authFetch("/api/admin/country-restrictions"),
+  });
+
+  const config = data?.config;
+  const [search, setSearch] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const setModeMutation = useMutation({
+    mutationFn: (mode: string) => authFetch("/api/admin/country-restrictions", { method: "PUT", body: JSON.stringify({ mode }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] }),
+  });
+
+  const addCountryMutation = useMutation({
+    mutationFn: (code: string) => authFetch("/api/admin/country-restrictions/add", { method: "POST", body: JSON.stringify({ code }) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] }); toast({ title: "Country added" }); },
+  });
+
+  const removeCountryMutation = useMutation({
+    mutationFn: (code: string) => authFetch(`/api/admin/country-restrictions/${code}`, { method: "DELETE" }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] }); toast({ title: "Country removed" }); },
+  });
+
+  const inputCls = "bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-indigo-500/50";
+  const mode = config?.mode || "blacklist";
+  const blocked: string[] = config?.countries || [];
+  const filteredList = COUNTRY_LIST.filter((c) =>
+    !blocked.includes(c.code) &&
+    (c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-white">Geo Restrictions</h2>
+        <p className="text-sm text-white/40 mt-1">Control which countries can access your store</p>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+      ) : (
+        <>
+          {/* Mode Toggle */}
+          <div className="glass-card rounded-2xl p-5">
+            <h3 className="text-sm font-semibold text-white mb-4">Restriction Mode</h3>
+            <div className="grid grid-cols-2 gap-3">
+              {(["blacklist", "whitelist"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setModeMutation.mutate(m)}
+                  className={`p-4 rounded-xl border transition-all text-left ${mode === m ? "border-indigo-500/60 bg-indigo-500/10" : "border-white/8 bg-white/3 opacity-60 hover:opacity-80"}`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    {m === "blacklist" ? <Ban className="w-4 h-4 text-red-400" /> : <Globe className="w-4 h-4 text-emerald-400" />}
+                    <span className="font-semibold text-white capitalize">{m}</span>
+                    {mode === m && <Badge className="bg-indigo-600/70 text-white border-0 text-xs ml-auto">Active</Badge>}
+                  </div>
+                  <p className="text-xs text-white/40">
+                    {m === "blacklist" ? "Block listed countries, allow everyone else" : "Only allow listed countries, block everyone else"}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Active country list */}
+          <div className="glass-card rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-white">
+                  {mode === "blacklist" ? "Blocked Countries" : "Allowed Countries"}
+                  <span className="ml-2 text-xs text-white/40">({blocked.length})</span>
+                </h3>
+                <p className="text-xs text-white/30 mt-0.5">
+                  {mode === "blacklist" ? "Visitors from these countries get a 403 error" : "Only visitors from these countries can access the store"}
+                </p>
+              </div>
+              <Button size="sm" onClick={() => setAdding(!adding)} className="bg-indigo-600 hover:bg-indigo-500 text-white">
+                <Plus className="w-4 h-4 mr-1" />Add Country
+              </Button>
+            </div>
+
+            {adding && (
+              <div className="mb-4 p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5">
+                <p className="text-xs text-white/50 mb-2">Search and click to add:</p>
+                <Input
+                  placeholder="Search country..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className={inputCls + " mb-2"}
+                  autoFocus
+                />
+                <div className="max-h-48 overflow-y-auto space-y-1">
+                  {filteredList.slice(0, 20).map((c) => (
+                    <button
+                      key={c.code}
+                      onClick={() => { addCountryMutation.mutate(c.code); setSearch(""); }}
+                      disabled={addCountryMutation.isPending}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-white/70 hover:bg-white/8 hover:text-white text-left transition-colors"
+                    >
+                      <img src={`https://flagcdn.com/16x12/${c.code.toLowerCase()}.png`} alt="" className="w-4 h-3 rounded-sm" />
+                      <span>{c.name}</span>
+                      <span className="text-xs text-white/30 font-mono ml-auto">{c.code}</span>
+                    </button>
+                  ))}
+                  {filteredList.length === 0 && <p className="text-xs text-white/30 text-center py-4">No countries found</p>}
+                </div>
+              </div>
+            )}
+
+            {blocked.length === 0 ? (
+              <div className="text-center py-10">
+                <Globe className="w-8 h-8 text-white/15 mx-auto mb-2" />
+                <p className="text-white/30 text-sm">No countries added yet</p>
+                <p className="text-white/20 text-xs mt-1">All visitors can access the store</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {blocked.map((code) => {
+                  const country = COUNTRY_LIST.find((c) => c.code === code);
+                  return (
+                    <div key={code} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/8 bg-white/3">
+                      <div className="flex items-center gap-2">
+                        <img src={`https://flagcdn.com/16x12/${code.toLowerCase()}.png`} alt="" className="w-4 h-3 rounded-sm" />
+                        <span className="text-sm text-white">{country?.name || code}</span>
+                        <span className="text-xs text-white/30 font-mono">{code}</span>
+                      </div>
+                      <button
+                        onClick={() => removeCountryMutation.mutate(code)}
+                        disabled={removeCountryMutation.isPending}
+                        className="p-1 text-white/30 hover:text-red-400 transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Info box */}
+          <div className="rounded-xl p-4 border border-amber-500/20 bg-amber-500/5">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+              <div className="text-xs text-amber-200/70 space-y-1">
+                <p><strong>Blacklist mode:</strong> Countries in the list are blocked. Empty list = no restrictions.</p>
+                <p><strong>Whitelist mode:</strong> Only countries in the list can access. Empty list = everyone blocked.</p>
+                <p>Admin panel is always accessible regardless of restrictions.</p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── VPS MANAGER TAB ────────────────────────────────────────────────────────
+function VpsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const authFetch = (url: string, opts: any = {}) => fetch(url, {
+    ...opts,
+    headers: { "Content-Type": "application/json", "x-admin-token": localStorage.getItem("adminToken") || "", ...(opts.headers || {}) },
+    body: opts.body,
+  }).then((r) => r.json());
+
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/vps"],
+    queryFn: () => authFetch("/api/admin/vps"),
+  });
+
+  const servers: any[] = data?.servers || [];
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ label: "", host: "", port: "22", username: "root", authType: "password", password: "", privateKey: "" });
+  const [pingResults, setPingResults] = useState<Record<string, any>>({});
+  const [pingLoading, setPingLoading] = useState<Record<string, boolean>>({});
+  const [rebootLoading, setRebootLoading] = useState<Record<string, boolean>>({});
+  const [terminalState, setTerminalState] = useState<Record<string, { open: boolean; cmd: string; output: string; loading: boolean }>>({});
+  const [confirmReboot, setConfirmReboot] = useState<string | null>(null);
+
+  const addMutation = useMutation({
+    mutationFn: () => authFetch("/api/admin/vps", { method: "POST", body: JSON.stringify({ ...form, port: parseInt(form.port) || 22 }) }),
+    onSuccess: (res) => {
+      if (res.success) {
+        toast({ title: "VPS added!", description: res.server.label });
+        setShowAdd(false);
+        setForm({ label: "", host: "", port: "22", username: "root", authType: "password", password: "", privateKey: "" });
+        qc.invalidateQueries({ queryKey: ["/api/admin/vps"] });
+      } else {
+        toast({ title: "Failed", description: res.error, variant: "destructive" });
+      }
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => authFetch(`/api/admin/vps/${id}`, { method: "DELETE" }),
+    onSuccess: () => { toast({ title: "Server removed" }); qc.invalidateQueries({ queryKey: ["/api/admin/vps"] }); },
+  });
+
+  const pingServer = async (id: string) => {
+    setPingLoading((p) => ({ ...p, [id]: true }));
+    try {
+      const res = await authFetch(`/api/admin/vps/${id}/ping`);
+      setPingResults((p) => ({ ...p, [id]: res }));
+    } catch { setPingResults((p) => ({ ...p, [id]: { success: false } })); }
+    finally { setPingLoading((p) => ({ ...p, [id]: false })); }
+  };
+
+  const rebootServer = async (id: string) => {
+    setRebootLoading((r) => ({ ...r, [id]: true }));
+    setConfirmReboot(null);
+    try {
+      const res = await authFetch(`/api/admin/vps/${id}/reboot`, { method: "POST" });
+      toast({ title: res.success ? "Rebooting!" : "Failed", description: res.message });
+    } finally { setRebootLoading((r) => ({ ...r, [id]: false })); }
+  };
+
+  const execCommand = async (id: string) => {
+    const t = terminalState[id];
+    if (!t?.cmd.trim()) return;
+    setTerminalState((s) => ({ ...s, [id]: { ...t, loading: true, output: "" } }));
+    try {
+      const res = await authFetch(`/api/admin/vps/${id}/exec`, { method: "POST", body: JSON.stringify({ command: t.cmd }) });
+      setTerminalState((s) => ({ ...s, [id]: { ...s[id], loading: false, output: res.stdout || res.stderr || res.error || "No output" } }));
+    } catch (err: any) {
+      setTerminalState((s) => ({ ...s, [id]: { ...s[id], loading: false, output: err.message } }));
+    }
+  };
+
+  const inputCls = "bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-indigo-500/50";
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">VPS Manager</h2>
+          <p className="text-sm text-white/40 mt-1">Monitor, reboot and manage your servers via SSH</p>
+        </div>
+        <Button onClick={() => setShowAdd(!showAdd)} className="bg-indigo-600 hover:bg-indigo-500 text-white">
+          <Plus className="w-4 h-4 mr-1.5" />Add VPS
+        </Button>
+      </div>
+
+      {showAdd && (
+        <div className="glass-card rounded-2xl p-5 border border-indigo-500/20">
+          <h3 className="text-sm font-semibold text-white mb-4">Add New VPS Server</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label className="text-xs text-white/40 block mb-1">Label / Name</label>
+              <Input placeholder="My Production Server" value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} className={inputCls} /></div>
+            <div><label className="text-xs text-white/40 block mb-1">Host / IP Address *</label>
+              <Input placeholder="123.45.67.89" value={form.host} onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))} className={inputCls} /></div>
+            <div><label className="text-xs text-white/40 block mb-1">SSH Port</label>
+              <Input placeholder="22" value={form.port} onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))} className={inputCls} /></div>
+            <div><label className="text-xs text-white/40 block mb-1">Username *</label>
+              <Input placeholder="root" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} className={inputCls} /></div>
+            <div><label className="text-xs text-white/40 block mb-1">Auth Type</label>
+              <select value={form.authType} onChange={(e) => setForm((f) => ({ ...f, authType: e.target.value }))}
+                className="w-full rounded-lg px-3 py-2 text-sm text-white bg-white/5 border border-white/10 outline-none">
+                <option value="password">Password</option>
+                <option value="key">Private Key (PEM)</option>
+              </select></div>
+            {form.authType === "password" ? (
+              <div><label className="text-xs text-white/40 block mb-1">Password</label>
+                <Input type="password" placeholder="••••••••" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} className={inputCls} /></div>
+            ) : (
+              <div className="sm:col-span-2"><label className="text-xs text-white/40 block mb-1">Private Key (PEM format)</label>
+                <textarea value={form.privateKey} onChange={(e) => setForm((f) => ({ ...f, privateKey: e.target.value }))}
+                  rows={4} placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;..." className="w-full rounded-lg px-3 py-2 text-xs text-white bg-white/5 border border-white/10 outline-none resize-none font-mono" /></div>
+            )}
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button onClick={() => addMutation.mutate()} disabled={!form.host || !form.username || addMutation.isPending} className="bg-indigo-600 hover:bg-indigo-500 text-white">
+              {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}<span className="ml-1.5">Add Server</span>
+            </Button>
+            <Button variant="ghost" onClick={() => setShowAdd(false)} className="text-white/40 hover:text-white">Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+      ) : servers.length === 0 ? (
+        <div className="glass-card rounded-2xl text-center py-16">
+          <Server className="w-10 h-10 text-white/15 mx-auto mb-3" />
+          <p className="text-white/40 font-medium">No VPS servers added yet</p>
+          <p className="text-white/25 text-sm mt-1">Add your first server to start managing it</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {servers.map((server: any) => {
+            const ping = pingResults[server.id];
+            const isTermOpen = terminalState[server.id]?.open;
+            return (
+              <div key={server.id} className="glass-card rounded-2xl overflow-hidden">
+                <div className="p-5">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(99,102,241,.2)" }}>
+                        <Server className="w-5 h-5 text-indigo-400" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-white">{server.label}</p>
+                        <p className="text-xs text-white/40 font-mono">{server.username}@{server.host}:{server.port}</p>
+                        <p className="text-xs text-white/30 mt-0.5">Auth: {server.authType} · Added {new Date(server.addedAt).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => pingServer(server.id)} disabled={pingLoading[server.id]}
+                        variant="outline" className="border-white/10 text-white/60 hover:text-white hover:bg-white/5">
+                        {pingLoading[server.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+                        <span className="ml-1.5">Ping</span>
+                      </Button>
+                      <Button size="sm" onClick={() => setTerminalState((s) => ({ ...s, [server.id]: { open: !isTermOpen, cmd: s[server.id]?.cmd || "", output: s[server.id]?.output || "", loading: false } }))}
+                        variant="outline" className="border-white/10 text-white/60 hover:text-white hover:bg-white/5">
+                        <Terminal className="w-3.5 h-3.5" /><span className="ml-1.5">Terminal</span>
+                      </Button>
+                      <Button size="sm" onClick={() => setConfirmReboot(server.id)} disabled={rebootLoading[server.id]}
+                        className="bg-amber-600/70 hover:bg-amber-600 text-white border-0">
+                        {rebootLoading[server.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCw className="w-3.5 h-3.5" />}
+                        <span className="ml-1.5">Reboot</span>
+                      </Button>
+                      <Button size="sm" onClick={() => deleteMutation.mutate(server.id)}
+                        variant="outline" className="border-red-500/20 text-red-400 hover:bg-red-500/10">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {confirmReboot === server.id && (
+                    <div className="mt-3 p-3 rounded-xl border border-amber-500/30 bg-amber-500/8 flex items-center justify-between gap-3">
+                      <p className="text-xs text-amber-300">⚠️ Are you sure you want to reboot <strong>{server.label}</strong>? This will cause a brief downtime.</p>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => rebootServer(server.id)} className="bg-amber-600 hover:bg-amber-500 text-white h-7 text-xs">Reboot Now</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setConfirmReboot(null)} className="text-white/40 h-7 text-xs">Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {ping && (
+                    <div className={`mt-3 p-3 rounded-xl border ${ping.success ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"}`}>
+                      {ping.success ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                          <div><p className="text-white/40 mb-0.5"><Cpu className="w-3 h-3 inline mr-1" />Load</p><p className="text-white font-mono">{ping.load || "—"}</p></div>
+                          <div><p className="text-white/40 mb-0.5"><MemoryStick className="w-3 h-3 inline mr-1" />Memory</p><p className="text-white font-mono">{ping.memory || "—"}</p></div>
+                          <div><p className="text-white/40 mb-0.5"><HardDrive className="w-3 h-3 inline mr-1" />Disk</p><p className="text-white font-mono">{ping.disk || "—"}</p></div>
+                          <div><p className="text-white/40 mb-0.5"><Power className="w-3 h-3 inline mr-1" />Uptime</p><p className="text-white font-mono text-xs">{ping.uptime || "—"}</p></div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-red-400">⚠️ Could not connect to server — check host, port, and credentials</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {isTermOpen && (
+                  <div className="border-t border-white/8 p-4 bg-black/20">
+                    <p className="text-xs text-white/40 mb-2"><Terminal className="w-3 h-3 inline mr-1" />Remote Terminal — {server.username}@{server.host}</p>
+                    <div className="flex gap-2">
+                      <Input
+                        value={terminalState[server.id]?.cmd || ""}
+                        onChange={(e) => setTerminalState((s) => ({ ...s, [server.id]: { ...s[server.id], cmd: e.target.value } }))}
+                        onKeyDown={(e) => { if (e.key === "Enter") execCommand(server.id); }}
+                        placeholder="e.g. df -h / | cat /etc/os-release | systemctl status nginx"
+                        className="flex-1 font-mono text-xs bg-black/30 border-white/10 text-green-300 placeholder-white/20"
+                      />
+                      <Button size="sm" onClick={() => execCommand(server.id)} disabled={terminalState[server.id]?.loading || !terminalState[server.id]?.cmd?.trim()}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white">
+                        {terminalState[server.id]?.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                    {terminalState[server.id]?.output && (
+                      <pre className="mt-2 p-3 rounded-lg bg-black/40 text-green-300 text-xs font-mono overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto border border-white/5">
+                        {terminalState[server.id].output}
+                      </pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -12,6 +12,8 @@ import { getWhatsAppStatus, connectWhatsApp, disconnectWhatsApp, isWhatsAppWebCo
 import { subscriptionPlans } from "./plans";
 import { promoManager } from "./promo";
 import { planOverridesManager } from "./plan-overrides";
+import { vpsManager } from "./vps-manager";
+import { countryRestrictions } from "./country-restrictions";
 import {
   getAdminCredentials,
   isSetupComplete,
@@ -345,8 +347,43 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
   return { success: true };
 }
 
+const geoCache = new Map<string, { code: string | null; expires: number }>();
+
+async function getCountryCode(ip: string): Promise<string | null> {
+  if (!ip || ip === "unknown" || ip === "127.0.0.1" || ip.startsWith("::") || ip.startsWith("10.") || ip.startsWith("192.168.") || ip.startsWith("172.")) return null;
+  const cached = geoCache.get(ip);
+  if (cached && cached.expires > Date.now()) return cached.code;
+  try {
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,countryCode`);
+    if (res.ok) {
+      const data: any = await res.json();
+      const code = data.status === "success" ? data.countryCode : null;
+      geoCache.set(ip, { code, expires: Date.now() + 10 * 60 * 1000 });
+      return code;
+    }
+  } catch {}
+  return null;
+}
+
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   setStorageRef(storage);
+
+  // ─── Country Restriction Middleware ───────────────────────────────────────
+  app.use(async (req: any, res: any, next: any) => {
+    if (req.path.startsWith("/api/admin") || req.path.startsWith("/admin") || req.path.startsWith("/api/auth/login") && req.method !== "GET") {
+      return next();
+    }
+    try {
+      const { countries } = countryRestrictions.get();
+      if (countries.length === 0) return next();
+      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
+      const code = await getCountryCode(ip);
+      if (code && countryRestrictions.isBlocked(code)) {
+        return res.status(403).json({ success: false, error: "Access from your region is restricted.", blocked: true, countryCode: code });
+      }
+    } catch {}
+    next();
+  });
 
   // ─── Public: Config ───────────────────────────────────────────────────────
   app.get("/api/config", (_req, res) => {
@@ -2052,6 +2089,116 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!message) return res.status(400).json({ success: false, error: "Message is required" });
       const msg = await storage.addMessage({ ticketId, sender: "customer", message });
       res.json({ success: true, message: msg });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // COUNTRY RESTRICTIONS ROUTES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.get("/api/admin/country-restrictions", adminAuthMiddleware, superAdminOnly, (_req, res) => {
+    res.json({ success: true, config: countryRestrictions.get() });
+  });
+
+  app.put("/api/admin/country-restrictions", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    try {
+      const { mode, countries } = req.body;
+      if (mode) countryRestrictions.setMode(mode);
+      if (Array.isArray(countries)) countryRestrictions.setCountries(countries);
+      res.json({ success: true, config: countryRestrictions.get() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/country-restrictions/add", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    try {
+      const { code } = req.body;
+      if (!code) return res.status(400).json({ success: false, error: "Country code required" });
+      countryRestrictions.addCountry(code);
+      res.json({ success: true, config: countryRestrictions.get() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/admin/country-restrictions/:code", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    try {
+      countryRestrictions.removeCountry(req.params.code);
+      res.json({ success: true, config: countryRestrictions.get() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VPS MANAGEMENT ROUTES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.get("/api/admin/vps", adminAuthMiddleware, superAdminOnly, (_req, res) => {
+    const servers = vpsManager.getAll().map((s) => ({ ...s, password: s.password ? "***" : undefined, privateKey: s.privateKey ? "***" : undefined }));
+    res.json({ success: true, servers });
+  });
+
+  app.post("/api/admin/vps", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    try {
+      const { label, host, port, username, authType, password, privateKey } = req.body;
+      if (!host || !username) return res.status(400).json({ success: false, error: "Host and username are required" });
+      const server = vpsManager.add({ label: label || host, host, port: parseInt(port) || 22, username, authType: authType || "password", password, privateKey });
+      res.json({ success: true, server: { ...server, password: server.password ? "***" : undefined, privateKey: server.privateKey ? "***" : undefined } });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.put("/api/admin/vps/:id", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    try {
+      const server = vpsManager.update(req.params.id, req.body);
+      if (!server) return res.status(404).json({ success: false, error: "Server not found" });
+      res.json({ success: true, server: { ...server, password: server.password ? "***" : undefined, privateKey: server.privateKey ? "***" : undefined } });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/admin/vps/:id", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    try {
+      const deleted = vpsManager.delete(req.params.id);
+      if (!deleted) return res.status(404).json({ success: false, error: "Server not found" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/vps/:id/reboot", adminAuthMiddleware, superAdminOnly, async (req, res) => {
+    try {
+      const result = await vpsManager.reboot(req.params.id);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.get("/api/admin/vps/:id/ping", adminAuthMiddleware, superAdminOnly, async (req, res) => {
+    try {
+      const result = await vpsManager.ping(req.params.id);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ success: false });
+    }
+  });
+
+  app.post("/api/admin/vps/:id/exec", adminAuthMiddleware, superAdminOnly, async (req, res) => {
+    try {
+      const server = vpsManager.getById(req.params.id);
+      if (!server) return res.status(404).json({ success: false, error: "Server not found" });
+      const { command } = req.body;
+      if (!command) return res.status(400).json({ success: false, error: "Command required" });
+      const result = await vpsManager.execCommand(server, command);
+      res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
