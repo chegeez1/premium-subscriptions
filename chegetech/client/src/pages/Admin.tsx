@@ -12,7 +12,8 @@ import {
   Terminal, Info, TriangleAlert, Filter, Upload, Download,
   Search, BarChart2, Loader2, FileCheck, ClipboardCheck, Send,
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
-  Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera
+  Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera,
+  Bot, Sparkles, Minimize2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -193,11 +194,216 @@ export default function Admin() {
           {activeTab === "settings" && adminRole === "super" && <SettingsTab />}
         </div>
       </main>
+
+      {/* Floating Admin AI Bot */}
+      <AdminAIBot />
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ADMIN AI BOT
+// ═══════════════════════════════════════════════════════════════
+
+type AIChatMessage = { role: "user" | "assistant"; content: string; ts: number };
+
+const QUICK_ACTIONS = [
+  "📊 Show today's stats",
+  "📦 Check stock levels",
+  "🎫 Show open tickets",
+  "👥 List recent customers",
+  "📋 Show recent orders",
+  "🏷️ List promo codes",
+];
+
+function renderBotText(text: string) {
+  const lines = text.split("\n");
+  return lines.map((line, i) => {
+    const boldLine = line.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/`(.*?)`/g, "<code style='background:rgba(255,255,255,0.1);padding:1px 4px;border-radius:3px;font-size:11px'>$1</code>");
+    const isBullet = /^[-•*]\s/.test(line) || /^\d+\.\s/.test(line);
+    return (
+      <p key={i} className={`${isBullet ? "ml-2" : ""} ${i < lines.length - 1 ? "mb-1" : ""}`}
+        dangerouslySetInnerHTML={{ __html: boldLine || "&nbsp;" }} />
+    );
+  });
+}
+
+function AdminAIBot() {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<AIChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [unread, setUnread] = useState(0);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      setUnread(0);
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, loading]);
+
+  async function send(text: string) {
+    const msg = text.trim();
+    if (!msg || loading) return;
+    setInput("");
+    const userMsg: AIChatMessage = { role: "user", content: msg, ts: Date.now() };
+    setMessages(prev => [...prev, userMsg]);
+    setLoading(true);
+
+    try {
+      const res = await authFetch("/api/admin/ai-assistant", {
+        method: "POST",
+        body: JSON.stringify({ message: msg, sessionId }),
+      });
+      if (res.success) {
+        setSessionId(res.sessionId);
+        const botMsg: AIChatMessage = { role: "assistant", content: res.response, ts: Date.now() };
+        setMessages(prev => [...prev, botMsg]);
+        if (!open) setUnread(n => n + 1);
+      } else {
+        setMessages(prev => [...prev, { role: "assistant", content: `Error: ${res.error || "Something went wrong"}`, ts: Date.now() }]);
+      }
+    } catch {
+      setMessages(prev => [...prev, { role: "assistant", content: "Network error. Please try again.", ts: Date.now() }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function clearChat() {
+    if (sessionId) {
+      authFetch(`/api/admin/ai-assistant/session/${sessionId}`, { method: "DELETE" }).catch(() => {});
+    }
+    setMessages([]);
+    setSessionId(null);
+    setUnread(0);
+  }
+
+  return (
+    <>
+      {/* Floating button */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 shadow-2xl shadow-indigo-900/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+        title="Admin AI Assistant"
+      >
+        {open ? <Minimize2 className="w-5 h-5 text-white" /> : <Bot className="w-6 h-6 text-white" />}
+        {!open && unread > 0 && (
+          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+            {unread}
+          </span>
+        )}
+      </button>
+
+      {/* Chat panel */}
+      {open && (
+        <div className="fixed bottom-24 right-6 z-50 w-[380px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#0f0f1a] shadow-2xl shadow-black/60 flex flex-col overflow-hidden"
+          style={{ height: "520px" }}>
+
+          {/* Header */}
+          <div className="flex items-center gap-3 px-4 py-3 bg-indigo-600/20 border-b border-white/8">
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
+              <Sparkles className="w-4 h-4 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white">Admin Assistant</p>
+              <p className="text-[10px] text-indigo-300">Powered by AI · Full panel access</p>
+            </div>
+            <button onClick={clearChat} title="Clear chat" className="text-white/30 hover:text-white/70 transition-colors p-1">
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <button onClick={() => setOpen(false)} className="text-white/30 hover:text-white/70 transition-colors p-1">
+              <Minimize2 className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full gap-4 pb-4">
+                <div className="w-12 h-12 rounded-full bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
+                  <Bot className="w-6 h-6 text-indigo-400" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-medium text-white">Hi! I'm your Admin Assistant</p>
+                  <p className="text-xs text-white/40 mt-1">I can manage customers, orders, tickets,<br/>promos, stock and more. Just ask!</p>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 w-full px-2">
+                  {QUICK_ACTIONS.map(action => (
+                    <button key={action} onClick={() => send(action)}
+                      className="text-left text-[11px] text-indigo-300 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 rounded-lg px-2.5 py-1.5 transition-colors truncate">
+                      {action}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
+                {m.role === "assistant" && (
+                  <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Sparkles className="w-3 h-3 text-white" />
+                  </div>
+                )}
+                <div className={`max-w-[82%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${
+                  m.role === "user"
+                    ? "bg-indigo-600 text-white rounded-br-sm"
+                    : "bg-white/8 text-white/85 rounded-bl-sm border border-white/5"
+                }`}>
+                  {m.role === "assistant" ? renderBotText(m.content) : <p>{m.content}</p>}
+                </div>
+              </div>
+            ))}
+
+            {loading && (
+              <div className="flex justify-start gap-2">
+                <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
+                  <Sparkles className="w-3 h-3 text-white" />
+                </div>
+                <div className="bg-white/8 border border-white/5 rounded-2xl rounded-bl-sm px-3 py-2.5 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input */}
+          <div className="px-3 pb-3 pt-2 border-t border-white/6">
+            <form onSubmit={e => { e.preventDefault(); send(input); }} className="flex gap-2">
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                placeholder="Ask me anything or give a command…"
+                disabled={loading}
+                className="flex-1 bg-white/6 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/25 focus:outline-none focus:border-indigo-500/60 transition-colors"
+              />
+              <button type="submit" disabled={loading || !input.trim()}
+                className="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors flex-shrink-0 self-center">
+                <Send className="w-3.5 h-3.5 text-white" />
+              </button>
+            </form>
+            <p className="text-[9px] text-white/20 text-center mt-1.5">AI can make changes · always review results</p>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // LOGIN FLOW  (pre-auth - uses plainFetch only)
 // ═══════════════════════════════════════════════════════════════
 function LoginFlow({ onLogin }: { onLogin: (token: string, role?: string) => void }) {

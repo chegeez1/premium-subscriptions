@@ -724,6 +724,19 @@ export class DbStorage implements IStorage {
     return this.getTicketById(id);
   }
 
+  async getAllTickets(): Promise<SupportTicket[]> {
+    if (dbType === "pg" && pgPool) {
+      const result = await pgPool.query("SELECT * FROM support_tickets ORDER BY updated_at DESC");
+      return result.rows.map((row: any) => ({
+        id: row.id, token: row.token, customerEmail: row.customer_email, customerName: row.customer_name, subject: row.subject, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
+      }));
+    }
+    const rows = sqliteInstance!.prepare("SELECT * FROM support_tickets ORDER BY updated_at DESC").all() as any[];
+    return rows.map((row: any) => ({
+      id: row.id, token: row.token, customerEmail: row.customer_email, customerName: row.customer_name, subject: row.subject, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
+    }));
+  }
+
   async getOpenTickets(): Promise<SupportTicket[]> {
     if (dbType === "pg" && pgPool) {
       const result = await pgPool.query("SELECT * FROM support_tickets WHERE status IN ('open', 'escalated') ORDER BY updated_at DESC");

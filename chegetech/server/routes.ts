@@ -39,6 +39,7 @@ import { getCredentialsOverride, saveCredentialsOverride } from "./credentials-s
 import { logAdminAction, getAdminLogs } from "./admin-logger";
 import { logDelivery, getDeliveryProof, getDeliveryLogs } from "./delivery-log";
 import { getAIChatResponse } from "./openai-chat";
+import { getAdminAIResponse, clearAdminAISession } from "./admin-ai";
 import speakeasy from "speakeasy";
 import QRCode from "qrcode";
 
@@ -2444,6 +2445,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
+  });
+
+  // ─── Admin AI Assistant ─────────────────────────────────────────────────
+  app.post("/api/admin/ai-assistant", adminAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const { message, sessionId } = req.body;
+      if (!message?.trim()) return res.status(400).json({ success: false, error: "Message required" });
+      const sid = sessionId || `admin-ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const result = await getAdminAIResponse(sid, message.trim());
+      res.json({ success: true, response: result.response, sessionId: result.sessionId });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/admin/ai-assistant/session/:sessionId", adminAuthMiddleware, (req: any, res: any) => {
+    clearAdminAISession(req.params.sessionId);
+    res.json({ success: true });
   });
 
   return httpServer;
