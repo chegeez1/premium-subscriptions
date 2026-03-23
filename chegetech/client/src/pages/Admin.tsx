@@ -1110,35 +1110,12 @@ function SettingsTab() {
   const { toast } = useToast();
   const inputCls = "glass border-white/10 bg-white/5 text-white placeholder:text-white/25 focus:border-indigo-500/50";
 
-  const { data: secretsData } = useQuery<{ secrets: any }>({
+  const { data: secretsData, isLoading: secretsLoading } = useQuery<{ secrets: any }>({
     queryKey: ["/api/admin/secrets"],
     queryFn: () => authFetch("/api/admin/secrets"),
   });
-  const s = secretsData?.secrets;
-
-  // ─── App Config state ────────────────────────────────────────
-  const { data: configData, refetch: refetchConfig } = useQuery<any>({
-    queryKey: ["/api/admin/app-config"],
-    queryFn: () => authFetch("/api/admin/app-config"),
-  });
-  const [appCfg, setAppCfg] = useState<any>(null);
-  const [cfgDirty, setCfgDirty] = useState(false);
-  useEffect(() => {
-    if (configData?.config && !appCfg) setAppCfg(configData.config);
-  }, [configData]);
-
-  const saveCfgMutation = useMutation({
-    mutationFn: () => authFetch("/api/admin/app-config", { method: "PUT", body: JSON.stringify(appCfg) }),
-    onSuccess: (d) => {
-      if (d.success) { toast({ title: "Settings saved" }); setCfgDirty(false); refetchConfig(); }
-      else toast({ title: "Failed", description: d.error, variant: "destructive" });
-    },
-  });
-
-  function updateCfg(key: string, value: any) {
-    setAppCfg((prev: any) => ({ ...prev, [key]: value }));
-    setCfgDirty(true);
-  }
+  const envVars: { key: string; label: string; set: boolean; group: string }[] = secretsData?.secrets?.vars ?? [];
+  const groups = [...new Set(envVars.map((v) => v.group))];
 
   // ─── 2FA state ──────────────────────────────────────────────
   const [tfaStep, setTfaStep] = useState<"idle" | "qr" | "verify">("idle");
@@ -1188,69 +1165,47 @@ function SettingsTab() {
         {/* ─── Admin Profile ───────────────────────────────── */}
         <AdminProfileSection inputCls={inputCls} />
 
-        {/* ─── App Config (Editable) ───────────────────────── */}
+        {/* ─── Environment Variables Status ────────────────── */}
         <div className="glass-card rounded-2xl overflow-hidden">
-          <div className="p-5 border-b border-white/8 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-violet-600/20 flex items-center justify-center">
-                <Settings className="w-5 h-5 text-violet-400" />
-              </div>
-              <div>
-                <p className="font-semibold text-white">App Settings</p>
-                <p className="text-xs text-white/40">Site name, WhatsApp, domains, support email</p>
-              </div>
+          <div className="p-5 border-b border-white/8 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600/20 flex items-center justify-center">
+              <Key className="w-5 h-5 text-emerald-400" />
             </div>
-            {cfgDirty && (
-              <Button onClick={() => saveCfgMutation.mutate()} disabled={saveCfgMutation.isPending}
-                className="bg-gradient-to-r from-violet-600 to-indigo-600 border-0 text-white text-xs h-8 px-3"
-                data-testid="button-save-config">
-                <Save className="w-3.5 h-3.5 mr-1.5" />{saveCfgMutation.isPending ? "Saving..." : "Save Changes"}
-              </Button>
+            <div>
+              <p className="font-semibold text-white">Environment Variables</p>
+              <p className="text-xs text-white/40">All secrets are loaded from your <code className="text-emerald-400/80 bg-white/5 px-1 rounded">.env</code> file — edit that file to make changes</p>
+            </div>
+          </div>
+          <div className="p-5">
+            {secretsLoading ? (
+              <div className="flex items-center gap-2 text-white/30 text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+            ) : envVars.length === 0 ? (
+              <p className="text-white/30 text-sm">No status available</p>
+            ) : (
+              <div className="space-y-4">
+                {groups.map((group) => (
+                  <div key={group}>
+                    <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest mb-2">{group}</p>
+                    <div className="space-y-1.5">
+                      {envVars.filter((v) => v.group === group).map((v) => (
+                        <div key={v.key} className="flex items-center justify-between py-1.5 px-3 rounded-lg bg-white/3 border border-white/6">
+                          <div>
+                            <span className="text-xs text-white/70 font-medium">{v.label}</span>
+                            <span className="ml-2 text-[10px] text-white/25 font-mono">{v.key}</span>
+                          </div>
+                          {v.set
+                            ? <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold"><CheckCircle className="w-3 h-3" /> Set</span>
+                            : <span className="flex items-center gap-1 text-[10px] text-red-400 font-semibold"><XCircle className="w-3 h-3" /> Missing</span>
+                          }
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <p className="text-[10px] text-white/20 pt-1">Edit <code className="text-white/35">chegetech/.env</code> then restart the server to apply changes</p>
+              </div>
             )}
           </div>
-          {appCfg ? (
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-white/40 block mb-1.5">Site Name</label>
-                  <Input value={appCfg.siteName || ""} onChange={(e) => updateCfg("siteName", e.target.value)}
-                    placeholder="Chege Tech" className={inputCls} data-testid="input-site-name" />
-                </div>
-                <div>
-                  <label className="text-xs text-white/40 block mb-1.5">Support Email</label>
-                  <Input value={appCfg.supportEmail || ""} onChange={(e) => updateCfg("supportEmail", e.target.value)}
-                    placeholder="support@example.com" type="email" className={inputCls} data-testid="input-support-email" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-white/40 block mb-1.5">WhatsApp Number</label>
-                  <Input value={appCfg.whatsappNumber || ""} onChange={(e) => updateCfg("whatsappNumber", e.target.value)}
-                    placeholder="+254114291301" className={inputCls} data-testid="input-whatsapp-number" />
-                </div>
-                <div>
-                  <label className="text-xs text-white/40 block mb-1.5">Custom Domain</label>
-                  <Input value={appCfg.customDomain || ""} onChange={(e) => updateCfg("customDomain", e.target.value)}
-                    placeholder="chegetech.com" className={inputCls} data-testid="input-custom-domain" />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-white/40 block mb-1.5">WhatsApp Channel URL</label>
-                <Input value={appCfg.whatsappChannel || ""} onChange={(e) => updateCfg("whatsappChannel", e.target.value)}
-                  placeholder="https://whatsapp.com/channel/..." className={inputCls} data-testid="input-whatsapp-channel" />
-                <p className="text-[10px] text-white/25 mt-1">Customers are redirected here after a successful purchase</p>
-              </div>
-              <div className="flex items-center justify-between p-3 glass rounded-xl">
-                <div>
-                  <p className="text-sm text-white">Chat Assistant</p>
-                  <p className="text-xs text-white/40">Show floating WhatsApp chat button on all pages</p>
-                </div>
-                <Switch checked={!!appCfg.chatAssistantEnabled} onCheckedChange={(v) => updateCfg("chatAssistantEnabled", v)} data-testid="toggle-chat-assistant" />
-              </div>
-            </div>
-          ) : (
-            <div className="p-5 text-center text-white/30 text-sm">Loading...</div>
-          )}
         </div>
 
         {/* ─── Affiliate Tiers ─────────────────────────────── */}

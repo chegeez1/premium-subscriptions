@@ -12,11 +12,11 @@ export interface AppConfig {
 }
 
 const DEFAULTS: AppConfig = {
-  siteName: "Chege Tech",
-  whatsappNumber: "+254114291301",
-  whatsappChannel: "https://whatsapp.com/channel/0029VbBx7NeDp2QGF7qoZ02A",
-  supportEmail: "",
-  customDomain: "",
+  siteName: process.env.SITE_NAME || "Chege Tech",
+  whatsappNumber: process.env.WHATSAPP_NUMBER || "+254114291301",
+  whatsappChannel: process.env.WHATSAPP_CHANNEL || "https://whatsapp.com/channel/0029VbBx7NeDp2QGF7qoZ02A",
+  supportEmail: process.env.SUPPORT_EMAIL || "",
+  customDomain: process.env.CUSTOM_DOMAIN || "",
   chatAssistantEnabled: true,
 };
 
