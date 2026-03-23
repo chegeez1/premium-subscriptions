@@ -988,7 +988,9 @@ function AffiliateTiersSection({ inputCls }: { inputCls: string }) {
   const [tiers, setTiers] = useState<any[]>([]);
   const [dirty, setDirty] = useState(false);
 
-  if (data?.tiers && tiers.length === 0) setTiers(data.tiers);
+  useEffect(() => {
+    if (data?.tiers && tiers.length === 0) setTiers(data.tiers);
+  }, [data?.tiers]);
 
   function updateTier(index: number, field: string, value: any) {
     setTiers(prev => prev.map((t, i) => i === index ? { ...t, [field]: field === "name" ? value : Number(value) } : t));
