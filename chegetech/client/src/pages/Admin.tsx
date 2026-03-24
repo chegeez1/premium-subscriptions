@@ -470,13 +470,13 @@ function AdminMonitorBot() {
     <>
       {/* Floating button */}
       <button onClick={() => setOpen(o => !o)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-2xl shadow-black/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95 relative"
+        className="fixed bottom-6 left-6 z-50 w-14 h-14 rounded-full shadow-2xl shadow-black/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95 relative"
         style={{ background: botRunning ? "linear-gradient(135deg,#059669,#4f46e5)" : "linear-gradient(135deg,#374151,#1f2937)" }}
         title={botRunning ? "Admin Bot — Running" : "Admin Bot — Stopped"}>
         {open ? <Minimize2 className="w-5 h-5 text-white" /> : <Bot className="w-6 h-6 text-white" />}
-        <span className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-[#0b0b18] ${botRunning ? "bg-emerald-400 animate-pulse" : "bg-red-500"}`} />
+        <span className={`absolute -bottom-0.5 -left-0.5 w-3.5 h-3.5 rounded-full border-2 border-[#0b0b18] ${botRunning ? "bg-emerald-400 animate-pulse" : "bg-red-500"}`} />
         {!open && badgeCount > 0 && botRunning && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center z-10">
+          <span className="absolute -top-1 -left-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center z-10">
             {badgeCount}
           </span>
         )}
@@ -484,7 +484,7 @@ function AdminMonitorBot() {
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 w-[400px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#0b0b18] shadow-2xl shadow-black/80 flex flex-col overflow-hidden"
+        <div className="fixed bottom-24 left-6 z-50 w-[400px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#0b0b18] shadow-2xl shadow-black/80 flex flex-col overflow-hidden"
           style={{ height: "580px" }}>
 
           {/* Header */}
