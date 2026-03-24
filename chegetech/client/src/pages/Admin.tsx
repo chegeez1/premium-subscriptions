@@ -3514,7 +3514,7 @@ function CustomersTab() {
     try {
       const res = await fetch(`/api/admin/customers/${avatarTargetId}/avatar`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${localStorage.getItem("adminToken") || ""}` },
+        headers: { "Authorization": `Bearer ${localStorage.getItem("admin_token") || ""}` },
         body: form,
       });
       const data = await res.json();
@@ -3535,7 +3535,7 @@ function CustomersTab() {
     try {
       const res = await fetch(`/api/admin/customers/${id}/avatar`, {
         method: "DELETE",
-        headers: { "Authorization": `Bearer ${localStorage.getItem("adminToken") || ""}`, "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${localStorage.getItem("admin_token") || ""}`, "Content-Type": "application/json" },
       });
       const data = await res.json();
       if (data.success) { toast({ title: "Avatar removed" }); queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] }); }
@@ -4747,7 +4747,7 @@ function GeoRestrictTab() {
     ...opts,
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${localStorage.getItem("adminToken") || ""}`,
+      "Authorization": `Bearer ${localStorage.getItem("admin_token") || ""}`,
       ...(opts.headers || {}),
     },
     body: opts.body,
@@ -4975,7 +4975,7 @@ function VpsTab() {
   const qc = useQueryClient();
   const authFetch = (url: string, opts: any = {}) => fetch(url, {
     ...opts,
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("adminToken") || ""}`, ...(opts.headers || {}) },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("admin_token") || ""}`, ...(opts.headers || {}) },
     body: opts.body,
   }).then((r) => r.json());
 
@@ -5206,7 +5206,7 @@ function DomainsTab() {
   const authFetchD = (url: string, opts: any = {}) =>
     fetch(url, {
       ...opts,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken") || ""}`, ...(opts.headers || {}) },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("admin_token") || ""}`, ...(opts.headers || {}) },
       body: opts.body,
     }).then((r) => r.json());
 
