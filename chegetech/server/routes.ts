@@ -890,6 +890,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true, secrets: getSecretsStatus() });
   });
 
+  // ─── Admin: Test email ────────────────────────────────────────────────────
+  app.post("/api/admin/test-email", adminAuthMiddleware, superAdminOnly, async (req, res) => {
+    const to = (req.body?.to || getEmailUser() || "").trim();
+    if (!to) return res.status(400).json({ success: false, error: "No recipient — EMAIL_USER not set. Add it to your .env or Render env vars." });
+    const result = await sendPasswordResetEmail(to, "TEST-OK", "Admin");
+    res.json({ ...result, to });
+  });
+
   // ─── Admin: Stats ─────────────────────────────────────────────────────────
   app.get("/api/admin/stats", adminAuthMiddleware, async (_req, res) => {
     try {

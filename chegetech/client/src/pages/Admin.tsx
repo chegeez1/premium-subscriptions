@@ -1118,6 +1118,11 @@ function SettingsTab() {
   const envVars: { key: string; label: string; set: boolean; group: string }[] = Array.isArray(rawVars) ? rawVars : [];
   const groups = [...new Set(envVars.map((v) => v.group))];
 
+  // ─── Test email state ───────────────────────────────────────────────────
+  const [testEmailTo, setTestEmailTo] = useState("");
+  const [testEmailLoading, setTestEmailLoading] = useState(false);
+  const [testEmailResult, setTestEmailResult] = useState<{ success: boolean; to?: string; error?: string } | null>(null);
+
   // ─── 2FA state ──────────────────────────────────────────────
   const [tfaStep, setTfaStep] = useState<"idle" | "qr" | "verify">("idle");
   const [setupData, setSetupData] = useState<{ secret: string; qrCodeDataUrl: string } | null>(null);
@@ -1205,6 +1210,75 @@ function SettingsTab() {
                 ))}
                 <p className="text-[10px] text-white/20 pt-1">Edit <code className="text-white/35">chegetech/.env</code> then restart the server to apply changes</p>
               </div>
+            )}
+          </div>
+        </div>
+
+        {/* ─── Test Email ──────────────────────────────────── */}
+        <div className="glass-card rounded-2xl overflow-hidden">
+          <div className="p-5 border-b border-white/8 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-sky-600/20 flex items-center justify-center">
+              <Mail className="w-5 h-5 text-sky-400" />
+            </div>
+            <div>
+              <p className="font-semibold text-white">Test Email Delivery</p>
+              <p className="text-xs text-white/40">Send a test email to confirm your Gmail credentials work</p>
+            </div>
+          </div>
+          <div className="p-5 space-y-3">
+            <div className="flex gap-2">
+              <input
+                type="email"
+                placeholder="recipient@example.com (leave blank = EMAIL_USER)"
+                value={testEmailTo}
+                onChange={(e) => setTestEmailTo(e.target.value)}
+                className="flex-1 text-sm bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white placeholder:text-white/25 outline-none focus:border-indigo-500/50"
+              />
+              <button
+                disabled={testEmailLoading}
+                onClick={async () => {
+                  setTestEmailLoading(true);
+                  setTestEmailResult(null);
+                  try {
+                    const r = await authFetch("/api/admin/test-email", {
+                      method: "POST",
+                      body: JSON.stringify({ to: testEmailTo.trim() || undefined }),
+                    });
+                    setTestEmailResult(r);
+                  } catch (e: any) {
+                    setTestEmailResult({ success: false, error: e.message || "Network error" });
+                  } finally {
+                    setTestEmailLoading(false);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl text-sm font-semibold bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/20 transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                {testEmailLoading ? "Sending…" : "Send Test"}
+              </button>
+            </div>
+            {testEmailResult && (
+              testEmailResult.success ? (
+                <div className="flex items-start gap-2.5 rounded-xl p-3 text-sm" style={{ background: "rgba(16,185,129,.08)", border: "1px solid rgba(16,185,129,.2)" }}>
+                  <CheckCircle className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-emerald-400 font-semibold">Email sent successfully</p>
+                    <p className="text-white/40 text-xs mt-0.5">Delivered to <span className="text-white/60">{testEmailResult.to}</span> — check your inbox (and spam folder)</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2.5 rounded-xl p-3 text-sm" style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.2)" }}>
+                  <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-red-400 font-semibold">Send failed</p>
+                    <p className="text-white/50 text-xs mt-1 font-mono break-all">{testEmailResult.error}</p>
+                    {testEmailResult.error?.includes("Username and Password") || testEmailResult.error?.includes("Invalid login") ? (
+                      <p className="text-amber-400/70 text-xs mt-2">Gmail rejected the password. You need a <strong className="text-amber-300">Gmail App Password</strong> — go to myaccount.google.com/apppasswords (requires 2FA to be on), generate one, and update EMAIL_PASS.</p>
+                    ) : testEmailResult.error?.includes("not configured") ? (
+                      <p className="text-amber-400/70 text-xs mt-2">EMAIL_USER or EMAIL_PASS is missing. Set both in your .env file (locally) or Render Environment tab.</p>
+                    ) : null}
+                  </div>
+                </div>
+              )
             )}
           </div>
         </div>
