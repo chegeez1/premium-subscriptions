@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ArrowLeft, CheckCircle, Lock, Mail, User, Zap, CreditCard,
-  AlertCircle, BadgePercent, Tag, X, Wallet,
+  AlertCircle, BadgePercent, Tag, X, Wallet, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,14 +66,15 @@ export default function Checkout() {
 
   const { data: plansData, isLoading } = useQuery<{ categories: Record<string, any> }>({ queryKey: ["/api/plans"] });
   const { data: configData } = useQuery<{ paystackPublicKey: string | null; paystackConfigured: boolean }>({ queryKey: ["/api/config"] });
-  const { data: dashData } = useQuery<any>({
-    queryKey: ["/api/customer/dashboard"],
+  const { data: walletData } = useQuery<{ success: boolean; balance: number }>({
+    queryKey: ["/api/customer/wallet"],
     queryFn: async () => {
-      const r = await fetch("/api/customer/dashboard", { headers: { Authorization: `Bearer ${customerToken}` } });
+      const r = await fetch("/api/customer/wallet", { headers: { Authorization: `Bearer ${customerToken}` } });
       return r.json();
     },
     enabled: !!customerToken,
   });
+  const walletBalance = walletData?.balance ?? 0;
 
   let selectedPlan: (Plan & { categoryName?: string }) | null = null;
   if (plansData?.categories) {
@@ -371,49 +372,121 @@ export default function Checkout() {
                     )}
                   </div>
 
-                  {/* Wallet payment option */}
-                  {customerToken && dashData?.wallet !== undefined && (
-                    <div className={`rounded-xl border p-4 transition-all ${useWallet ? "bg-indigo-500/10 border-indigo-500/30" : "bg-white/3 border-white/8"}`}>
-                      <label className="flex items-center gap-3 cursor-pointer select-none">
-                        <div
-                          onClick={() => setUseWallet(v => !v)}
-                          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${useWallet ? "bg-indigo-500 border-indigo-500" : "border-white/20 bg-transparent"}`}
-                        >
-                          {useWallet && <CheckCircle className="w-3 h-3 text-white" />}
+                  {/* ── Payment Method Selector ───────────────────────────── */}
+                  <div>
+                    <p className="text-white/60 text-xs uppercase tracking-wider mb-3">Payment Method</p>
+                    <div className="grid grid-cols-2 gap-3">
+
+                      {/* Paystack card */}
+                      <button
+                        type="button"
+                        onClick={() => setUseWallet(false)}
+                        data-testid="pay-method-paystack"
+                        className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${
+                          !useWallet
+                            ? "border-indigo-500 bg-indigo-500/10"
+                            : "border-white/10 bg-white/3 hover:border-white/20"
+                        }`}
+                      >
+                        {!useWallet && (
+                          <span className="absolute top-2 right-2 w-4 h-4 rounded-full bg-indigo-500 flex items-center justify-center">
+                            <CheckCircle className="w-3 h-3 text-white" />
+                          </span>
+                        )}
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${!useWallet ? "bg-indigo-500/20" : "bg-white/5"}`}>
+                          <CreditCard className={`w-5 h-5 ${!useWallet ? "text-indigo-400" : "text-white/40"}`} />
                         </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <Wallet className="w-4 h-4 text-indigo-400" />
-                            <span className="text-sm font-semibold text-white">Pay with Wallet</span>
-                            <Badge className="bg-indigo-500/20 text-indigo-400 border-0 text-xs ml-auto">
-                              Balance: KES {(dashData.wallet ?? 0).toLocaleString()}
-                            </Badge>
-                          </div>
-                          {(dashData.wallet ?? 0) < finalAmount && (
-                            <p className="text-xs text-amber-400 mt-1">Insufficient balance — top up in your dashboard first.</p>
+                        <div className="text-center">
+                          <p className={`text-sm font-bold ${!useWallet ? "text-white" : "text-white/50"}`}>Paystack</p>
+                          <p className="text-[10px] text-white/30 mt-0.5">Card / M-Pesa</p>
+                        </div>
+                      </button>
+
+                      {/* Wallet card */}
+                      <button
+                        type="button"
+                        onClick={() => { if (customerToken) setUseWallet(true); }}
+                        data-testid="pay-method-wallet"
+                        disabled={!customerToken}
+                        className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${
+                          !customerToken
+                            ? "border-white/5 bg-white/2 opacity-40 cursor-not-allowed"
+                            : useWallet
+                              ? "border-emerald-500 bg-emerald-500/10"
+                              : "border-white/10 bg-white/3 hover:border-white/20"
+                        }`}
+                      >
+                        {useWallet && (
+                          <span className="absolute top-2 right-2 w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">
+                            <CheckCircle className="w-3 h-3 text-white" />
+                          </span>
+                        )}
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${useWallet ? "bg-emerald-500/20" : "bg-white/5"}`}>
+                          <Wallet className={`w-5 h-5 ${useWallet ? "text-emerald-400" : "text-white/40"}`} />
+                        </div>
+                        <div className="text-center">
+                          <p className={`text-sm font-bold ${useWallet ? "text-white" : "text-white/50"}`}>Wallet</p>
+                          {customerToken ? (
+                            <p className={`text-[10px] mt-0.5 font-semibold ${walletBalance >= finalAmount ? "text-emerald-400" : "text-amber-400"}`}>
+                              KES {walletBalance.toLocaleString()}
+                            </p>
+                          ) : (
+                            <p className="text-[10px] text-white/25 mt-0.5">Login to use</p>
                           )}
                         </div>
-                      </label>
+                      </button>
                     </div>
-                  )}
 
-                  {!useWallet && configData && !configData.paystackConfigured && (
-                    <div className="flex items-start gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/25 text-sm text-red-300">
-                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-semibold">Payments temporarily unavailable</p>
-                        <p className="text-xs text-red-300/70 mt-0.5">Please try again later or <a href="https://wa.me/254114291301" target="_blank" rel="noopener noreferrer" className="underline text-green-400">chat us on WhatsApp</a>.</p>
+                    {/* Wallet insufficient warning */}
+                    {useWallet && customerToken && walletBalance < finalAmount && (
+                      <div className="mt-3 flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/25">
+                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs text-amber-300 font-semibold">Insufficient wallet balance</p>
+                          <p className="text-[11px] text-amber-300/70 mt-0.5">
+                            You need KES {finalAmount.toLocaleString()} but have KES {walletBalance.toLocaleString()}.{" "}
+                            <button type="button" className="underline text-amber-400" onClick={() => setLocation("/dashboard?tab=wallet")}>Top up →</button>
+                          </p>
+                        </div>
                       </div>
+                    )}
+
+                    {/* Paystack unavailable warning */}
+                    {!useWallet && configData && !configData.paystackConfigured && (
+                      <div className="mt-3 flex items-start gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/25">
+                        <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs text-red-300 font-semibold">Payments temporarily unavailable</p>
+                          <p className="text-[10px] text-red-300/70 mt-0.5">Please try again later or <a href="https://wa.me/254114291301" target="_blank" rel="noopener noreferrer" className="underline text-green-400">chat us on WhatsApp</a>.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Not logged in nudge */}
+                  {!customerToken && (
+                    <div className="flex items-center gap-2 p-3 rounded-xl bg-indigo-500/8 border border-indigo-500/15">
+                      <Wallet className="w-4 h-4 text-indigo-400 shrink-0" />
+                      <p className="text-xs text-white/40">
+                        <button type="button" className="underline text-indigo-400" onClick={() => setLocation("/auth")}>Log in</button>{" "}
+                        to pay with your wallet and earn referral coins.
+                      </p>
+                      <ChevronRight className="w-3 h-3 text-white/20 ml-auto shrink-0" />
                     </div>
                   )}
 
+                  {/* Pay button */}
                   <Button
                     type="submit"
-                    className={`w-full h-12 border-0 text-white font-bold text-base shadow-xl hover:opacity-90 transition-opacity ${useWallet ? "bg-indigo-600 hover:bg-indigo-700" : `bg-gradient-to-r ${gradient}`}`}
-                    style={{ boxShadow: "0 0 24px rgba(99,102,241,0.3)" }}
+                    className={`w-full h-12 border-0 text-white font-bold text-base shadow-xl hover:opacity-90 transition-opacity ${
+                      useWallet
+                        ? "bg-gradient-to-r from-emerald-600 to-teal-600"
+                        : `bg-gradient-to-r ${gradient}`
+                    }`}
+                    style={{ boxShadow: useWallet ? "0 0 24px rgba(16,185,129,0.3)" : "0 0 24px rgba(99,102,241,0.3)" }}
                     disabled={
                       isProcessing || initMutation.isPending || verifyMutation.isPending || walletMutation.isPending ||
-                      (useWallet && (dashData?.wallet ?? 0) < finalAmount) ||
+                      (useWallet && walletBalance < finalAmount) ||
                       (!useWallet && configData !== undefined && !configData?.paystackConfigured)
                     }
                     data-testid="button-pay"
@@ -426,6 +499,13 @@ export default function Checkout() {
                       <><CreditCard className="w-4 h-4 mr-2" />Pay KES {finalAmount.toLocaleString()} with Paystack</>
                     )}
                   </Button>
+
+                  {useWallet && customerToken && (
+                    <div className="flex items-center justify-between text-xs text-white/30 -mt-2">
+                      <span>Wallet balance after payment:</span>
+                      <span className="font-semibold text-white/50">KES {Math.max(0, walletBalance - finalAmount).toLocaleString()}</span>
+                    </div>
+                  )}
 
                   <p className="text-xs text-center text-white/25">
                     By completing your purchase, you agree to receive account credentials via email.

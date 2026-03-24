@@ -2689,6 +2689,83 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Customer: Wallet pay (cart) ─────────────────────────────────────────
+  app.post("/api/customer/wallet/pay-cart", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { items, customerName } = req.body; // items: [{planId, qty}]
+      const customerId = req.customer.id;
+      const customer = await storage.getCustomerById(customerId);
+      if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ success: false, error: "No items provided" });
+      }
+
+      const categories = buildPlansResponse();
+
+      // Expand items and validate
+      type CartLine = { planId: string; planName: string; price: number };
+      const lines: CartLine[] = [];
+      for (const item of items) {
+        let plan: any = null;
+        for (const cat of Object.values(categories) as any[]) {
+          if (cat.plans[item.planId]) { plan = cat.plans[item.planId]; break; }
+        }
+        if (!plan) return res.status(400).json({ success: false, error: `Invalid plan: ${item.planId}` });
+        const avail = accountManager.checkAvailability(item.planId);
+        if (!avail.available) return res.status(400).json({ success: false, error: `${plan.name} is currently out of stock`, outOfStock: true, planName: plan.name });
+        const qty = Math.max(1, Number(item.qty) || 1);
+        for (let q = 0; q < qty; q++) {
+          lines.push({ planId: item.planId, planName: plan.name, price: plan.price });
+        }
+      }
+
+      const totalAmount = lines.reduce((s, l) => s + l.price, 0);
+      const wallet = await storage.getWallet(customerId);
+      if ((wallet.balance || 0) < totalAmount) {
+        return res.status(400).json({
+          success: false, error: `Insufficient wallet balance. You need KES ${totalAmount} but have KES ${wallet.balance}.`, insufficientFunds: true,
+        });
+      }
+
+      // Debit wallet upfront
+      const cartRef = `WALLET-CART-${Date.now()}`;
+      await storage.debitWallet(customerId, totalAmount, `Cart purchase (${lines.length} item${lines.length > 1 ? "s" : ""})`, cartRef);
+
+      const planNames: string[] = [];
+      let refundAmount = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const reference = `${cartRef}-${i}`;
+        const tx = await storage.createTransaction({
+          reference, planId: line.planId, planName: line.planName,
+          customerEmail: customer.email, customerName: customerName || customer.name || "Customer",
+          amount: line.price, status: "pending", emailSent: false, accountAssigned: false,
+        });
+        const delivery = await deliverAccount(tx);
+        if (delivery.success) {
+          planNames.push(line.planName);
+        } else {
+          refundAmount += line.price;
+          await storage.updateTransaction(reference, { status: "failed" });
+        }
+      }
+
+      // Refund any failed deliveries
+      if (refundAmount > 0) {
+        await storage.creditWallet(customerId, refundAmount, `Partial refund — ${lines.length - planNames.length} item(s) could not be delivered`, cartRef);
+      }
+
+      if (planNames.length === 0) {
+        return res.json({ success: false, error: "All items failed to deliver. Your wallet has been fully refunded." });
+      }
+
+      res.json({ success: true, planNames, delivered: planNames.length, total: lines.length, refundAmount });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ─── Customer: PDF Receipt ────────────────────────────────────────────────
   app.get("/api/customer/orders/:reference/receipt", customerAuthMiddleware, async (req: any, res) => {
     try {
