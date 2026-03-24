@@ -4,7 +4,8 @@ import { useLocation } from "wouter";
 import {
   Play, Music, Briefcase, Shield, Gamepad2, Search, Star,
   CheckCircle, Zap, ShoppingCart, X, ChevronRight, Package,
-  Sparkles, Plus, Minus, Trash2, User, LogIn, Sun, Moon
+  Sparkles, Plus, Minus, Trash2, User, LogIn, Sun, Moon,
+  Wallet, Eye, EyeOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -74,6 +75,8 @@ function getCustomerData() {
 function getStoredTheme(): "dark" | "light" {
   try { return (localStorage.getItem("ct_theme") as "dark" | "light") || "dark"; } catch { return "dark"; }
 }
+function getCustomerToken() { try { return localStorage.getItem("customer_token") || ""; } catch { return ""; } }
+function getWalletHidden() { try { return localStorage.getItem("ct_wallet_hidden") === "1"; } catch { return false; } }
 
 export default function Store() {
   const [, setLocation] = useLocation();
@@ -82,6 +85,9 @@ export default function Store() {
   const [cart, setCart] = useState<CartItem[]>(() => getCartFromStorage());
   const [cartOpen, setCartOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">(getStoredTheme);
+  const [walletHidden, setWalletHidden] = useState(getWalletHidden);
+
+  const customerToken = getCustomerToken();
 
   function toggleTheme() {
     setTheme(t => {
@@ -94,6 +100,25 @@ export default function Store() {
   const isLight = theme === "light";
 
   const customer = getCustomerData();
+
+  const { data: walletData } = useQuery<{ balance: number }>({
+    queryKey: ["/api/customer/wallet-store"],
+    queryFn: async () => {
+      const r = await fetch("/api/customer/wallet", { headers: { Authorization: `Bearer ${customerToken}` } });
+      return r.json();
+    },
+    enabled: !!customerToken,
+    staleTime: 30000,
+  });
+  const storeWalletBalance = walletData?.balance ?? 0;
+
+  function toggleWalletHidden() {
+    setWalletHidden(h => {
+      const next = !h;
+      localStorage.setItem("ct_wallet_hidden", next ? "1" : "0");
+      return next;
+    });
+  }
 
   useEffect(() => { saveCartToStorage(cart); }, [cart]);
 
@@ -217,6 +242,29 @@ export default function Store() {
             >
               {isLight ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
             </button>
+
+            {/* Wallet balance chip — visible when logged in */}
+            {customer && walletData && (
+              <div className={`hidden sm:flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full border text-xs font-semibold transition-all ${
+                isLight
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                  : "bg-emerald-500/12 border-emerald-500/25 text-emerald-400"
+              }`}>
+                <Wallet className="w-3 h-3 shrink-0" />
+                <span className="min-w-[52px] text-center">
+                  {walletHidden ? "••••••" : `KES ${storeWalletBalance.toLocaleString()}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={toggleWalletHidden}
+                  title={walletHidden ? "Show balance" : "Hide balance"}
+                  className="p-0.5 rounded-full opacity-60 hover:opacity-100 transition-opacity"
+                  data-testid="button-wallet-toggle"
+                >
+                  {walletHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+              </div>
+            )}
 
             {/* Cart button */}
             <button

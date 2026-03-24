@@ -612,6 +612,122 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Hybrid: wallet partial + Paystack remainder ──────────────────────────
+  app.post("/api/payment/initialize-hybrid", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { planId, customerName, walletAmountToUse, promoCode } = req.body;
+      const customerId = req.customer.id;
+      const customer = await storage.getCustomerById(customerId);
+      if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
+
+      const categories = buildPlansResponse();
+      let plan: any = null;
+      for (const cat of Object.values(categories) as any[]) {
+        if (cat.plans[planId]) { plan = cat.plans[planId]; break; }
+      }
+      if (!plan) return res.status(400).json({ success: false, error: "Invalid plan" });
+
+      const avail = accountManager.checkAvailability(planId);
+      if (!avail.available) return res.status(400).json({ success: false, error: "This plan is currently out of stock", outOfStock: true });
+
+      // Apply promo if any
+      let finalAmount = plan.price;
+      if (promoCode) {
+        const pr = promoManager.validate(promoCode, planId);
+        if (pr.valid && pr.promo) {
+          const p = pr.promo;
+          finalAmount = p.discountType === "percent"
+            ? Math.max(0, finalAmount - Math.round((finalAmount * p.discountValue) / 100))
+            : Math.max(0, finalAmount - p.discountValue);
+        }
+      }
+
+      const walletUse = Math.min(Math.max(0, walletAmountToUse || 0), finalAmount);
+      const paystackAmount = finalAmount - walletUse;
+
+      // Check wallet has enough for walletUse
+      const wallet = await storage.getWallet(customerId);
+      if ((wallet.balance || 0) < walletUse) {
+        return res.status(400).json({ success: false, error: `Wallet balance (KES ${wallet.balance}) is less than requested wallet contribution (KES ${walletUse}).`, insufficientFunds: true });
+      }
+
+      const reference = `HYBRID-${planId.toUpperCase()}-${Date.now()}`;
+      await storage.createTransaction({
+        reference, planId, planName: plan.name,
+        customerEmail: customer.email, customerName: customerName || customer.name || "Customer",
+        amount: finalAmount, status: "pending", emailSent: false, accountAssigned: false,
+      });
+
+      // Store hybrid metadata so verify endpoint can deduct wallet
+      dbSettingsSet(`hybrid_${reference}`, JSON.stringify({ customerId, walletAmountToUse: walletUse }));
+
+      const paystackSecret = getPaystackSecretKey();
+      if (!paystackSecret) {
+        return res.json({ success: true, reference, authorizationUrl: null, paystackConfigured: false, paystackAmount, walletAmountToUse: walletUse });
+      }
+
+      const psRes = await axios.post(
+        "https://api.paystack.co/transaction/initialize",
+        {
+          email: customer.email, amount: paystackAmount * 100, reference,
+          metadata: { planId, planName: plan.name, customerName, hybrid: true, walletContribution: walletUse },
+          callback_url: `${getBaseUrl(req)}/payment/success?ref=${reference}`,
+        },
+        { headers: { Authorization: `Bearer ${paystackSecret}` } }
+      );
+
+      res.json({
+        success: true, reference,
+        authorizationUrl: psRes.data.data.authorization_url,
+        accessCode: psRes.data.data.access_code,
+        paystackConfigured: true, paystackAmount, walletAmountToUse: walletUse,
+        email: customer.email,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Hybrid: verify (deduct wallet + deliver) ─────────────────────────────
+  app.post("/api/payment/verify-hybrid", async (req, res) => {
+    try {
+      const { reference } = req.body;
+      if (!reference) return res.status(400).json({ success: false, error: "Reference required" });
+
+      const transaction = await storage.getTransaction(reference);
+      if (!transaction) return res.status(404).json({ success: false, error: "Transaction not found" });
+      if (transaction.status === "success") {
+        return res.json({ success: true, alreadyProcessed: true, planName: transaction.planName });
+      }
+
+      const verify = await verifyPaystackPayment(reference);
+      if (!verify.configured) return res.status(503).json({ success: false, error: "Payment gateway not configured" });
+      if (!verify.success) {
+        await storage.updateTransaction(reference, { status: "failed" });
+        return res.json({ success: false, error: "Paystack payment was not successful" });
+      }
+
+      // Deduct the wallet contribution
+      const hybridRaw = dbSettingsGet(`hybrid_${reference}`);
+      if (hybridRaw) {
+        try {
+          const { customerId, walletAmountToUse } = JSON.parse(hybridRaw);
+          if (customerId && walletAmountToUse > 0) {
+            await storage.debitWallet(customerId, walletAmountToUse, `Hybrid purchase: ${transaction.planName} (wallet contribution)`, reference);
+          }
+        } catch { /* non-fatal — still deliver */ }
+        dbSettingsSet(`hybrid_${reference}`, ""); // cleanup
+      }
+
+      const delivery = await deliverAccount(transaction);
+      if (!delivery.success) return res.json({ success: false, error: delivery.error });
+
+      res.json({ success: true, planName: transaction.planName });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ─── Public: Initialize cart payment ──────────────────────────────────────
   app.post("/api/payment/initialize-cart", async (req, res) => {
     try {
