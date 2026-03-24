@@ -1,6 +1,6 @@
 import { Resend } from "resend";
 import type { AccountEntry } from "@shared/schema";
-import { getResendApiKey, getResendFrom } from "./secrets";
+import { getResendApiKey, getResendFrom, getResendOtpFrom, getResendSupportFrom } from "./secrets";
 
 function getResend(): Resend | null {
   const key = getResendApiKey();
@@ -8,10 +8,13 @@ function getResend(): Resend | null {
   return new Resend(key);
 }
 
-function from(label = "Chege Tech"): string {
-  const addr = getResendFrom();
+function from(addr: string, label = "Chege Tech"): string {
   return addr ? `${label} <${addr}>` : `${label} <onboarding@resend.dev>`;
 }
+
+function accountsFrom(): string  { return from(getResendFrom(), "StreamVault Premium"); }
+function otpFrom(): string       { return from(getResendOtpFrom(), "StreamVault Premium"); }
+function supportFrom(): string   { return from(getResendSupportFrom(), "StreamVault Support"); }
 
 export async function sendAccountEmail(
   customerEmail: string,
@@ -74,7 +77,7 @@ export async function sendAccountEmail(
 
   try {
     const { error } = await resend.emails.send({
-      from: from("Premium Subscriptions"),
+      from: accountsFrom(),
       to: customerEmail,
       subject: `Your ${planName} Account Details`,
       html,
@@ -123,7 +126,7 @@ export async function sendSuspensionEmail(
 </html>`;
 
   try {
-    const { error } = await resend.emails.send({ from: from(), to: customerEmail, subject: "Your Account Has Been Suspended", html });
+    const { error } = await resend.emails.send({ from: supportFrom(), to: customerEmail, subject: "Your Account Has Been Suspended", html });
     if (error) throw new Error(error.message);
     return { success: true };
   } catch (err: any) {
@@ -162,7 +165,7 @@ export async function sendUnsuspensionEmail(
 </html>`;
 
   try {
-    const { error } = await resend.emails.send({ from: from(), to: customerEmail, subject: "Your Account Has Been Restored", html });
+    const { error } = await resend.emails.send({ from: supportFrom(), to: customerEmail, subject: "Your Account Has Been Restored", html });
     if (error) throw new Error(error.message);
     return { success: true };
   } catch (err: any) {
@@ -200,7 +203,7 @@ export async function sendBulkEmail(
   const errors: string[] = [];
   for (const email of recipients) {
     try {
-      const { error } = await resend.emails.send({ from: from(), to: email, subject, html });
+      const { error } = await resend.emails.send({ from: supportFrom(), to: email, subject, html });
       if (error) throw new Error(error.message);
       sent++;
     } catch (err: any) {
@@ -244,7 +247,7 @@ export async function sendPasswordResetEmail(
 </html>`;
 
   try {
-    const { error } = await resend.emails.send({ from: from(), to: customerEmail, subject: "Your Password Reset Code", html });
+    const { error } = await resend.emails.send({ from: otpFrom(), to: customerEmail, subject: "Your Password Reset Code", html });
     if (error) throw new Error(error.message);
     return { success: true };
   } catch (err: any) {
@@ -261,7 +264,7 @@ export async function sendRawEmail(
   const resend = getResend();
   if (!resend) return;
   try {
-    await resend.emails.send({ from: from(), to, subject, html });
+    await resend.emails.send({ from: accountsFrom(), to, subject, html });
   } catch (err: any) {
     console.error("[email] sendRawEmail:", err.message);
   }
@@ -272,7 +275,7 @@ export async function sendAdminEmail(subject: string, html: string): Promise<voi
   if (!resend) return;
   const adminTo = process.env.ADMIN_EMAIL || getResendFrom() || "onboarding@resend.dev";
   try {
-    await resend.emails.send({ from: from(), to: adminTo, subject, html });
+    await resend.emails.send({ from: supportFrom(), to: adminTo, subject, html });
   } catch (err: any) {
     console.error("[email] sendAdminEmail:", err.message);
   }

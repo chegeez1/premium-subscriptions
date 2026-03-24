@@ -24,6 +24,14 @@ export function getResendFrom(): string {
   return getCredentialsOverride().resendFrom || process.env.RESEND_FROM || "";
 }
 
+export function getResendOtpFrom(): string {
+  return process.env.RESEND_OTP_FROM || getResendFrom();
+}
+
+export function getResendSupportFrom(): string {
+  return process.env.RESEND_SUPPORT_FROM || getResendFrom();
+}
+
 export function getAdminEmail(): string {
   return getCredentialsOverride().adminEmail || process.env.ADMIN_EMAIL || "admin@example.com";
 }
