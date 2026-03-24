@@ -315,7 +315,9 @@ function AdminMonitorBot() {
   const [loading, setLoading] = useState(false);
   const [alerts, setAlerts] = useState(0);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  // Security / protection mode (always-on server-side, polling here)
+  // Bot running state — persisted so it survives page refresh
+  const [botRunning, setBotRunning] = useState(() => localStorage.getItem("chege_bot_running") === "true");
+  // Security / protection mode
   const [scanning, setScanning] = useState(false);
   const [threats, setThreats] = useState<ThreatItem[]>([]);
   const [lastScan, setLastScan] = useState<Date | null>(null);
@@ -366,9 +368,35 @@ function AdminMonitorBot() {
     finally { setAutoLogLoading(false); }
   }
 
-  // Auto-start security scan and log when panel opens
+  // Persist botRunning to localStorage
   useEffect(() => {
-    if (open) {
+    localStorage.setItem("chege_bot_running", String(botRunning));
+    if (!botRunning) {
+      if (monitorPoll.current) clearInterval(monitorPoll.current);
+      if (securityPoll.current) clearInterval(securityPoll.current);
+      if (autoLogPoll.current) clearInterval(autoLogPoll.current);
+    }
+  }, [botRunning]);
+
+  function startBot() {
+    setBotRunning(true);
+    fetchStatus(false);
+    runScan();
+    fetchAutoLog();
+    setMessages([]);
+  }
+  function stopBot() {
+    setBotRunning(false);
+    setMessages([]);
+    setThreats([]);
+    setAutoActions([]);
+    setLastRefresh(null);
+    setLastScan(null);
+  }
+
+  // Polling when panel is open AND bot is running
+  useEffect(() => {
+    if (open && botRunning) {
       setAlerts(0);
       fetchStatus(false);
       runScan();
@@ -387,12 +415,14 @@ function AdminMonitorBot() {
       if (securityPoll.current) clearInterval(securityPoll.current);
       if (autoLogPoll.current) clearInterval(autoLogPoll.current);
     };
-  }, [open]);
+  }, [open, botRunning]);
 
+  // Background poll every 60s (only when bot is running and panel is closed)
   useEffect(() => {
+    if (!botRunning) return;
     const bg = setInterval(() => { if (!open) fetchStatus(true); }, 60000);
     return () => clearInterval(bg);
-  }, [open]);
+  }, [open, botRunning]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -432,14 +462,14 @@ function AdminMonitorBot() {
 
   return (
     <>
-      {/* Floating button — always green (bot always online) */}
+      {/* Floating button */}
       <button onClick={() => setOpen(o => !o)}
         className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-2xl shadow-black/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95 relative"
-        style={{ background: "linear-gradient(135deg,#059669,#4f46e5)" }}
-        title="Admin Bot — Always Online">
+        style={{ background: botRunning ? "linear-gradient(135deg,#059669,#4f46e5)" : "linear-gradient(135deg,#374151,#1f2937)" }}
+        title={botRunning ? "Admin Bot — Running" : "Admin Bot — Stopped"}>
         {open ? <Minimize2 className="w-5 h-5 text-white" /> : <Bot className="w-6 h-6 text-white" />}
-        <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-[#0b0b18] animate-pulse" title="Always online" />
-        {!open && badgeCount > 0 && (
+        <span className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-[#0b0b18] ${botRunning ? "bg-emerald-400 animate-pulse" : "bg-red-500"}`} />
+        {!open && badgeCount > 0 && botRunning && (
           <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center z-10">
             {badgeCount}
           </span>
@@ -462,19 +492,37 @@ function AdminMonitorBot() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-white">Admin Protection Bot</p>
-                <p className="text-[10px] text-emerald-400">
-                  ✅ Always Online · auto-protecting 24/7
-                  {lastRefresh && <span className="text-white/25 ml-1">{lastRefresh.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}</span>}
+                <p className="text-[10px]">
+                  {botRunning
+                    ? <span className="text-emerald-400">● Running · monitoring 24/7{lastRefresh && <span className="text-white/25 ml-1">· {lastRefresh.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}</span>}</span>
+                    : <span className="text-red-400">● Stopped · click Start to begin monitoring</span>
+                  }
                 </p>
               </div>
-              {/* Always-online badge */}
-              <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                Online
-              </div>
-              <button onClick={() => fetchStatus(false)} title="Refresh" className="text-white/25 hover:text-white/60 p-1 transition-colors">
-                <RotateCw className={`w-3 h-3 ${scanning ? "animate-spin text-indigo-400" : ""}`} />
-              </button>
+              {botRunning ? (
+                <button
+                  onClick={stopBot}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-red-500/15 text-red-400 border border-red-500/25 hover:bg-red-500/25 transition-colors"
+                  title="Stop bot"
+                >
+                  <span className="w-2 h-2 rounded-full bg-red-400" />
+                  Stop
+                </button>
+              ) : (
+                <button
+                  onClick={startBot}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600/25 text-emerald-300 border border-emerald-500/35 hover:bg-emerald-600/40 transition-colors"
+                  title="Start bot"
+                >
+                  <Play className="w-2.5 h-2.5" />
+                  Start
+                </button>
+              )}
+              {botRunning && (
+                <button onClick={() => fetchStatus(false)} title="Refresh" className="text-white/25 hover:text-white/60 p-1 transition-colors">
+                  <RotateCw className={`w-3 h-3 ${scanning ? "animate-spin text-indigo-400" : ""}`} />
+                </button>
+              )}
               <button onClick={() => setOpen(false)} className="text-white/25 hover:text-white/60 p-1 transition-colors">
                 <Minimize2 className="w-3.5 h-3.5" />
               </button>
@@ -499,8 +547,30 @@ function AdminMonitorBot() {
             </div>
           </div>
 
+          {/* ── BOT STOPPED SCREEN ── */}
+          {!botRunning && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(55,65,81,.6)", border: "2px solid rgba(255,255,255,.08)" }}>
+                <Bot className="w-8 h-8 text-white/25" />
+              </div>
+              <div className="text-center">
+                <p className="text-white font-bold text-base mb-1">Bot is not running</p>
+                <p className="text-white/35 text-xs max-w-[240px] leading-relaxed">Start the bot to enable live monitoring, security scanning, and auto-fix actions.</p>
+              </div>
+              <button
+                onClick={startBot}
+                className="flex items-center gap-2.5 px-6 py-3 rounded-2xl font-bold text-sm text-white transition-all hover:scale-105 active:scale-95 shadow-lg shadow-emerald-900/30"
+                style={{ background: "linear-gradient(135deg,#059669,#4f46e5)" }}
+              >
+                <Play className="w-4 h-4" />
+                Start Bot
+              </button>
+              <p className="text-white/20 text-[10px]">Bot state is saved across page refreshes</p>
+            </div>
+          )}
+
           {/* ── MONITOR TAB ── */}
-          {tab === "monitor" && (
+          {botRunning && tab === "monitor" && (
             <>
               {statusMsg ? (
                 <div className="px-3 py-2 border-b border-white/6 flex-shrink-0 bg-white/2 text-[11px] text-white/70 leading-relaxed max-h-36 overflow-y-auto">
@@ -565,7 +635,7 @@ function AdminMonitorBot() {
           )}
 
           {/* ── SECURITY TAB ── */}
-          {tab === "security" && (
+          {botRunning && tab === "security" && (
             <div className="flex-1 flex flex-col overflow-hidden">
               {/* Scan bar */}
               <div className="px-3 py-2 border-b border-white/6 flex-shrink-0 flex items-center gap-2">
@@ -659,7 +729,7 @@ function AdminMonitorBot() {
           )}
 
           {/* ── AUTO-FIX TAB ── */}
-          {tab === "auto" && (
+          {botRunning && tab === "auto" && (
             <div className="flex-1 flex flex-col overflow-hidden">
               {/* Header bar */}
               <div className="px-3 py-2 border-b border-white/6 flex-shrink-0 flex items-center gap-2">
@@ -3191,12 +3261,56 @@ function SupportTab() {
 }
 
 // ─── Customers Tab ────────────────────────────────────────────
+function parseUA(ua: string) {
+  if (!ua) return { browser: "Unknown browser", os: "Unknown OS", device: "Desktop" };
+  const tablet = /ipad|tablet|(android(?!.*mobile))/i.test(ua);
+  const mobile = /mobile|android|iphone/i.test(ua);
+  const device = tablet ? "Tablet" : mobile ? "Mobile" : "Desktop";
+  let browser = "Browser";
+  if (/Edg\//i.test(ua)) browser = "Edge";
+  else if (/OPR\/|Opera/i.test(ua)) browser = "Opera";
+  else if (/Chrome\/\d/i.test(ua)) browser = "Chrome";
+  else if (/Firefox\/\d/i.test(ua)) browser = "Firefox";
+  else if (/Safari\/\d/i.test(ua) && !/Chrome/i.test(ua)) browser = "Safari";
+  else if (/MSIE|Trident/i.test(ua)) browser = "IE";
+  const bVer = ua.match(new RegExp(browser.split(" ")[0] + "\\/(\\d+)", "i"));
+  if (bVer) browser += ` ${bVer[1]}`;
+  let os = "Unknown OS";
+  if (/Windows NT 10|Windows 11/i.test(ua)) os = "Windows 10/11";
+  else if (/Windows NT 6\.3/i.test(ua)) os = "Windows 8.1";
+  else if (/Windows NT 6\.1/i.test(ua)) os = "Windows 7";
+  else if (/Mac OS X/i.test(ua)) { const m = ua.match(/Mac OS X ([\d_]+)/); os = m ? `macOS ${m[1].replace(/_/g, ".")}` : "macOS"; }
+  else if (/Android/i.test(ua)) { const m = ua.match(/Android ([\d.]+)/); os = m ? `Android ${m[1]}` : "Android"; }
+  else if (/iPhone|iPad/i.test(ua)) { const m = ua.match(/OS ([\d_]+)/); os = m ? `iOS ${m[1].replace(/_/g, ".")}` : "iOS"; }
+  else if (/CrOS/i.test(ua)) os = "ChromeOS";
+  else if (/Linux/i.test(ua)) os = "Linux";
+  return { browser, os, device };
+}
+
 function CustomersTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [avatarTargetId, setAvatarTargetId] = useState<number | null>(null);
   const adminAvatarInputRef = useRef<HTMLInputElement>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [loginHistoryCache, setLoginHistoryCache] = useState<Record<number, any[]>>({});
+  const [loginHistoryLoading, setLoginHistoryLoading] = useState<number | null>(null);
+
+  async function loadLoginHistory(id: number) {
+    if (expandedId === id) { setExpandedId(null); return; }
+    setExpandedId(id);
+    if (loginHistoryCache[id]) return;
+    setLoginHistoryLoading(id);
+    try {
+      const data = await authFetch(`/api/admin/customers/${id}/login-history`);
+      setLoginHistoryCache(prev => ({ ...prev, [id]: data.logs || [] }));
+    } catch {
+      setLoginHistoryCache(prev => ({ ...prev, [id]: [] }));
+    } finally {
+      setLoginHistoryLoading(null);
+    }
+  }
 
   async function handleAdminAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -3317,7 +3431,8 @@ function CustomersTab() {
             </TableHeader>
             <TableBody>
               {customers.map((c: any) => (
-                <TableRow key={c.id} className="border-white/5 hover:bg-white/3" data-testid={`row-customer-${c.id}`}>
+                <React.Fragment key={c.id}>
+                <TableRow className="border-white/5 hover:bg-white/3" data-testid={`row-customer-${c.id}`}>
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-indigo-600/20 flex items-center justify-center shrink-0 overflow-hidden">
@@ -3356,6 +3471,15 @@ function CustomersTab() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {/* Login history button */}
+                      <button
+                        onClick={() => loadLoginHistory(c.id)}
+                        title="Login history"
+                        className={`p-1.5 rounded-lg transition-all text-xs font-medium px-2.5 py-1 flex items-center gap-1 ${expandedId === c.id ? "bg-indigo-500/25 text-indigo-300" : "text-white/30 hover:text-indigo-400 hover:bg-indigo-500/10"}`}
+                      >
+                        {loginHistoryLoading === c.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+                        <span className="hidden sm:inline">Logins</span>
+                      </button>
                       {/* Avatar button */}
                       <button
                         onClick={() => { setAvatarTargetId(c.id); setTimeout(() => adminAvatarInputRef.current?.click(), 50); }}
@@ -3400,6 +3524,59 @@ function CustomersTab() {
                     </div>
                   </TableCell>
                 </TableRow>
+
+                {/* ── Login History Expanded Row ── */}
+                {expandedId === c.id && (
+                  <TableRow className="border-0">
+                    <TableCell colSpan={5} className="p-0">
+                      <div className="px-4 pb-4 pt-2 bg-indigo-950/30 border-b border-white/5">
+                        <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                          <Activity className="w-3 h-3" />
+                          Login History · last 20 sessions
+                        </p>
+                        {loginHistoryLoading === c.id ? (
+                          <div className="flex items-center gap-2 py-4 text-white/30 text-xs">
+                            <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                          </div>
+                        ) : !loginHistoryCache[c.id] || loginHistoryCache[c.id].length === 0 ? (
+                          <p className="text-xs text-white/25 py-3">No login records found for this account</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {loginHistoryCache[c.id].map((log: any, i: number) => {
+                              const { browser, os, device } = parseUA(log.user_agent || "");
+                              const deviceIcon = device === "Mobile" ? "📱" : device === "Tablet" ? "📲" : "🖥️";
+                              const flag = log.country_code ? `https://flagcdn.com/16x12/${log.country_code.toLowerCase()}.png` : null;
+                              return (
+                                <div key={i} className="flex items-start gap-3 px-3 py-2.5 rounded-xl bg-white/3 border border-white/6">
+                                  <span className="text-base mt-0.5">{deviceIcon}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-xs font-semibold text-white">{browser}</span>
+                                      <span className="text-[10px] text-white/35">on {os}</span>
+                                      <span className="text-[10px] text-indigo-300/60 font-medium">{device}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                      <span className="font-mono text-[11px] text-white/50">{log.ip || "—"}</span>
+                                      {flag && <img src={flag} alt="" className="w-4 h-3 rounded-sm" />}
+                                      {(log.city || log.country) && (
+                                        <span className="text-[11px] text-white/40">{[log.city, log.country].filter(Boolean).join(", ")}</span>
+                                      )}
+                                      {log.isp && <span className="text-[10px] text-white/25 truncate max-w-[120px]">{log.isp}</span>}
+                                    </div>
+                                  </div>
+                                  <span className="text-[10px] text-white/25 shrink-0 mt-0.5">
+                                    {log.created_at ? new Date(log.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+                </React.Fragment>
               ))}
             </TableBody>
           </Table>
