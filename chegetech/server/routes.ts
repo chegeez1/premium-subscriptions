@@ -449,9 +449,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Country Restriction Middleware ───────────────────────────────────────
   app.use(async (req: any, res: any, next: any) => {
-    if (req.path.startsWith("/api/admin") || req.path.startsWith("/admin") || req.path.startsWith("/api/auth/login") && req.method !== "GET") {
+    // 1. Authenticated admins (super or sub) always bypass — checked via Bearer token
+    const authHeader = (req.headers["authorization"] as string) || "";
+    if (authHeader.startsWith("Bearer ")) {
+      const tok = authHeader.slice(7).trim();
+      if (tok && validateAdminToken(tok)) return next();
+    }
+
+    // 2. Admin panel pages and all admin API routes always bypass
+    const p = req.path;
+    if (
+      p.startsWith("/api/admin") ||
+      p.startsWith("/admin") ||
+      p === "/api/auth/login" ||
+      p === "/api/customer/login" ||
+      p === "/api/auth/register" ||
+      p === "/api/customer/register" ||
+      p === "/api/config"
+    ) {
       return next();
     }
+
+    // 3. Apply country restriction to everyone else
     try {
       const { countries } = countryRestrictions.get();
       if (countries.length === 0) return next();
