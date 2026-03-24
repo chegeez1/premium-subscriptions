@@ -318,15 +318,6 @@ export default function Store() {
               </Button>
             )}
 
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setLocation("/admin")}
-              data-testid="link-admin"
-              className="glass border-white/10 text-white/80 hover:text-white hover:border-white/20 hidden sm:flex"
-            >
-              Admin
-            </Button>
           </div>
         </div>
       </header>
