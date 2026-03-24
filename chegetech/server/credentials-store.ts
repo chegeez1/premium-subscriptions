@@ -7,6 +7,8 @@ export interface CredentialsOverride {
   paystackSecretKey?: string;
   emailUser?: string;
   emailPass?: string;
+  resendApiKey?: string;
+  resendFrom?: string;
   adminEmail?: string;
   adminPassword?: string;
   telegramBotToken?: string;

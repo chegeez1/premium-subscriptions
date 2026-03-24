@@ -79,11 +79,10 @@ function getBaseUrl(req: any): string {
 }
 
 async function sendVerificationEmail(email: string, code: string, name?: string): Promise<void> {
-  // Use Resend (migrated from legacy Gmail/nodemailer)
   const { Resend } = await import("resend");
   const key = getResendApiKey();
-  if (!key) {
-    console.warn("[email] sendVerificationEmail: RESEND_API_KEY not configured — skipping");
+  if (!key || key.startsWith("re_xxx") || key === "re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") {
+    console.warn("[email][OTP] RESEND_API_KEY is missing or still a placeholder — OTP email NOT sent. Go to Admin → Settings → Credentials and enter your real Resend API key.");
     return;
   }
   const resend = new Resend(key);
