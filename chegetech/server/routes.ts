@@ -1008,8 +1008,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Admin: Test email ────────────────────────────────────────────────────
   app.post("/api/admin/test-email", adminAuthMiddleware, superAdminOnly, async (req, res) => {
-    const to = (req.body?.to || getEmailUser() || "").trim();
-    if (!to) return res.status(400).json({ success: false, error: "No recipient — EMAIL_USER not set. Add it to your .env or Render env vars." });
+    const to = (req.body?.to || process.env.ADMIN_EMAIL || "").trim();
+    if (!to) return res.status(400).json({ success: false, error: "No recipient — set ADMIN_EMAIL or pass 'to' in the request body." });
     const result = await sendPasswordResetEmail(to, "TEST-OK", "Admin");
     res.json({ ...result, to });
   });
@@ -1949,6 +1949,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         paystackPublicKey: override.paystackPublicKey || "",
         paystackSecretKey: override.paystackSecretKey ? "••••••••••••••••" : "",
         paystackSecretKeySet: !!override.paystackSecretKey,
+        resendApiKey: override.resendApiKey ? "••••••••••••••••" : "",
+        resendApiKeySet: !!override.resendApiKey,
+        resendFrom: override.resendFrom || "",
         emailUser: override.emailUser || "",
         emailPass: override.emailPass ? "••••••••••••••••" : "",
         emailPassSet: !!override.emailPass,
@@ -2006,11 +2009,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Admin: Save credentials ──────────────────────────────────────────────
   app.put("/api/admin/credentials", adminAuthMiddleware, superAdminOnly, (req, res) => {
     try {
-      const { paystackPublicKey, paystackSecretKey, emailUser, emailPass, adminEmail, adminPassword, telegramBotToken, telegramChatId,
+      const { paystackPublicKey, paystackSecretKey, resendApiKey, resendFrom, emailUser, emailPass, adminEmail, adminPassword, telegramBotToken, telegramChatId,
         whatsappAccessToken, whatsappPhoneId, whatsappVerifyToken, whatsappAdminPhone, openaiApiKey, externalDatabaseUrl } = req.body;
       const toSave: Record<string, string | undefined> = {};
       if (paystackPublicKey !== undefined) toSave.paystackPublicKey = paystackPublicKey || undefined;
       if (paystackSecretKey !== undefined && paystackSecretKey !== "••••••••••••••••") toSave.paystackSecretKey = paystackSecretKey || undefined;
+      if (resendApiKey !== undefined && resendApiKey !== "••••••••••••••••") toSave.resendApiKey = resendApiKey || undefined;
+      if (resendFrom !== undefined) toSave.resendFrom = resendFrom || undefined;
       if (emailUser !== undefined) toSave.emailUser = emailUser || undefined;
       if (emailPass !== undefined && emailPass !== "••••••••••••••••") toSave.emailPass = emailPass || undefined;
       if (adminEmail !== undefined) toSave.adminEmail = adminEmail || undefined;

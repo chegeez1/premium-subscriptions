@@ -3,24 +3,7 @@ import { storage } from "./storage";
 import { sendTelegramMessage } from "./telegram";
 import { getAppConfig } from "./app-config";
 import { dbSettingsGet } from "./storage";
-import nodemailer from "nodemailer";
-import { getEmailUser, getEmailPass } from "./secrets";
-
-function createTransporter() {
-  const user = getEmailUser();
-  const pass = getEmailPass();
-  if (!user || !pass) return null;
-  return nodemailer.createTransport({ service: "gmail", auth: { user, pass } });
-}
-
-async function sendAdminEmail(subject: string, html: string) {
-  const transporter = createTransporter();
-  if (!transporter) return;
-  const user = getEmailUser();
-  try {
-    await transporter.sendMail({ from: user, to: user, subject, html });
-  } catch {}
-}
+import { sendAdminEmail, sendBulkEmail, sendRawEmail } from "./email";
 
 // ─── Daily: check expiring accounts + notify ──────────────────────────────
 
@@ -38,26 +21,24 @@ async function checkExpiringAccounts() {
     });
 
     for (const tx of expiring) {
+      if (!tx.customerEmail) continue;
       const expDate = new Date(tx.expiresAt!).toLocaleDateString();
-      const transporter = createTransporter();
-      if (transporter && tx.customerEmail) {
-        const html = `
-          <div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-            <div style="background:linear-gradient(135deg,#4F46E5,#7C3AED);padding:32px;border-radius:12px 12px 0 0;text-align:center">
-              <h1 style="color:#fff;margin:0;font-size:22px">${siteName}</h1>
-            </div>
-            <div style="background:#fff;padding:32px;border-radius:0 0 12px 12px;border:1px solid #e5e7eb">
-              <h2 style="color:#1f2937;margin-top:0">⏰ Subscription Expiring Soon</h2>
-              <p style="color:#4b5563">Hi there! Your <b>${tx.planName}</b> subscription expires on <b>${expDate}</b>.</p>
-              <p style="color:#4b5563">Renew now to avoid any interruption in service.</p>
-              <a href="${process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : ""}" 
-                 style="display:inline-block;background:#4F46E5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
-                Renew Now →
-              </a>
-            </div>
-          </div>`;
-        await transporter.sendMail({ from: getEmailUser(), to: tx.customerEmail, subject: `⏰ Your ${tx.planName} expires on ${expDate}`, html }).catch(() => {});
-      }
+      const html = `
+        <div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+          <div style="background:linear-gradient(135deg,#4F46E5,#7C3AED);padding:32px;border-radius:12px 12px 0 0;text-align:center">
+            <h1 style="color:#fff;margin:0;font-size:22px">${siteName}</h1>
+          </div>
+          <div style="background:#fff;padding:32px;border-radius:0 0 12px 12px;border:1px solid #e5e7eb">
+            <h2 style="color:#1f2937;margin-top:0">⏰ Subscription Expiring Soon</h2>
+            <p style="color:#4b5563">Hi there! Your <b>${tx.planName}</b> subscription expires on <b>${expDate}</b>.</p>
+            <p style="color:#4b5563">Renew now to avoid any interruption in service.</p>
+            <a href="${process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : ""}"
+               style="display:inline-block;background:#4F46E5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
+              Renew Now →
+            </a>
+          </div>
+        </div>`;
+      await sendRawEmail(tx.customerEmail, `⏰ Your ${tx.planName} expires on ${expDate}`, html).catch(() => {});
     }
 
     if (expiring.length > 0) {

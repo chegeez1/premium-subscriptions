@@ -1292,14 +1292,14 @@ function SettingsTab() {
             </div>
             <div>
               <p className="font-semibold text-white">Test Email Delivery</p>
-              <p className="text-xs text-white/40">Send a test email to confirm your Gmail credentials work</p>
+              <p className="text-xs text-white/40">Send a test email to confirm your Resend API key works</p>
             </div>
           </div>
           <div className="p-5 space-y-3">
             <div className="flex gap-2">
               <input
                 type="email"
-                placeholder="recipient@example.com (leave blank = EMAIL_USER)"
+                placeholder="recipient@example.com (leave blank = ADMIN_EMAIL)"
                 value={testEmailTo}
                 onChange={(e) => setTestEmailTo(e.target.value)}
                 className="flex-1 text-sm bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white placeholder:text-white/25 outline-none focus:border-indigo-500/50"
@@ -1341,10 +1341,10 @@ function SettingsTab() {
                   <div>
                     <p className="text-red-400 font-semibold">Send failed</p>
                     <p className="text-white/50 text-xs mt-1 font-mono break-all">{testEmailResult.error}</p>
-                    {testEmailResult.error?.includes("Username and Password") || testEmailResult.error?.includes("Invalid login") ? (
-                      <p className="text-amber-400/70 text-xs mt-2">Gmail rejected the password. You need a <strong className="text-amber-300">Gmail App Password</strong> — go to myaccount.google.com/apppasswords (requires 2FA to be on), generate one, and update EMAIL_PASS.</p>
-                    ) : testEmailResult.error?.includes("not configured") ? (
-                      <p className="text-amber-400/70 text-xs mt-2">EMAIL_USER or EMAIL_PASS is missing. Set both in your .env file (locally) or Render Environment tab.</p>
+                    {testEmailResult.error?.includes("not configured") || testEmailResult.error?.includes("API key") ? (
+                      <p className="text-amber-400/70 text-xs mt-2">RESEND_API_KEY is missing. Add it in Settings → Email → Resend API Key, or set it as an environment variable.</p>
+                    ) : testEmailResult.error?.includes("Invalid") || testEmailResult.error?.includes("Unauthorized") ? (
+                      <p className="text-amber-400/70 text-xs mt-2">The API key was rejected by Resend. Check it at <strong className="text-amber-300">resend.com/api-keys</strong> and make sure it has send permission.</p>
                     ) : null}
                   </div>
                 </div>
@@ -4086,16 +4086,17 @@ function CredentialsEditor({ inputCls }: { inputCls: string }) {
           <CredRow label="Public Key" field="paystackPublicKey" placeholder="pk_live_..." hint="Used in the browser for Paystack popup" />
           <CredRow label="Secret Key" field="paystackSecretKey" type="password" placeholder="sk_live_..." hint="Used server-side to verify payments" />
         </div>
-        {/* Email */}
+        {/* Email — Resend */}
         <div className="glass rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-2 mb-1">
             <Mail className="w-3.5 h-3.5 text-indigo-400" />
-            <p className="text-[10px] font-semibold text-white/40 uppercase tracking-widest">Email (Gmail)</p>
+            <p className="text-[10px] font-semibold text-white/40 uppercase tracking-widest">Email (Resend)</p>
             {effective.emailConfigured && <Badge className="text-[9px] bg-emerald-500/20 text-emerald-400 border-0 px-1.5">Active</Badge>}
           </div>
-          <CredRow label="Gmail Address" field="emailUser" placeholder="you@gmail.com" />
-          <CredRow label="App Password" field="emailPass" type="password" placeholder="xxxx xxxx xxxx xxxx"
-            hint="Generate at myaccount.google.com/apppasswords — not your regular password" />
+          <CredRow label="Resend API Key" field="resendApiKey" type="password" placeholder="re_••••••••••••"
+            hint="Get your key at resend.com/api-keys — starts with re_" />
+          <CredRow label="From Address" field="resendFrom" placeholder="hello@yourdomain.com"
+            hint="Must be a verified sender in your Resend account. Leave blank to use onboarding@resend.dev (test only)" />
         </div>
         {/* Admin Login */}
         <div className="glass rounded-xl p-4 space-y-3">
