@@ -1613,6 +1613,9 @@ function PlansTab() {
   const [editValues, setEditValues] = useState<{ price: string; offerLabel: string }>({ price: "", offerLabel: "" });
   const [showAddCustom, setShowAddCustom] = useState(false);
   const [expandedCat, setExpandedCat] = useState<Record<string, boolean>>({});
+  const [newCatMode, setNewCatMode] = useState(false);
+  const [newCatDisplayName, setNewCatDisplayName] = useState("");
+  const [newCatKey, setNewCatKey] = useState("");
 
   const { data: plansData, refetch: refetchPlans } = useQuery<any>({ queryKey: ["/api/plans"] });
   const { data: overridesData, refetch: refetchOverrides } = useQuery<any>({
@@ -1658,7 +1661,7 @@ function PlansTab() {
       method: "POST",
       body: JSON.stringify({ ...d, price: parseInt(d.price), maxUsers: parseInt(d.maxUsers), features: d.features.split(",").map((f: string) => f.trim()).filter(Boolean) }),
     }),
-    onSuccess: () => { toast({ title: "Custom plan added" }); setShowAddCustom(false); addCustomForm.reset(); refetchPlans(); refetchCustom(); },
+    onSuccess: () => { toast({ title: "Custom plan added" }); setShowAddCustom(false); addCustomForm.reset(); setNewCatMode(false); setNewCatDisplayName(""); setNewCatKey(""); refetchPlans(); refetchCustom(); },
   });
 
   const allPlanEntries = Object.entries(categories).flatMap(([catKey, cat]: [string, any]) =>
@@ -1685,31 +1688,92 @@ function PlansTab() {
       {showAddCustom && (
         <div className="glass-card rounded-2xl p-5 mb-6">
           <h3 className="font-semibold text-white mb-4">Add Custom Plan</h3>
-          <form onSubmit={addCustomForm.handleSubmit((d) => addCustomMutation.mutate(d))} className="space-y-4">
+          <form
+            onSubmit={addCustomForm.handleSubmit((d) => {
+              const finalKey = newCatMode ? newCatKey.trim() : d.categoryKey;
+              const finalName = newCatMode ? newCatDisplayName.trim() : (categories[d.categoryKey]?.category ?? d.categoryKey);
+              addCustomMutation.mutate({ ...d, categoryKey: finalKey, categoryName: finalName });
+            })}
+            className="space-y-4"
+          >
             <div className="grid grid-cols-2 gap-4">
               <div><label className="text-xs text-white/50 block mb-1">Plan Name</label><Input {...addCustomForm.register("name")} placeholder="e.g. Disney+" className="glass border-white/10 bg-white/5 text-white placeholder:text-white/25" /></div>
               <div><label className="text-xs text-white/50 block mb-1">Price (KES)</label><Input {...addCustomForm.register("price")} type="number" placeholder="250" className="glass border-white/10 bg-white/5 text-white" /></div>
               <div><label className="text-xs text-white/50 block mb-1">Duration</label><Input {...addCustomForm.register("duration")} placeholder="1 Month" className="glass border-white/10 bg-white/5 text-white" /></div>
               <div><label className="text-xs text-white/50 block mb-1">Max Users</label><Input {...addCustomForm.register("maxUsers")} type="number" placeholder="5" className="glass border-white/10 bg-white/5 text-white" /></div>
-              <div>
-                <label className="text-xs text-white/50 block mb-1">Category</label>
-                <select {...addCustomForm.register("categoryKey")} className="w-full h-9 rounded-lg glass border border-white/10 bg-background/50 text-white/80 px-3 text-sm">
-                  <option value="streaming">Streaming</option>
-                  <option value="music">Music</option>
-                  <option value="productivity">Productivity</option>
-                  <option value="vpn">VPN</option>
-                  <option value="gaming">Gaming</option>
-                  <option value="other">Other</option>
-                </select>
+
+              {/* ── Category picker ── */}
+              <div className="col-span-2">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs text-white/50">Category</label>
+                  <button
+                    type="button"
+                    onClick={() => { setNewCatMode(m => !m); setNewCatDisplayName(""); setNewCatKey(""); }}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+                  >
+                    {newCatMode ? (
+                      <><X className="w-3 h-3" />Use existing</>
+                    ) : (
+                      <><Plus className="w-3 h-3" />New category</>
+                    )}
+                  </button>
+                </div>
+
+                {newCatMode ? (
+                  /* ── Inline new-category creator ── */
+                  <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-3 space-y-2">
+                    <p className="text-xs text-indigo-300/70 mb-2">Enter a name for your new category and we'll generate its ID automatically.</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1">Display Name <span className="text-red-400">*</span></label>
+                        <Input
+                          value={newCatDisplayName}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setNewCatDisplayName(val);
+                            setNewCatKey(val.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
+                          }}
+                          placeholder="e.g. Sports & Live TV"
+                          className="glass border-white/10 bg-white/5 text-white placeholder:text-white/20 h-8 text-sm"
+                          required={newCatMode}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1">Category ID <span className="text-white/25">(auto)</span></label>
+                        <Input
+                          value={newCatKey}
+                          onChange={e => setNewCatKey(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+                          placeholder="sports_live_tv"
+                          className="glass border-white/10 bg-white/5 text-white/60 placeholder:text-white/20 h-8 text-sm font-mono"
+                          required={newCatMode}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* ── Existing category select (dynamic from plansData) ── */
+                  <select
+                    {...addCustomForm.register("categoryKey")}
+                    className="w-full h-9 rounded-lg glass border border-white/10 bg-background/50 text-white/80 px-3 text-sm"
+                  >
+                    {Object.entries(categories).map(([key, cat]: [string, any]) => (
+                      <option key={key} value={key}>{cat.category}</option>
+                    ))}
+                  </select>
+                )}
               </div>
-              <div><label className="text-xs text-white/50 block mb-1">Category Display Name</label><Input {...addCustomForm.register("categoryName")} placeholder="Entertainment" className="glass border-white/10 bg-white/5 text-white" /></div>
             </div>
+
             <div><label className="text-xs text-white/50 block mb-1">Features (comma-separated)</label><Input {...addCustomForm.register("features")} placeholder="HD Streaming, Multiple Devices" className="glass border-white/10 bg-white/5 text-white" /></div>
             <div className="flex gap-3">
-              <Button type="submit" disabled={addCustomMutation.isPending} className="bg-gradient-to-r from-indigo-600 to-violet-600 border-0 text-white">
+              <Button
+                type="submit"
+                disabled={addCustomMutation.isPending || (newCatMode && (!newCatDisplayName.trim() || !newCatKey.trim()))}
+                className="bg-gradient-to-r from-indigo-600 to-violet-600 border-0 text-white"
+              >
                 {addCustomMutation.isPending ? "Saving..." : "Save Plan"}
               </Button>
-              <Button type="button" variant="outline" className="glass border-white/10 text-white/60" onClick={() => setShowAddCustom(false)}>Cancel</Button>
+              <Button type="button" variant="outline" className="glass border-white/10 text-white/60" onClick={() => { setShowAddCustom(false); setNewCatMode(false); }}>Cancel</Button>
             </div>
           </form>
         </div>
