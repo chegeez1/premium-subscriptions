@@ -1088,6 +1088,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Admin: Ratings ───────────────────────────────────────────────────────
+  app.get("/api/admin/ratings", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const ratings = await storage.getAllRatings(200);
+      const avg = ratings.length ? (ratings.reduce((s, r) => s + r.stars, 0) / ratings.length) : 0;
+      res.json({ success: true, ratings, count: ratings.length, average: Math.round(avg * 10) / 10 });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ─── Admin: Transactions ──────────────────────────────────────────────────
   app.get("/api/admin/transactions", adminAuthMiddleware, requirePermission("dashboard", "transactions"), async (_req, res) => {
     try {
@@ -1798,6 +1809,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         redeemLink: account.redeemLink || "",
         instructions: account.instructions || "",
       }});
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Submit rating for a completed order ────────────────────────
+  app.post("/api/customer/orders/:reference/rate", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { stars, comment } = req.body;
+      const s = parseInt(stars, 10);
+      if (!s || s < 1 || s > 5) return res.status(400).json({ success: false, error: "Stars must be 1–5" });
+      const tx = await storage.getTransaction(req.params.reference);
+      if (!tx) return res.status(404).json({ success: false, error: "Order not found" });
+      if (tx.customerEmail !== req.customer.email) return res.status(403).json({ success: false, error: "Access denied" });
+      if (tx.status !== "success") return res.status(400).json({ success: false, error: "Only completed orders can be rated" });
+      await storage.createRating({
+        reference: req.params.reference,
+        customerEmail: req.customer.email,
+        customerName: req.customer.name || undefined,
+        planId: tx.planId,
+        planName: tx.planName,
+        stars: s,
+        comment: (comment || "").trim() || undefined,
+      });
+      res.json({ success: true, message: "Thank you for your rating!" });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Get my rating for an order ────────────────────────────────
+  app.get("/api/customer/orders/:reference/rating", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const rating = await storage.getRatingByReference(req.params.reference);
+      if (rating && rating.customer_email !== req.customer.email && rating.customerEmail !== req.customer.email) {
+        return res.json({ success: true, rating: null });
+      }
+      res.json({ success: true, rating: rating || null });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

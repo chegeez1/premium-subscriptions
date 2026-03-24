@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -141,6 +141,7 @@ export default function Admin() {
     { id: "transactions", label: "Transactions", icon: ArrowLeftRight },
     { id: "apikeys", label: "API Keys", icon: Key },
     { id: "customers", label: "Customers", icon: Users },
+    { id: "ratings", label: "Ratings", icon: Star },
     { id: "emailblast", label: "Email Blast", icon: Send },
     { id: "campaigns", label: "Campaigns", icon: Send },
     { id: "support", label: "Support", icon: MessageCircle },
@@ -243,6 +244,7 @@ export default function Admin() {
           {activeTab === "transactions" && <TransactionsTab />}
           {activeTab === "apikeys" && <ApiKeysTab />}
           {activeTab === "customers" && <CustomersTab />}
+          {activeTab === "ratings" && <RatingsTab />}
           {activeTab === "emailblast" && <EmailBlastTab />}
           {activeTab === "campaigns" && <CampaignsTab />}
           {activeTab === "support" && <SupportTab />}
@@ -5576,6 +5578,114 @@ function DomainsTab() {
             </li>
           ))}
         </ol>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RATINGS TAB
+// ═══════════════════════════════════════════════════════════════
+
+function RatingsTab() {
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/ratings"],
+    queryFn: () => authFetch("/api/admin/ratings"),
+    refetchInterval: 60000,
+  });
+  const ratings = data?.ratings ?? [];
+  const avg = data?.average ?? 0;
+  const count = data?.count ?? 0;
+
+  const starDist = [5,4,3,2,1].map(n => ({
+    stars: n,
+    count: ratings.filter((r: any) => r.stars === n).length,
+  }));
+
+  function StarDisplay({ stars, size = "w-4 h-4" }: { stars: number; size?: string }) {
+    return (
+      <div className="flex items-center gap-0.5">
+        {[1,2,3,4,5].map(s => (
+          <Star key={s} className={`${size} ${s <= stars ? "text-amber-400 fill-amber-400" : "text-white/15"}`} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-xl font-bold text-white">Customer Ratings</h2>
+        <p className="text-white/40 text-sm mt-0.5">Reviews submitted by customers after completed orders</p>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="rounded-xl p-4 border border-white/10" style={{ background: "rgba(255,255,255,.04)" }}>
+          <p className="text-white/50 text-xs mb-1">Average Rating</p>
+          <p className="text-3xl font-bold text-amber-400">{avg > 0 ? avg.toFixed(1) : "—"}</p>
+          <div className="mt-1"><StarDisplay stars={Math.round(avg)} /></div>
+        </div>
+        <div className="rounded-xl p-4 border border-white/10" style={{ background: "rgba(255,255,255,.04)" }}>
+          <p className="text-white/50 text-xs mb-1">Total Reviews</p>
+          <p className="text-3xl font-bold text-white">{count}</p>
+        </div>
+        <div className="rounded-xl p-4 border border-white/10 space-y-1" style={{ background: "rgba(255,255,255,.04)" }}>
+          <p className="text-white/50 text-xs mb-2">Distribution</p>
+          {starDist.map(({ stars, count: c }) => (
+            <div key={stars} className="flex items-center gap-2 text-xs">
+              <span className="text-white/50 w-4 text-right">{stars}</span>
+              <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />
+              <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div className="h-full rounded-full bg-amber-400" style={{ width: count > 0 ? `${(c / count) * 100}%` : "0%" }} />
+              </div>
+              <span className="text-white/40 w-5 text-right">{c}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-xl border border-white/10 overflow-hidden" style={{ background: "rgba(255,255,255,.03)" }}>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+        ) : ratings.length === 0 ? (
+          <div className="text-center py-16 text-white/30">
+            <Star className="w-10 h-10 mx-auto mb-3 text-white/10" />
+            <p>No ratings yet</p>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/8">
+                <th className="text-left px-4 py-3 text-white/40 font-medium">Customer</th>
+                <th className="text-left px-4 py-3 text-white/40 font-medium">Plan</th>
+                <th className="text-left px-4 py-3 text-white/40 font-medium">Stars</th>
+                <th className="text-left px-4 py-3 text-white/40 font-medium">Comment</th>
+                <th className="text-left px-4 py-3 text-white/40 font-medium">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ratings.map((r: any) => (
+                <tr key={r.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
+                  <td className="px-4 py-3">
+                    <p className="text-white/80 font-medium">{r.customerName || r.customerEmail?.split("@")[0]}</p>
+                    <p className="text-white/30 text-xs font-mono">{r.customerEmail}</p>
+                  </td>
+                  <td className="px-4 py-3 text-white/60 text-xs">{r.planName || "—"}</td>
+                  <td className="px-4 py-3"><StarDisplay stars={r.stars} size="w-3.5 h-3.5" /></td>
+                  <td className="px-4 py-3 text-white/50 text-xs max-w-[220px]">
+                    <p className="line-clamp-2">{r.comment || <span className="text-white/20 italic">No comment</span>}</p>
+                  </td>
+                  <td className="px-4 py-3 text-white/30 text-xs whitespace-nowrap">
+                    {r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
