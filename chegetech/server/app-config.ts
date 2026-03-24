@@ -8,6 +8,7 @@ export interface AppConfig {
   whatsappChannel: string;
   supportEmail: string;
   customDomain: string;
+  appDomain: string;
   chatAssistantEnabled: boolean;
 }
 
@@ -17,6 +18,7 @@ const DEFAULTS: AppConfig = {
   whatsappChannel: process.env.WHATSAPP_CHANNEL || "https://whatsapp.com/channel/0029VbBx7NeDp2QGF7qoZ02A",
   supportEmail: process.env.SUPPORT_EMAIL || "",
   customDomain: process.env.CUSTOM_DOMAIN || "",
+  appDomain: process.env.APP_DOMAIN || process.env.REPLIT_DEV_DOMAIN || process.env.REPLIT_DOMAINS?.split(",")[0] || "",
   chatAssistantEnabled: true,
 };
 

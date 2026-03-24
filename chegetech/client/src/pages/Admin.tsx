@@ -13,7 +13,7 @@ import {
   Search, BarChart2, Loader2, FileCheck, ClipboardCheck, Send,
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
   Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera,
-  Bot, Sparkles, Minimize2, Database, UserCircle, Wallet
+  Bot, Sparkles, Minimize2, Database, UserCircle, Wallet, Pencil
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -5222,6 +5222,8 @@ function DomainsTab() {
   const [newLabel, setNewLabel] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingCname, setEditingCname] = useState(false);
+  const [cnameInput, setCnameInput] = useState("");
 
   const inputCls = "bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-indigo-500/50";
 
@@ -5248,6 +5250,19 @@ function DomainsTab() {
     onSuccess: () => { toast({ title: "Primary domain updated" }); qc.invalidateQueries({ queryKey: ["/api/admin/domains"] }); },
   });
 
+  const saveCnameMutation = useMutation({
+    mutationFn: () => authFetchD("/api/admin/domains/cname-target", { method: "PUT", body: JSON.stringify({ appDomain: cnameInput.trim() }) }),
+    onSuccess: (res) => {
+      if (res.success) {
+        toast({ title: "CNAME target saved" });
+        setEditingCname(false);
+        qc.invalidateQueries({ queryKey: ["/api/admin/domains"] });
+      } else {
+        toast({ title: "Failed to save", variant: "destructive" });
+      }
+    },
+  });
+
   function copyText(text: string, id: string) {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
@@ -5255,8 +5270,8 @@ function DomainsTab() {
   }
 
   const cnameDest = replitDomain
-    ? (replitDomain.includes(".") ? replitDomain.split(",")[0].trim() : replitDomain)
-    : "your-app.replit.app";
+    ? replitDomain.split(",")[0].trim()
+    : "";
 
   return (
     <div className="space-y-6">
@@ -5270,17 +5285,42 @@ function DomainsTab() {
         </Button>
       </div>
 
-      {/* Current Replit domain */}
-      {replitDomain && (
-        <div className="glass-card rounded-2xl p-5 border border-indigo-500/20">
-          <div className="flex items-center gap-2 mb-3">
+      {/* CNAME target — always shown, always editable */}
+      <div className="glass-card rounded-2xl p-5 border border-indigo-500/20">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Your Replit Domain</p>
+            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">CNAME Target (Points To)</p>
           </div>
+          {!editingCname && (
+            <Button size="sm" variant="outline" onClick={() => { setCnameInput(cnameDest); setEditingCname(true); }}
+              className="border-white/10 text-white/50 hover:text-white h-7 text-xs">
+              <Pencil className="w-3 h-3 mr-1" />Edit
+            </Button>
+          )}
+        </div>
+        {editingCname ? (
+          <div className="space-y-3">
+            <Input
+              value={cnameInput}
+              onChange={(e) => setCnameInput(e.target.value)}
+              placeholder="your-app.replit.app or myapp.onrender.com"
+              className={inputCls + " font-mono"}
+            />
+            <p className="text-xs text-white/35">Enter your deployed app domain — this is what DNS CNAME records should point to.</p>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => saveCnameMutation.mutate()} disabled={saveCnameMutation.isPending || !cnameInput.trim()}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white">
+                {saveCnameMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}Save
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setEditingCname(false)} className="text-white/40 hover:text-white">Cancel</Button>
+            </div>
+          </div>
+        ) : cnameDest ? (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <p className="font-mono text-white font-medium">{cnameDest}</p>
-              <p className="text-xs text-white/40 mt-0.5">This is your app's live domain — point your custom domain here</p>
+              <p className="text-xs text-white/40 mt-0.5">All custom domains should CNAME to this address</p>
             </div>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => copyText(cnameDest, "replit")}
@@ -5295,8 +5335,13 @@ function DomainsTab() {
               </a>
             </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <div>
+            <p className="text-sm text-white/40">No CNAME target set yet.</p>
+            <p className="text-xs text-white/25 mt-1">Click <strong className="text-white/40">Edit</strong> to enter your deployed app domain (e.g. <span className="font-mono">myapp.onrender.com</span>).</p>
+          </div>
+        )}
+      </div>
 
       {/* Add domain form */}
       {showAdd && (

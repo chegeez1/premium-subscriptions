@@ -2729,8 +2729,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   function saveDomains(domains: CustomDomain[]) { dbSettingsSet("custom_domains", JSON.stringify(domains)); }
 
   app.get("/api/admin/domains", adminAuthMiddleware, superAdminOnly, (_req, res) => {
-    const replitDomain = process.env.REPLIT_DEV_DOMAIN || process.env.REPLIT_DOMAINS || null;
-    res.json({ success: true, domains: getDomains(), replitDomain });
+    const config = getAppConfig();
+    const replitDomain = config.appDomain || process.env.REPLIT_DEV_DOMAIN || process.env.REPLIT_DOMAINS?.split(",")[0] || null;
+    res.json({ success: true, domains: getDomains(), replitDomain, appDomain: config.appDomain || "" });
+  });
+
+  app.put("/api/admin/domains/cname-target", adminAuthMiddleware, superAdminOnly, (req, res) => {
+    try {
+      const { appDomain } = req.body;
+      saveAppConfig({ appDomain: (appDomain || "").trim() });
+      logAdminAction({ action: "CNAME target updated", category: "settings", details: `appDomain set to: ${appDomain}`, status: "success" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   app.post("/api/admin/domains", adminAuthMiddleware, superAdminOnly, (req, res) => {
