@@ -1191,7 +1191,16 @@ function SettingsTab() {
   // ─── Test email state ───────────────────────────────────────────────────
   const [testEmailTo, setTestEmailTo] = useState("");
   const [testEmailLoading, setTestEmailLoading] = useState(false);
-  const [testEmailResult, setTestEmailResult] = useState<{ success: boolean; to?: string; error?: string } | null>(null);
+  const [testEmailResult, setTestEmailResult] = useState<{ success: boolean; to?: string; error?: string; domainWarning?: string } | null>(null);
+  const [domainStatus, setDomainStatus] = useState<{ loaded: boolean; allVerified: boolean; unverified: string[]; domains: { name: string; status: string }[] }>({ loaded: false, allVerified: false, unverified: [], domains: [] });
+
+  useEffect(() => {
+    authFetch("/api/admin/email/domain-status").then((r: any) => {
+      if (r.success !== undefined) {
+        setDomainStatus({ loaded: true, allVerified: r.allVerified ?? false, unverified: r.unverifiedFromDomains ?? [], domains: r.domains ?? [] });
+      }
+    }).catch(() => {});
+  }, []);
 
   // ─── 2FA state ──────────────────────────────────────────────
   const [tfaStep, setTfaStep] = useState<"idle" | "qr" | "verify">("idle");
@@ -1290,11 +1299,52 @@ function SettingsTab() {
             <div className="w-10 h-10 rounded-xl bg-sky-600/20 flex items-center justify-center">
               <Mail className="w-5 h-5 text-sky-400" />
             </div>
-            <div>
+            <div className="flex-1">
               <p className="font-semibold text-white">Test Email Delivery</p>
               <p className="text-xs text-white/40">Send a test email to confirm your Resend API key works</p>
             </div>
+            {domainStatus.loaded && (
+              domainStatus.allVerified ? (
+                <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3" /> Domain Verified
+                </span>
+              ) : (
+                <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> Domain Unverified
+                </span>
+              )
+            )}
           </div>
+
+          {/* Domain verification warning banner */}
+          {domainStatus.loaded && !domainStatus.allVerified && (
+            <div className="mx-5 mt-4 rounded-xl p-3.5" style={{ background: "rgba(245,158,11,.08)", border: "1px solid rgba(245,158,11,.25)" }}>
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+                <div className="space-y-1.5">
+                  <p className="text-amber-300 text-sm font-semibold">Why emails appear sent but never arrive</p>
+                  <p className="text-amber-200/70 text-xs leading-relaxed">
+                    Resend accepts the email request and returns "success" — but <strong>silently drops emails</strong> sent to customer addresses until your domain is verified. This is a Resend restriction, not a code bug.
+                  </p>
+                  {domainStatus.unverified.length > 0 && (
+                    <p className="text-amber-200/70 text-xs">
+                      Unverified domain{domainStatus.unverified.length > 1 ? "s" : ""}: <span className="font-mono text-amber-300">{domainStatus.unverified.join(", ")}</span>
+                    </p>
+                  )}
+                  <div className="pt-1">
+                    <p className="text-amber-200/60 text-xs font-semibold mb-1">To fix this:</p>
+                    <ol className="text-amber-200/60 text-xs space-y-0.5 list-decimal list-inside">
+                      <li>Go to <strong className="text-amber-300">resend.com/domains</strong> → Add Domain</li>
+                      <li>Enter <span className="font-mono text-amber-300">{domainStatus.unverified[0] || "streamvault-premium.site"}</span></li>
+                      <li>Add the DNS records shown (TXT + MX + DKIM) to your domain registrar</li>
+                      <li>Click Verify — emails will start delivering immediately</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="p-5 space-y-3">
             <div className="flex gap-2">
               <input
@@ -1315,6 +1365,10 @@ function SettingsTab() {
                       body: JSON.stringify({ to: testEmailTo.trim() || undefined }),
                     });
                     setTestEmailResult(r);
+                    // Refresh domain status after test
+                    authFetch("/api/admin/email/domain-status").then((ds: any) => {
+                      if (ds.success !== undefined) setDomainStatus({ loaded: true, allVerified: ds.allVerified ?? false, unverified: ds.unverifiedFromDomains ?? [], domains: ds.domains ?? [] });
+                    }).catch(() => {});
                   } catch (e: any) {
                     setTestEmailResult({ success: false, error: e.message || "Network error" });
                   } finally {
@@ -1328,12 +1382,18 @@ function SettingsTab() {
             </div>
             {testEmailResult && (
               testEmailResult.success ? (
-                <div className="flex items-start gap-2.5 rounded-xl p-3 text-sm" style={{ background: "rgba(16,185,129,.08)", border: "1px solid rgba(16,185,129,.2)" }}>
-                  <CheckCircle className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-emerald-400 font-semibold">Email sent successfully</p>
-                    <p className="text-white/40 text-xs mt-0.5">Delivered to <span className="text-white/60">{testEmailResult.to}</span> — check your inbox (and spam folder)</p>
+                <div className="rounded-xl p-3 text-sm space-y-1.5" style={{ background: "rgba(16,185,129,.08)", border: "1px solid rgba(16,185,129,.2)" }}>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <p className="text-emerald-400 font-semibold">Request accepted by Resend</p>
                   </div>
+                  <p className="text-white/40 text-xs pl-6">Sent to <span className="text-white/60">{testEmailResult.to}</span> — check your inbox and spam folder</p>
+                  {testEmailResult.domainWarning && (
+                    <div className="mt-2 pl-6 flex items-start gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                      <p className="text-amber-300/80 text-xs">{testEmailResult.domainWarning}</p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-start gap-2.5 rounded-xl p-3 text-sm" style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.2)" }}>
@@ -1342,13 +1402,28 @@ function SettingsTab() {
                     <p className="text-red-400 font-semibold">Send failed</p>
                     <p className="text-white/50 text-xs mt-1 font-mono break-all">{testEmailResult.error}</p>
                     {testEmailResult.error?.includes("not configured") || testEmailResult.error?.includes("API key") ? (
-                      <p className="text-amber-400/70 text-xs mt-2">RESEND_API_KEY is missing. Add it in Settings → Email → Resend API Key, or set it as an environment variable.</p>
+                      <p className="text-amber-400/70 text-xs mt-2">RESEND_API_KEY is missing. Add it in .env or in Settings → Credentials → Resend API Key.</p>
                     ) : testEmailResult.error?.includes("Invalid") || testEmailResult.error?.includes("Unauthorized") ? (
                       <p className="text-amber-400/70 text-xs mt-2">The API key was rejected by Resend. Check it at <strong className="text-amber-300">resend.com/api-keys</strong> and make sure it has send permission.</p>
                     ) : null}
                   </div>
                 </div>
               )
+            )}
+
+            {/* Resend domains list */}
+            {domainStatus.loaded && domainStatus.domains.length > 0 && (
+              <div className="pt-1">
+                <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest mb-2">Your Resend Domains</p>
+                <div className="space-y-1.5">
+                  {domainStatus.domains.map((d) => (
+                    <div key={d.name} className="flex items-center justify-between text-xs bg-white/3 rounded-lg px-3 py-1.5">
+                      <span className="text-white/60 font-mono">{d.name}</span>
+                      <span className={`font-semibold ${d.status === "verified" ? "text-emerald-400" : "text-amber-400"}`}>{d.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         </div>

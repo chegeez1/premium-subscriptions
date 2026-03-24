@@ -1011,7 +1011,55 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const to = (req.body?.to || process.env.ADMIN_EMAIL || "").trim();
     if (!to) return res.status(400).json({ success: false, error: "No recipient — set ADMIN_EMAIL or pass 'to' in the request body." });
     const result = await sendPasswordResetEmail(to, "TEST-OK", "Admin");
-    res.json({ ...result, to });
+    // Also check domain verification status to warn the admin
+    let domainWarning: string | undefined;
+    try {
+      const { Resend } = await import("resend");
+      const { getResendApiKey, getResendOtpFrom } = await import("./secrets");
+      const key = getResendApiKey();
+      if (key) {
+        const resend = new Resend(key);
+        const { data: domainsData } = await resend.domains.list();
+        const fromAddr = getResendOtpFrom();
+        const fromDomain = fromAddr?.split("@")[1];
+        if (domainsData && domainsData.data) {
+          const verifiedDomains = domainsData.data.filter((d: any) => d.status === "verified").map((d: any) => d.name);
+          if (fromDomain && !verifiedDomains.includes(fromDomain)) {
+            domainWarning = verifiedDomains.length === 0
+              ? `Your domain "${fromDomain}" is NOT verified on Resend. Emails will appear sent but will only deliver to your Resend account's registered email. Verify your domain at resend.com/domains.`
+              : `Your sending domain "${fromDomain}" is not verified. Verified domains: ${verifiedDomains.join(", ")}. Add "${fromDomain}" at resend.com/domains.`;
+          }
+        } else if (!fromAddr || fromAddr.includes("onboarding@resend.dev")) {
+          domainWarning = "No from address configured. Using Resend test address — emails only deliver to your own Resend account email.";
+        }
+      }
+    } catch (_) {}
+    res.json({ ...result, to, domainWarning });
+  });
+
+  // ─── Admin: Resend domain verification status ─────────────────────────────
+  app.get("/api/admin/email/domain-status", adminAuthMiddleware, superAdminOnly, async (_req, res) => {
+    try {
+      const { Resend } = await import("resend");
+      const { getResendApiKey, getResendFrom, getResendOtpFrom, getResendSupportFrom } = await import("./secrets");
+      const key = getResendApiKey();
+      if (!key) return res.json({ success: false, error: "Resend API key not configured", domains: [] });
+      const resend = new Resend(key);
+      const { data, error } = await resend.domains.list();
+      if (error) return res.json({ success: false, error: error.message, domains: [] });
+      const domains = (data?.data || []).map((d: any) => ({
+        name: d.name,
+        status: d.status,
+        region: d.region,
+        createdAt: d.created_at,
+      }));
+      const fromAddrs = [getResendFrom(), getResendOtpFrom(), getResendSupportFrom()].filter(Boolean);
+      const fromDomains = [...new Set(fromAddrs.map(a => a.split("@")[1]).filter(Boolean))];
+      const unverified = fromDomains.filter(d => !domains.find((rd: any) => rd.name === d && rd.status === "verified"));
+      res.json({ success: true, domains, fromDomains, unverifiedFromDomains: unverified, allVerified: unverified.length === 0 && domains.length > 0 });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message, domains: [] });
+    }
   });
 
   // ─── Admin: Stats ─────────────────────────────────────────────────────────
