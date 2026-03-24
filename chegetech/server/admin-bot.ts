@@ -281,18 +281,7 @@ export function processAdminCommand(input: string): string {
   }
 
   // ── FALLBACK ───────────────────────────────────────────────────────────────
-  return [
-    `❓ Didn't catch that. Try:`,
-    `- **stats** — today's performance`,
-    `- **orders** — recent paid orders`,
-    `- **pending orders** — awaiting payment`,
-    `- **customers** — customer list`,
-    `- **stock** — inventory levels`,
-    `- **promo codes** — active discounts`,
-    `- **expiring** — accounts expiring soon`,
-    `- **revenue breakdown** — by plan`,
-    `- **help** — full list`,
-  ].join("\n");
+  return `❓ Didn't catch that — use a quick command below or type **help** for the full list.`;
 }
 
 // ── Security Scanner ─────────────────────────────────────────────────────────

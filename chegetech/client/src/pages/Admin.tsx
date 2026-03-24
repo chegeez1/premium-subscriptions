@@ -272,14 +272,17 @@ export default function Admin() {
 type BotMessage = { role: "user" | "bot"; content: string; ts: number; isAuto?: boolean };
 
 const QUICK_CMDS = [
-  { label: "📊 Today's stats", cmd: "stats" },
-  { label: "📦 Stock levels", cmd: "stock" },
-  { label: "⏳ Pending orders", cmd: "pending orders" },
-  { label: "👥 Recent customers", cmd: "customers" },
-  { label: "⚠️ Expiring accounts", cmd: "expiring 7 days" },
-  { label: "🏷️ Promo codes", cmd: "promo codes" },
-  { label: "💰 Topup example", cmd: "topup customer@email.com 30" },
-  { label: "🎁 Mass topup all", cmd: "topup all 10" },
+  { label: "📊 Stats", cmd: "stats" },
+  { label: "📦 Orders", cmd: "orders" },
+  { label: "⏳ Pending", cmd: "pending orders" },
+  { label: "👥 Customers", cmd: "customers" },
+  { label: "🗄️ Stock", cmd: "stock" },
+  { label: "⚠️ Expiring", cmd: "expiring 7 days" },
+  { label: "💹 Revenue", cmd: "revenue breakdown" },
+  { label: "🏷️ Promos", cmd: "promo codes" },
+  { label: "💰 Top-up", cmd: "topup customer@email.com 30" },
+  { label: "🎁 Mass top-up", cmd: "topup all 10" },
+  { label: "❓ Help", cmd: "help" },
 ];
 
 function renderBotText(text: string) {
@@ -590,16 +593,9 @@ function AdminMonitorBot() {
               )}
               <div className="flex-1 overflow-y-auto p-3 space-y-2">
                 {chatMsgs.length === 0 && (
-                  <div>
-                    <p className="text-[10px] text-white/20 mb-2 text-center">Quick commands</p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {QUICK_CMDS.map(q => (
-                        <button key={q.cmd} onClick={() => send(q.cmd)}
-                          className="text-left text-[11px] text-indigo-300 bg-indigo-600/10 hover:bg-indigo-600/25 border border-indigo-500/20 rounded-lg px-2.5 py-1.5 transition-colors">
-                          {q.label}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex flex-col items-center justify-center h-full gap-2 pb-4">
+                    <Bot className="w-8 h-8 text-indigo-500/30" />
+                    <p className="text-[11px] text-white/20 text-center">Tap a command below or type your query</p>
                   </div>
                 )}
                 {chatMsgs.map((m, i) => (
@@ -626,10 +622,21 @@ function AdminMonitorBot() {
                 )}
                 <div ref={messagesEndRef} />
               </div>
-              <div className="px-3 pb-3 pt-2 border-t border-white/6 flex-shrink-0">
+              {/* Scrollable quick-command chips — always visible */}
+              <div className="px-3 pt-2 pb-1 border-t border-white/6 flex-shrink-0">
+                <div className="flex gap-1.5 overflow-x-auto scrollbar-none pb-1">
+                  {QUICK_CMDS.map(q => (
+                    <button key={q.cmd} onClick={() => send(q.cmd)} disabled={loading}
+                      className="flex-shrink-0 text-[10px] font-medium text-indigo-300 bg-indigo-600/12 hover:bg-indigo-600/30 border border-indigo-500/25 rounded-full px-2.5 py-1 transition-colors whitespace-nowrap disabled:opacity-40">
+                      {q.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="px-3 pb-3 pt-1 flex-shrink-0">
                 <form onSubmit={e => { e.preventDefault(); send(input); }} className="flex gap-2">
                   <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
-                    placeholder="stats · orders · stock · expiring…" disabled={loading}
+                    placeholder="Type a command or question…" disabled={loading}
                     className="flex-1 bg-white/6 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-indigo-500/50 transition-colors" />
                   <button type="submit" disabled={loading || !input.trim()}
                     className="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 flex items-center justify-center transition-colors self-center flex-shrink-0">
