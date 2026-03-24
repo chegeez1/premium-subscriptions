@@ -1653,7 +1653,7 @@ function PlansTab() {
   });
 
   const addCustomForm = useForm({
-    defaultValues: { name: "", price: "", duration: "1 Month", features: "", categoryKey: "streaming", categoryName: "Streaming Services", maxUsers: "5" },
+    defaultValues: { name: "", price: "", duration: "1 Month", features: "", categoryKey: "streaming", categoryName: "Streaming Services", maxUsers: "5", clientId: "", clientSecret: "", serviceUrl: "" },
   });
 
   const addCustomMutation = useMutation({
@@ -1765,6 +1765,39 @@ function PlansTab() {
             </div>
 
             <div><label className="text-xs text-white/50 block mb-1">Features (comma-separated)</label><Input {...addCustomForm.register("features")} placeholder="HD Streaming, Multiple Devices" className="glass border-white/10 bg-white/5 text-white" /></div>
+
+            {/* ── Service / API credentials ── */}
+            <div className="rounded-xl border border-white/8 bg-white/3 p-3 space-y-3">
+              <p className="text-xs text-white/40 font-medium tracking-wide uppercase">Service Credentials <span className="normal-case text-white/25 font-normal">(optional — stored securely)</span></p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-white/50 block mb-1">Client ID</label>
+                  <Input
+                    {...addCustomForm.register("clientId")}
+                    placeholder="e.g. cid_abc123"
+                    className="glass border-white/10 bg-white/5 text-white placeholder:text-white/20 font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-white/50 block mb-1">Client Secret</label>
+                  <Input
+                    {...addCustomForm.register("clientSecret")}
+                    type="password"
+                    placeholder="••••••••••••"
+                    className="glass border-white/10 bg-white/5 text-white placeholder:text-white/20 font-mono text-sm"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-white/50 block mb-1">Service URL <span className="text-white/25">(API / dashboard endpoint)</span></label>
+                <Input
+                  {...addCustomForm.register("serviceUrl")}
+                  placeholder="https://api.yourservice.com"
+                  className="glass border-white/10 bg-white/5 text-white placeholder:text-white/20 text-sm"
+                />
+              </div>
+            </div>
+
             <div className="flex gap-3">
               <Button
                 type="submit"
@@ -1819,6 +1852,25 @@ function PlansTab() {
                               )}
                               <span className="text-xs text-white/30">· {plan.duration}</span>
                             </div>
+                            {(plan.clientId || plan.serviceUrl) && (
+                              <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                {plan.clientId && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-mono bg-violet-500/10 border border-violet-500/20 text-violet-300/70 rounded px-1.5 py-0.5">
+                                    <span className="text-violet-400/50">id:</span>{plan.clientId}
+                                  </span>
+                                )}
+                                {plan.clientSecret && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-mono bg-white/5 border border-white/10 text-white/30 rounded px-1.5 py-0.5">
+                                    secret: ••••••••
+                                  </span>
+                                )}
+                                {plan.serviceUrl && (
+                                  <a href={plan.serviceUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-indigo-400/60 hover:text-indigo-400 underline truncate max-w-[140px]">
+                                    {plan.serviceUrl.replace(/^https?:\/\//, "")}
+                                  </a>
+                                )}
+                              </div>
+                            )}
                           </div>
 
                           {isEditing ? (
