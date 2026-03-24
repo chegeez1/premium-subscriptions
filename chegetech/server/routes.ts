@@ -31,9 +31,8 @@ import {
   requirePermission,
   setStorageRef,
 } from "./auth";
-import { getPaystackSecretKey, getPaystackPublicKey, getSecretsStatus } from "./secrets";
+import { getPaystackSecretKey, getPaystackPublicKey, getSecretsStatus, getResendApiKey, getResendFrom, getResendOtpFrom, getEmailUser, getEmailPass } from "./secrets";
 import nodemailer from "nodemailer";
-import { getEmailUser, getEmailPass } from "./secrets";
 import { getAppConfig, saveAppConfig } from "./app-config";
 import { getCredentialsOverride, saveCredentialsOverride } from "./credentials-store";
 import { logAdminAction, getAdminLogs } from "./admin-logger";
@@ -80,26 +79,41 @@ function getBaseUrl(req: any): string {
 }
 
 async function sendVerificationEmail(email: string, code: string, name?: string): Promise<void> {
-  const user = getEmailUser();
-  const pass = getEmailPass();
-  if (!user || !pass) return;
-  const transporter = nodemailer.createTransport({ service: "gmail", auth: { user, pass } });
-  await transporter.sendMail({
-    from: `"Chege Tech" <${user}>`,
-    to: email,
-    subject: "Your Chege Tech Verification Code",
-    html: `
-      <div style="background:#0b1020;color:#fff;padding:32px;font-family:sans-serif;border-radius:12px;max-width:480px;margin:0 auto">
-        <h2 style="color:#818cf8;margin-bottom:8px">Email Verification</h2>
-        <p>Hi ${name || "there"}, welcome to <b>Chege Tech</b>!</p>
-        <p>Your verification code is:</p>
-        <div style="background:#1e1b4b;border-radius:12px;padding:24px;text-align:center;margin:20px 0">
-          <span style="font-size:40px;font-weight:900;letter-spacing:12px;color:#a5b4fc">${code}</span>
-        </div>
-        <p style="color:#9ca3af;font-size:13px">This code expires in 15 minutes. Do not share it with anyone.</p>
+  // Use Resend (migrated from legacy Gmail/nodemailer)
+  const { Resend } = await import("resend");
+  const key = getResendApiKey();
+  if (!key) {
+    console.warn("[email] sendVerificationEmail: RESEND_API_KEY not configured — skipping");
+    return;
+  }
+  const resend = new Resend(key);
+  const fromAddr = getResendOtpFrom() || getResendFrom() || "onboarding@resend.dev";
+  const from = `StreamVault Premium <${fromAddr}>`;
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <div style="max-width:500px;margin:40px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
+    <div style="background:linear-gradient(135deg,#4169E1 0%,#7C3AED 100%);padding:32px;text-align:center;">
+      <h1 style="color:#fff;margin:0 0 6px;font-size:24px;font-weight:700;">Verify Your Email</h1>
+      <p style="color:rgba(255,255,255,.85);margin:0;font-size:14px;">Chege Tech · StreamVault Premium</p>
+    </div>
+    <div style="padding:32px;text-align:center;">
+      <p style="font-size:15px;color:#333;margin:0 0 8px;">Hi <strong>${name || "there"}</strong>, welcome!</p>
+      <p style="font-size:14px;color:#555;margin:0 0 28px;">Use the code below to verify your email address. It expires in <strong>30 minutes</strong>.</p>
+      <div style="background:#f0f4ff;border:2px dashed #4169E1;border-radius:12px;padding:20px 32px;display:inline-block;margin-bottom:28px;">
+        <p style="font-size:40px;font-weight:900;letter-spacing:10px;color:#4169E1;margin:0;font-family:monospace;">${code}</p>
       </div>
-    `,
-  });
+      <p style="font-size:13px;color:#888;margin:0;">Do not share this code with anyone. If you didn't sign up, ignore this email.</p>
+    </div>
+    <div style="background:#f8faff;padding:16px;text-align:center;border-top:1px solid #eee;">
+      <p style="font-size:12px;color:#aaa;margin:0;">&copy; ${new Date().getFullYear()} Chege Tech. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+  const { error } = await resend.emails.send({ from, to: email, subject: "Your Chege Tech Verification Code", html });
+  if (error) throw new Error(error.message);
 }
 
 async function customerAuthMiddleware(req: any, res: any, next: any) {
