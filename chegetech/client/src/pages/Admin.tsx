@@ -4272,43 +4272,72 @@ const COUNTRY_LIST = [
 function GeoRestrictTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const authFetch = (url: string, opts: any = {}) => fetch(url, {
+
+  // Use Authorization: Bearer — the middleware reads req.headers.authorization
+  const geoFetch = (url: string, opts: any = {}) => fetch(url, {
     ...opts,
-    headers: { "Content-Type": "application/json", "x-admin-token": localStorage.getItem("adminToken") || "", ...(opts.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${localStorage.getItem("adminToken") || ""}`,
+      ...(opts.headers || {}),
+    },
     body: opts.body,
-  }).then((r) => r.json());
+  }).then(async (r) => {
+    const json = await r.json();
+    if (!r.ok) throw new Error(json?.error || `Request failed (${r.status})`);
+    return json;
+  });
 
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/admin/country-restrictions"],
-    queryFn: () => authFetch("/api/admin/country-restrictions"),
+    queryFn: () => geoFetch("/api/admin/country-restrictions"),
   });
 
   const config = data?.config;
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  const setModeMutation = useMutation({
-    mutationFn: (mode: string) => authFetch("/api/admin/country-restrictions", { method: "PUT", body: JSON.stringify({ mode }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] }),
-  });
+  const mode: "blacklist" | "whitelist" = config?.mode || "blacklist";
+  const blocked: string[] = Array.isArray(config?.countries) ? config.countries : [];
 
-  const addCountryMutation = useMutation({
-    mutationFn: (code: string) => authFetch("/api/admin/country-restrictions/add", { method: "POST", body: JSON.stringify({ code }) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] }); toast({ title: "Country added" }); },
-  });
-
-  const removeCountryMutation = useMutation({
-    mutationFn: (code: string) => authFetch(`/api/admin/country-restrictions/${code}`, { method: "DELETE" }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] }); toast({ title: "Country removed" }); },
-  });
-
-  const inputCls = "bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-indigo-500/50";
-  const mode = config?.mode || "blacklist";
-  const blocked: string[] = config?.countries || [];
   const filteredList = COUNTRY_LIST.filter((c) =>
     !blocked.includes(c.code) &&
     (c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase().includes(search.toLowerCase()))
   );
+
+  const setModeMutation = useMutation({
+    mutationFn: (m: string) => geoFetch("/api/admin/country-restrictions", { method: "PUT", body: JSON.stringify({ mode: m }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] }),
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const addCountryMutation = useMutation({
+    mutationFn: (code: string) => geoFetch("/api/admin/country-restrictions/add", { method: "POST", body: JSON.stringify({ code }) }),
+    onSuccess: (_data, code) => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] });
+      const name = COUNTRY_LIST.find((c) => c.code === code)?.name || code;
+      toast({ title: `${name} added` });
+      setSearch("");
+      // keep panel open so user can add more; they can close with the × button
+    },
+    onError: (e: any) => toast({ title: "Failed to add", description: e.message, variant: "destructive" }),
+  });
+
+  const removeCountryMutation = useMutation({
+    mutationFn: (code: string) => geoFetch(`/api/admin/country-restrictions/${code}`, { method: "DELETE" }),
+    onSuccess: (_data, code) => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/country-restrictions"] });
+      const name = COUNTRY_LIST.find((c) => c.code === code)?.name || code;
+      toast({ title: `${name} removed` });
+    },
+    onError: (e: any) => toast({ title: "Failed to remove", description: e.message, variant: "destructive" }),
+  });
+
+  // Focus search input when panel opens
+  useEffect(() => {
+    if (adding) setTimeout(() => searchRef.current?.focus(), 60);
+  }, [adding]);
 
   return (
     <div className="space-y-6">
@@ -4329,6 +4358,7 @@ function GeoRestrictTab() {
                 <button
                   key={m}
                   onClick={() => setModeMutation.mutate(m)}
+                  disabled={setModeMutation.isPending}
                   className={`p-4 rounded-xl border transition-all text-left ${mode === m ? "border-indigo-500/60 bg-indigo-500/10" : "border-white/8 bg-white/3 opacity-60 hover:opacity-80"}`}
                 >
                   <div className="flex items-center gap-2 mb-1">
@@ -4344,80 +4374,113 @@ function GeoRestrictTab() {
             </div>
           </div>
 
-          {/* Active country list */}
-          <div className="glass-card rounded-2xl p-5">
-            <div className="flex items-center justify-between mb-4">
+          {/* Active country list + Add panel */}
+          <div className="glass-card rounded-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
               <div>
                 <h3 className="text-sm font-semibold text-white">
                   {mode === "blacklist" ? "Blocked Countries" : "Allowed Countries"}
-                  <span className="ml-2 text-xs text-white/40">({blocked.length})</span>
+                  {blocked.length > 0 && (
+                    <span className="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold bg-indigo-600/40 text-indigo-300">{blocked.length}</span>
+                  )}
                 </h3>
                 <p className="text-xs text-white/30 mt-0.5">
-                  {mode === "blacklist" ? "Visitors from these countries get a 403 error" : "Only visitors from these countries can access the store"}
+                  {mode === "blacklist" ? "Visitors from these countries see a 403 error" : "Only these countries can access the store"}
                 </p>
               </div>
-              <Button size="sm" onClick={() => setAdding(!adding)} className="bg-indigo-600 hover:bg-indigo-500 text-white">
-                <Plus className="w-4 h-4 mr-1" />Add Country
-              </Button>
+              <button
+                onClick={() => { setAdding((v) => !v); setSearch(""); }}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all ${adding ? "bg-white/8 text-white/60 border border-white/10" : "bg-indigo-600 hover:bg-indigo-500 text-white"}`}
+              >
+                {adding ? <><X className="w-4 h-4" /> Close</> : <><Plus className="w-4 h-4" /> Add Country</>}
+              </button>
             </div>
 
+            {/* Add panel — search & pick */}
             {adding && (
-              <div className="mb-4 p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5">
-                <p className="text-xs text-white/50 mb-2">Search and click to add:</p>
-                <Input
-                  placeholder="Search country..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className={inputCls + " mb-2"}
-                  autoFocus
-                />
-                <div className="max-h-48 overflow-y-auto space-y-1">
-                  {filteredList.slice(0, 20).map((c) => (
-                    <button
-                      key={c.code}
-                      onClick={() => { addCountryMutation.mutate(c.code); setSearch(""); }}
-                      disabled={addCountryMutation.isPending}
-                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-white/70 hover:bg-white/8 hover:text-white text-left transition-colors"
-                    >
-                      <img src={`https://flagcdn.com/16x12/${c.code.toLowerCase()}.png`} alt="" className="w-4 h-3 rounded-sm" />
-                      <span>{c.name}</span>
-                      <span className="text-xs text-white/30 font-mono ml-auto">{c.code}</span>
+              <div className="px-5 py-4 border-b border-white/8 bg-indigo-950/20">
+                <p className="text-xs text-white/40 mb-2.5">
+                  Search and click a country to {mode === "blacklist" ? "block" : "allow"} it:
+                </p>
+                <div className="relative mb-3">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30 pointer-events-none" />
+                  <input
+                    ref={searchRef}
+                    type="text"
+                    placeholder="Search country name or code…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder:text-white/25 outline-none focus:border-indigo-500/50"
+                  />
+                  {search && (
+                    <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60">
+                      <X className="w-3.5 h-3.5" />
                     </button>
-                  ))}
-                  {filteredList.length === 0 && <p className="text-xs text-white/30 text-center py-4">No countries found</p>}
+                  )}
                 </div>
+                <div className="max-h-52 overflow-y-auto rounded-xl border border-white/8 bg-white/3">
+                  {filteredList.length === 0 ? (
+                    <p className="text-xs text-white/30 text-center py-6">
+                      {search ? "No countries match your search" : "All countries already added"}
+                    </p>
+                  ) : (
+                    filteredList.slice(0, 30).map((c) => (
+                      <button
+                        key={c.code}
+                        onClick={() => addCountryMutation.mutate(c.code)}
+                        disabled={addCountryMutation.isPending}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-white/70 hover:bg-indigo-500/15 hover:text-white text-left transition-colors border-b border-white/4 last:border-0 disabled:opacity-50"
+                      >
+                        <img src={`https://flagcdn.com/16x12/${c.code.toLowerCase()}.png`} alt="" className="w-5 h-3.5 rounded-sm object-cover shrink-0" />
+                        <span className="flex-1">{c.name}</span>
+                        <span className="text-[10px] text-white/25 font-mono">{c.code}</span>
+                        <Plus className="w-3.5 h-3.5 text-indigo-400 opacity-0 group-hover:opacity-100" />
+                      </button>
+                    ))
+                  )}
+                </div>
+                {filteredList.length > 30 && (
+                  <p className="text-[10px] text-white/20 mt-2 text-center">Showing 30 of {filteredList.length} — type to narrow down</p>
+                )}
               </div>
             )}
 
-            {blocked.length === 0 ? (
-              <div className="text-center py-10">
-                <Globe className="w-8 h-8 text-white/15 mx-auto mb-2" />
-                <p className="text-white/30 text-sm">No countries added yet</p>
-                <p className="text-white/20 text-xs mt-1">All visitors can access the store</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {blocked.map((code) => {
-                  const country = COUNTRY_LIST.find((c) => c.code === code);
-                  return (
-                    <div key={code} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/8 bg-white/3">
-                      <div className="flex items-center gap-2">
-                        <img src={`https://flagcdn.com/16x12/${code.toLowerCase()}.png`} alt="" className="w-4 h-3 rounded-sm" />
-                        <span className="text-sm text-white">{country?.name || code}</span>
-                        <span className="text-xs text-white/30 font-mono">{code}</span>
+            {/* Current list */}
+            <div className="p-5">
+              {blocked.length === 0 ? (
+                <div className="text-center py-10">
+                  <Globe className="w-8 h-8 text-white/15 mx-auto mb-2" />
+                  <p className="text-white/30 text-sm">No countries {mode === "blacklist" ? "blocked" : "allowed"} yet</p>
+                  <p className="text-white/20 text-xs mt-1">
+                    {mode === "blacklist" ? "All visitors can access the store" : "Click \"Add Country\" to allow a country"}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {blocked.map((code) => {
+                    const country = COUNTRY_LIST.find((c) => c.code === code);
+                    return (
+                      <div key={code} className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border ${mode === "blacklist" ? "border-red-500/15 bg-red-500/5" : "border-emerald-500/15 bg-emerald-500/5"}`}>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <img src={`https://flagcdn.com/16x12/${code.toLowerCase()}.png`} alt="" className="w-5 h-3.5 rounded-sm object-cover shrink-0" />
+                          <span className="text-sm text-white truncate">{country?.name || code}</span>
+                          <span className="text-[10px] text-white/25 font-mono shrink-0">{code}</span>
+                        </div>
+                        <button
+                          onClick={() => removeCountryMutation.mutate(code)}
+                          disabled={removeCountryMutation.isPending}
+                          title="Remove"
+                          className="p-1.5 rounded-lg text-white/25 hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => removeCountryMutation.mutate(code)}
-                        disabled={removeCountryMutation.isPending}
-                        className="p-1 text-white/30 hover:text-red-400 transition-colors"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Info box */}
@@ -4427,7 +4490,7 @@ function GeoRestrictTab() {
               <div className="text-xs text-amber-200/70 space-y-1">
                 <p><strong>Blacklist mode:</strong> Countries in the list are blocked. Empty list = no restrictions.</p>
                 <p><strong>Whitelist mode:</strong> Only countries in the list can access. Empty list = everyone blocked.</p>
-                <p>Admin panel is always accessible regardless of restrictions.</p>
+                <p>The admin panel is always accessible regardless of geo restrictions.</p>
               </div>
             </div>
           </div>
