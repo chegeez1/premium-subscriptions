@@ -13,7 +13,7 @@ import {
   Search, BarChart2, Loader2, FileCheck, ClipboardCheck, Send,
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
   Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera,
-  Bot, Sparkles, Minimize2, Database, UserCircle
+  Bot, Sparkles, Minimize2, Database, UserCircle, Wallet
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -3412,6 +3412,9 @@ function CustomersTab() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [loginHistoryCache, setLoginHistoryCache] = useState<Record<number, any[]>>({});
   const [loginHistoryLoading, setLoginHistoryLoading] = useState<number | null>(null);
+  const [walletTopupId, setWalletTopupId] = useState<number | null>(null);
+  const [walletAmount, setWalletAmount] = useState("");
+  const [walletNote, setWalletNote] = useState("");
 
   async function loadLoginHistory(id: number) {
     if (expandedId === id) { setExpandedId(null); return; }
@@ -3489,6 +3492,25 @@ function CustomersTab() {
         toast({ title: "Customer verified successfully" });
         refetch();
       } else toast({ title: "Failed", description: d.error, variant: "destructive" });
+    },
+  });
+
+  const walletTopupMutation = useMutation({
+    mutationFn: ({ id, amount, note }: { id: number; amount: string; note: string }) =>
+      authFetch(`/api/admin/customers/${id}/wallet/topup`, {
+        method: "POST",
+        body: JSON.stringify({ amount: parseFloat(amount), note }),
+      }),
+    onSuccess: (d) => {
+      if (d.success) {
+        toast({ title: "Wallet topped up!", description: `New balance: KES ${d.newBalance.toLocaleString()}` });
+        setWalletTopupId(null);
+        setWalletAmount("");
+        setWalletNote("");
+        refetch();
+      } else {
+        toast({ title: "Top-up failed", description: d.error, variant: "destructive" });
+      }
     },
   });
 
@@ -3625,6 +3647,28 @@ function CustomersTab() {
                         </button>
                       )}
                       <button
+                        onClick={() => {
+                          if (walletTopupId === c.id) {
+                            setWalletTopupId(null);
+                            setWalletAmount("");
+                            setWalletNote("");
+                          } else {
+                            setWalletTopupId(c.id);
+                            setWalletAmount("");
+                            setWalletNote("");
+                          }
+                        }}
+                        title="Top up wallet"
+                        className={`p-1.5 rounded-lg transition-all text-xs font-medium px-2.5 py-1 flex items-center gap-1 ${
+                          walletTopupId === c.id
+                            ? "bg-indigo-500/25 text-indigo-300"
+                            : "text-white/30 hover:text-indigo-400 hover:bg-indigo-500/10"
+                        }`}
+                      >
+                        <Wallet className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Top Up</span>
+                      </button>
+                      <button
                         onClick={() => suspendMutation.mutate({ id: c.id, suspended: !c.suspended })}
                         disabled={suspendMutation.isPending}
                         data-testid={`button-suspend-${c.id}`}
@@ -3640,6 +3684,62 @@ function CustomersTab() {
                     </div>
                   </TableCell>
                 </TableRow>
+
+                {/* ── Wallet Top-Up Inline Panel ── */}
+                {walletTopupId === c.id && (
+                  <TableRow className="border-0">
+                    <TableCell colSpan={5} className="p-0">
+                      <div className="px-4 pb-4 pt-3 bg-indigo-950/40 border-b border-white/5">
+                        <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                          <Wallet className="w-3 h-3" />
+                          Manual Wallet Top-Up · {c.email}
+                        </p>
+                        <div className="flex items-end gap-3 flex-wrap">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[10px] text-white/40 uppercase tracking-wider">Amount (KES)</label>
+                            <Input
+                              type="number"
+                              min="1"
+                              value={walletAmount}
+                              onChange={(e) => setWalletAmount(e.target.value)}
+                              placeholder="e.g. 500"
+                              className="w-36 h-8 text-sm glass border-white/10 bg-white/5 text-white placeholder:text-white/25"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+                            <label className="text-[10px] text-white/40 uppercase tracking-wider">Note (optional)</label>
+                            <Input
+                              type="text"
+                              value={walletNote}
+                              onChange={(e) => setWalletNote(e.target.value)}
+                              placeholder="e.g. Compensation, gift, correction…"
+                              className="h-8 text-sm glass border-white/10 bg-white/5 text-white placeholder:text-white/25"
+                            />
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (!walletAmount || parseFloat(walletAmount) <= 0) return;
+                              walletTopupMutation.mutate({ id: c.id, amount: walletAmount, note: walletNote });
+                            }}
+                            disabled={walletTopupMutation.isPending || !walletAmount || parseFloat(walletAmount) <= 0}
+                            className="h-8 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                          >
+                            {walletTopupMutation.isPending
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <Wallet className="w-3.5 h-3.5" />}
+                            Credit Wallet
+                          </button>
+                          <button
+                            onClick={() => { setWalletTopupId(null); setWalletAmount(""); setWalletNote(""); }}
+                            className="h-8 px-3 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 text-xs transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
 
                 {/* ── Login History Expanded Row ── */}
                 {expandedId === c.id && (

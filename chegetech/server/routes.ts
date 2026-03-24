@@ -1935,6 +1935,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Admin: Manual wallet top-up ─────────────────────────────────────────
+  app.post("/api/admin/customers/:id/wallet/topup", adminAuthMiddleware, requirePermission("customers"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { amount, note } = req.body;
+      const amountNum = parseFloat(amount);
+      if (!id || isNaN(amountNum) || amountNum <= 0) {
+        return res.status(400).json({ success: false, error: "Valid customer ID and positive amount required." });
+      }
+      const customer = await storage.getCustomerById(id);
+      if (!customer) return res.status(404).json({ success: false, error: "Customer not found." });
+      const description = note?.trim() ? `Admin top-up: ${note.trim()}` : "Admin manual wallet top-up";
+      await storage.creditWallet(id, amountNum, description);
+      const wallet = await storage.getWallet(id);
+      res.json({ success: true, newBalance: wallet?.balance ?? 0 });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // CREDENTIALS OVERRIDE ROUTES
   // ═══════════════════════════════════════════════════════════════════════════
