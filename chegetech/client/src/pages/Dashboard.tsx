@@ -9,8 +9,8 @@ import {
   ChevronDown, ChevronUp, AlertCircle, Save, Package,
   Wallet, Link2, History, TrendingUp, Gift, ArrowUpCircle, ArrowDownCircle,
   MessageCircle, Send, PlusCircle, Ticket,
-  Bell, BellDot, ShoppingCart, TrendingDown, Star,
-  MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy
+  Bell, BellDot, ShoppingCart, TrendingDown, Star, Sparkles,
+  MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy, ThumbsUp
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,7 @@ async function customerFetch(url: string, opts: RequestInit = {}) {
   return res.json();
 }
 
-type DashTab = "orders" | "wallet" | "referral" | "payment-history" | "support" | "apikeys" | "security" | "profile";
+type DashTab = "orders" | "wallet" | "referral" | "payment-history" | "support" | "apikeys" | "security" | "profile" | "requests";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   success: { label: "Completed", color: "text-emerald-400", icon: CheckCircle },
@@ -243,6 +243,44 @@ export default function Dashboard() {
     queryFn: () => customerFetch("/api/customer/login-history"),
     enabled: tab === "security",
   });
+
+  // ─── Feature Requests state ──────────────────────────────────────────────
+  const [frTitle, setFrTitle] = useState("");
+  const [frDesc, setFrDesc] = useState("");
+  const [frSubmitting, setFrSubmitting] = useState(false);
+  const [votedIds, setVotedIds] = useState<Set<string>>(new Set());
+
+  const { data: frData, refetch: refetchFr } = useQuery<any>({
+    queryKey: ["/api/customer/feature-requests"],
+    queryFn: () => customerFetch("/api/customer/feature-requests"),
+    enabled: tab === "requests",
+  });
+
+  async function submitFeatureRequest() {
+    if (!frTitle.trim()) { toast({ title: "Please enter a title", variant: "destructive" }); return; }
+    setFrSubmitting(true);
+    try {
+      const d = await customerFetch("/api/customer/feature-requests", {
+        method: "POST",
+        body: JSON.stringify({ title: frTitle, description: frDesc }),
+      });
+      if (d.success) {
+        toast({ title: "Your idea has been submitted! 💡" });
+        setFrTitle(""); setFrDesc("");
+        refetchFr();
+      } else {
+        toast({ title: d.error || "Failed to submit", variant: "destructive" });
+      }
+    } catch { toast({ title: "Failed to submit", variant: "destructive" }); }
+    finally { setFrSubmitting(false); }
+  }
+
+  async function voteFeatureRequest(id: string) {
+    if (votedIds.has(id)) return;
+    setVotedIds(prev => new Set([...prev, id]));
+    await customerFetch(`/api/customer/feature-requests/${id}/vote`, { method: "POST" }).catch(() => {});
+    refetchFr();
+  }
 
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
   const [newTicketSubject, setNewTicketSubject] = useState("");
@@ -611,6 +649,7 @@ export default function Dashboard() {
             { id: "referral", label: "Referral", icon: Gift },
             { id: "payment-history", label: "Payments", icon: History },
             { id: "support", label: "Support", icon: MessageCircle },
+            { id: "requests", label: "Ideas", icon: Sparkles },
             { id: "apikeys", label: "API Keys", icon: Key },
             { id: "security", label: "Security", icon: Shield },
             { id: "profile", label: "Profile", icon: User },
@@ -1299,6 +1338,92 @@ export default function Dashboard() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* FEATURE REQUESTS TAB */}
+        {tab === "requests" && (
+          <div className="space-y-5">
+            <div>
+              <h2 className="text-lg font-bold text-white">Share Your Ideas 💡</h2>
+              <p className="text-xs text-white/40 mt-0.5">Request new features or vote on existing ones — we build what you need</p>
+            </div>
+
+            {/* Submit form */}
+            <div className="rounded-2xl border border-indigo-500/20 p-5 space-y-3" style={{ background: "rgba(99,102,241,.06)" }}>
+              <p className="text-sm font-semibold text-indigo-300 flex items-center gap-2"><Sparkles className="w-4 h-4" />Suggest a Feature</p>
+              <input
+                value={frTitle}
+                onChange={e => setFrTitle(e.target.value)}
+                placeholder="What would you like us to build?"
+                className="w-full rounded-xl bg-white/5 border border-white/10 text-white text-sm px-3 py-2.5 placeholder:text-white/25 focus:outline-none focus:border-indigo-500/60"
+              />
+              <textarea
+                value={frDesc}
+                onChange={e => setFrDesc(e.target.value)}
+                placeholder="Describe your idea in detail (optional)…"
+                rows={3}
+                className="w-full rounded-xl bg-white/5 border border-white/10 text-white text-sm px-3 py-2.5 resize-none placeholder:text-white/25 focus:outline-none focus:border-indigo-500/60"
+              />
+              <Button
+                onClick={submitFeatureRequest}
+                disabled={frSubmitting || !frTitle.trim()}
+                className="bg-gradient-to-r from-indigo-600 to-violet-600 border-0 text-white font-bold hover:opacity-90 gap-2"
+              >
+                {frSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                {frSubmitting ? "Submitting…" : "Submit Idea"}
+              </Button>
+            </div>
+
+            {/* Existing requests */}
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-white/50">All Requested Features</p>
+              {(frData?.requests ?? []).length === 0 ? (
+                <div className="text-center py-10 rounded-xl border border-white/8" style={{ background: "rgba(255,255,255,.03)" }}>
+                  <Sparkles className="w-8 h-8 text-white/10 mx-auto mb-2" />
+                  <p className="text-white/30 text-sm">No ideas yet — be the first!</p>
+                </div>
+              ) : (
+                (frData.requests as any[]).map((r: any) => {
+                  const statusColors: Record<string, string> = {
+                    pending: "bg-amber-500/20 text-amber-300",
+                    planned: "bg-indigo-500/20 text-indigo-300",
+                    building: "bg-violet-500/20 text-violet-300",
+                    done: "bg-emerald-500/20 text-emerald-300",
+                    declined: "bg-red-500/20 text-red-400",
+                  };
+                  const st = statusColors[r.status] || statusColors.pending;
+                  return (
+                    <div key={r.id} className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${st}`}>{r.status}</span>
+                          </div>
+                          <p className="text-white font-semibold text-sm">{r.title}</p>
+                          {r.description && <p className="text-white/45 text-xs mt-1 leading-relaxed">{r.description}</p>}
+                          {r.adminNote && (
+                            <p className="mt-2 text-xs text-indigo-300/80 border-l-2 border-indigo-500/40 pl-2">💬 {r.adminNote}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => voteFeatureRequest(r.id)}
+                          disabled={votedIds.has(r.id)}
+                          className={`flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border transition-all shrink-0 ${
+                            votedIds.has(r.id)
+                              ? "border-amber-500/40 bg-amber-500/15 text-amber-400"
+                              : "border-white/10 hover:border-amber-500/40 hover:bg-amber-500/10 text-white/35 hover:text-amber-400"
+                          }`}
+                        >
+                          <ThumbsUp className="w-3.5 h-3.5" />
+                          <span className="text-[11px] font-bold">{r.votes || 1}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         )}
 

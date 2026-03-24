@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -142,6 +142,7 @@ export default function Admin() {
     { id: "apikeys", label: "API Keys", icon: Key },
     { id: "customers", label: "Customers", icon: Users },
     { id: "ratings", label: "Ratings", icon: Star },
+    { id: "feature-requests", label: "Feature Requests", icon: Sparkles },
     { id: "emailblast", label: "Email Blast", icon: Send },
     { id: "campaigns", label: "Campaigns", icon: Send },
     { id: "support", label: "Support", icon: MessageCircle },
@@ -245,6 +246,7 @@ export default function Admin() {
           {activeTab === "apikeys" && <ApiKeysTab />}
           {activeTab === "customers" && <CustomersTab />}
           {activeTab === "ratings" && <RatingsTab />}
+          {activeTab === "feature-requests" && <FeatureRequestsAdminTab />}
           {activeTab === "emailblast" && <EmailBlastTab />}
           {activeTab === "campaigns" && <CampaignsTab />}
           {activeTab === "support" && <SupportTab />}
@@ -276,6 +278,8 @@ const QUICK_CMDS = [
   { label: "👥 Recent customers", cmd: "customers" },
   { label: "⚠️ Expiring accounts", cmd: "expiring 7 days" },
   { label: "🏷️ Promo codes", cmd: "promo codes" },
+  { label: "💰 Topup example", cmd: "topup customer@email.com 30" },
+  { label: "🎁 Mass topup all", cmd: "topup all 10" },
 ];
 
 function renderBotText(text: string) {
@@ -3492,6 +3496,20 @@ function CustomersTab() {
   const [walletTopupId, setWalletTopupId] = useState<number | null>(null);
   const [walletAmount, setWalletAmount] = useState("");
   const [walletNote, setWalletNote] = useState("");
+  const [profileId, setProfileId] = useState<number | null>(null);
+  const [profileData, setProfileData] = useState<any>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  async function openProfile(id: number) {
+    setProfileId(id);
+    setProfileData(null);
+    setProfileLoading(true);
+    try {
+      const d = await authFetch(`/api/admin/customers/${id}/profile`);
+      if (d.success) setProfileData(d);
+    } catch {}
+    finally { setProfileLoading(false); }
+  }
 
   async function loadLoginHistory(id: number) {
     if (expandedId === id) { setExpandedId(null); return; }
@@ -3686,6 +3704,15 @@ function CustomersTab() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {/* View Profile button */}
+                      <button
+                        onClick={() => openProfile(c.id)}
+                        title="View full profile"
+                        className="p-1.5 rounded-lg transition-all text-xs font-medium px-2.5 py-1 flex items-center gap-1 text-white/30 hover:text-violet-400 hover:bg-violet-500/10"
+                      >
+                        <UserCircle className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Profile</span>
+                      </button>
                       {/* Login history button */}
                       <button
                         onClick={() => loadLoginHistory(c.id)}
@@ -3883,6 +3910,138 @@ function CustomersTab() {
         className="hidden"
         onChange={handleAdminAvatarUpload}
       />
+
+      {/* ── Customer Profile Modal ── */}
+      {profileId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,.75)", backdropFilter: "blur(10px)" }}>
+          <div className="w-full max-w-2xl rounded-2xl border border-white/15 flex flex-col overflow-hidden shadow-2xl"
+            style={{ background: "linear-gradient(135deg,rgba(11,16,32,.98),rgba(20,12,40,.98))", maxHeight: "90vh" }}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/8 shrink-0">
+              <div className="flex items-center gap-3">
+                {profileData?.customer?.avatarUrl ? (
+                  <img src={profileData.customer.avatarUrl} className="w-10 h-10 rounded-full object-cover border border-white/15" alt="" />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-indigo-600/30 flex items-center justify-center">
+                    <span className="text-indigo-300 font-bold text-base">{(profileData?.customer?.email || "?")[0].toUpperCase()}</span>
+                  </div>
+                )}
+                <div>
+                  <p className="text-white font-bold">{profileData?.customer?.name || profileData?.customer?.email || "Loading…"}</p>
+                  <p className="text-white/40 text-xs font-mono">{profileData?.customer?.email}</p>
+                </div>
+              </div>
+              <button onClick={() => { setProfileId(null); setProfileData(null); }} className="text-white/30 hover:text-white/70 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-6 space-y-5">
+              {profileLoading ? (
+                <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+              ) : profileData ? (
+                <>
+                  {/* Status badges + wallet */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="rounded-xl p-3 border border-white/8 text-center" style={{ background: "rgba(255,255,255,.04)" }}>
+                      <p className="text-white/40 text-[11px] mb-1">Wallet</p>
+                      <p className="text-emerald-400 font-bold text-lg">KES {(profileData.wallet?.balance ?? 0).toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-xl p-3 border border-white/8 text-center" style={{ background: "rgba(255,255,255,.04)" }}>
+                      <p className="text-white/40 text-[11px] mb-1">Orders</p>
+                      <p className="text-white font-bold text-lg">{profileData.orders?.length ?? 0}</p>
+                    </div>
+                    <div className="rounded-xl p-3 border border-white/8 text-center" style={{ background: "rgba(255,255,255,.04)" }}>
+                      <p className="text-white/40 text-[11px] mb-1">Referrals</p>
+                      <p className="text-white font-bold text-lg">{profileData.referral?.completedReferrals ?? 0}</p>
+                    </div>
+                    <div className="rounded-xl p-3 border border-white/8 text-center" style={{ background: "rgba(255,255,255,.04)" }}>
+                      <p className="text-white/40 text-[11px] mb-1">Referral Earned</p>
+                      <p className="text-amber-400 font-bold text-lg">KES {(profileData.referral?.totalEarned ?? 0).toLocaleString()}</p>
+                    </div>
+                  </div>
+
+                  {/* Account info */}
+                  <div className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+                    <p className="text-white/40 text-xs font-semibold uppercase tracking-widest mb-3">Account Info</p>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                      {[
+                        ["Email Verified", profileData.customer.emailVerified ? "✅ Yes" : "❌ No"],
+                        ["2FA Enabled", profileData.customer.totpEnabled ? "🔐 On" : "Off"],
+                        ["Status", profileData.customer.suspended ? "🔴 Suspended" : "🟢 Active"],
+                        ["Member Since", profileData.customer.createdAt ? new Date(profileData.customer.createdAt).toLocaleDateString() : "—"],
+                      ].map(([label, value]) => (
+                        <div key={label} className="flex items-center justify-between py-1 border-b border-white/5">
+                          <span className="text-white/40 text-xs">{label}</span>
+                          <span className="text-white/80 text-xs font-medium">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Recent orders */}
+                  {(profileData.orders?.length ?? 0) > 0 && (
+                    <div className="rounded-xl border border-white/8 overflow-hidden" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <p className="text-white/40 text-xs font-semibold uppercase tracking-widest px-4 pt-3 pb-2">Recent Orders</p>
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {profileData.orders.slice(0, 8).map((o: any) => (
+                            <tr key={o.reference || o.id} className="border-t border-white/5">
+                              <td className="px-4 py-2 text-white/70">{o.planName || "—"}</td>
+                              <td className="px-4 py-2 text-right text-indigo-300 font-mono">KES {(o.amount ?? 0).toLocaleString()}</td>
+                              <td className="px-4 py-2 text-right">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${o.status === "success" ? "bg-emerald-500/20 text-emerald-400" : o.status === "failed" ? "bg-red-500/20 text-red-400" : "bg-amber-500/20 text-amber-400"}`}>
+                                  {o.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 text-right text-white/30">{o.createdAt ? new Date(o.createdAt).toLocaleDateString() : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Ratings given */}
+                  {(profileData.ratings?.length ?? 0) > 0 && (
+                    <div className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <p className="text-white/40 text-xs font-semibold uppercase tracking-widest mb-3">Ratings Given</p>
+                      <div className="space-y-2">
+                        {profileData.ratings.map((r: any) => (
+                          <div key={r.id} className="flex items-center gap-3">
+                            <div className="flex items-center gap-0.5">
+                              {[1,2,3,4,5].map(s => <Star key={s} className={`w-3.5 h-3.5 ${s <= r.stars ? "text-amber-400 fill-amber-400" : "text-white/15"}`} />)}
+                            </div>
+                            <span className="text-white/60 text-xs">{r.planName || "—"}</span>
+                            {r.comment && <span className="text-white/35 text-xs italic truncate max-w-[200px]">"{r.comment}"</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent logins */}
+                  {(profileData.loginHistory?.length ?? 0) > 0 && (
+                    <div className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <p className="text-white/40 text-xs font-semibold uppercase tracking-widest mb-3">Recent Logins</p>
+                      <div className="space-y-1.5">
+                        {profileData.loginHistory.slice(0, 5).map((log: any, i: number) => (
+                          <div key={i} className="flex items-center gap-3 text-xs">
+                            <span className="font-mono text-white/40">{log.ip || "—"}</span>
+                            <span className="text-white/30 text-[11px]">{log.created_at ? new Date(log.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-white/30 text-center py-8">Failed to load profile</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -5579,6 +5738,138 @@ function DomainsTab() {
           ))}
         </ol>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FEATURE REQUESTS TAB (Admin)
+// ═══════════════════════════════════════════════════════════════
+
+const FR_STATUS: Record<string, { label: string; color: string }> = {
+  pending:  { label: "Pending",    color: "bg-amber-500/20 text-amber-300" },
+  planned:  { label: "Planned",    color: "bg-indigo-500/20 text-indigo-300" },
+  building: { label: "Building",   color: "bg-violet-500/20 text-violet-300" },
+  done:     { label: "Done ✓",     color: "bg-emerald-500/20 text-emerald-300" },
+  declined: { label: "Declined",   color: "bg-red-500/20 text-red-400" },
+};
+
+function FeatureRequestsAdminTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [noteId, setNoteId] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/feature-requests"],
+    queryFn: () => authFetch("/api/admin/feature-requests"),
+    refetchInterval: 60000,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, status, adminNote }: { id: string; status?: string; adminNote?: string }) =>
+      authFetch(`/api/admin/feature-requests/${id}`, { method: "PATCH", body: JSON.stringify({ status, adminNote }) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/admin/feature-requests"] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => authFetch(`/api/admin/feature-requests/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast({ title: "Request deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/feature-requests"] });
+    },
+  });
+
+  const all = data?.requests ?? [];
+  const requests = filterStatus === "all" ? all : all.filter((r: any) => r.status === filterStatus);
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-white">Feature Requests</h2>
+          <p className="text-white/40 text-sm mt-0.5">Ideas and requests submitted by your customers</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {["all", "pending", "planned", "building", "done", "declined"].map(s => (
+            <button key={s} onClick={() => setFilterStatus(s)}
+              className={`text-[11px] px-3 py-1.5 rounded-lg capitalize font-medium transition-colors ${filterStatus === s ? "bg-white/12 text-white" : "text-white/35 hover:text-white/60"}`}>
+              {s === "all" ? `All (${all.length})` : s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+      ) : requests.length === 0 ? (
+        <div className="text-center py-16 rounded-2xl border border-white/8" style={{ background: "rgba(255,255,255,.03)" }}>
+          <Sparkles className="w-10 h-10 mx-auto mb-3 text-white/10" />
+          <p className="text-white/30">No feature requests {filterStatus !== "all" ? `with status "${filterStatus}"` : "yet"}</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {requests.map((r: any) => {
+            const st = FR_STATUS[r.status] || FR_STATUS.pending;
+            return (
+              <div key={r.id} className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${st.color}`}>{st.label}</span>
+                      <span className="text-[11px] text-white/35 flex items-center gap-1">
+                        <span className="text-amber-400">▲</span> {r.votes || 1} vote{r.votes !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <p className="text-white font-semibold text-sm mb-0.5">{r.title}</p>
+                    {r.description && <p className="text-white/50 text-xs leading-relaxed">{r.description}</p>}
+                    <p className="text-white/25 text-[11px] mt-2">
+                      by <span className="text-white/40">{r.customerName || r.customerEmail}</span>
+                      {r.createdAt && <span> · {new Date(r.createdAt).toLocaleDateString()}</span>}
+                    </p>
+                    {r.adminNote && (
+                      <p className="mt-2 text-xs text-indigo-300/80 border-l-2 border-indigo-500/40 pl-2">Admin: {r.adminNote}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <select
+                      value={r.status}
+                      onChange={e => updateMutation.mutate({ id: r.id, status: e.target.value })}
+                      className="text-[11px] bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white focus:outline-none"
+                    >
+                      {Object.keys(FR_STATUS).map(s => <option key={s} value={s}>{FR_STATUS[s].label}</option>)}
+                    </select>
+                    <button onClick={() => { setNoteId(r.id); setNoteText(r.adminNote || ""); }}
+                      className="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25 transition-colors">
+                      Note
+                    </button>
+                    <button onClick={() => deleteMutation.mutate(r.id)}
+                      className="p-1.5 rounded-lg text-white/25 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Inline note editor */}
+                {noteId === r.id && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      value={noteText}
+                      onChange={e => setNoteText(e.target.value)}
+                      placeholder="Add admin note (visible to customer)…"
+                      className="flex-1 text-xs bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white placeholder:text-white/25 focus:outline-none focus:border-indigo-500/50"
+                    />
+                    <button onClick={() => { updateMutation.mutate({ id: r.id, adminNote: noteText }); setNoteId(null); toast({ title: "Note saved" }); }}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors">Save</button>
+                    <button onClick={() => setNoteId(null)} className="text-white/30 hover:text-white/60"><X className="w-4 h-4" /></button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

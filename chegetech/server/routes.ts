@@ -3466,10 +3466,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.post("/api/admin/ai-assistant", adminAuthMiddleware, (req: any, res: any) => {
+  app.post("/api/admin/ai-assistant", adminAuthMiddleware, async (req: any, res: any) => {
     try {
       const { message } = req.body;
       if (!message?.trim()) return res.status(400).json({ success: false, error: "Message required" });
+
+      // ── Auto-topup command: topup <email> <amount> ──────────────────────
+      const topupMatch = message.trim().match(/^topup\s+(\S+@\S+)\s+(\d+(?:\.\d+)?)/i);
+      if (topupMatch) {
+        const email = topupMatch[1].toLowerCase();
+        const amount = parseFloat(topupMatch[2]);
+        const customer = await storage.getCustomerByEmail(email);
+        if (!customer) return res.json({ success: true, response: `❌ No customer found with email **${email}**` });
+        await storage.creditWallet(customer.id, amount, `Admin bot top-up: KES ${amount}`, `bot-topup-${Date.now()}`);
+        const wallet = await storage.getWallet(customer.id);
+        return res.json({ success: true, response: `✅ Topped up **${email}** with **KES ${amount}**\n💰 New balance: **KES ${wallet.balance.toLocaleString()}**` });
+      }
+
+      // ── Topup all customers: topup all <amount> ─────────────────────────
+      const topupAllMatch = message.trim().match(/^topup\s+all\s+(\d+(?:\.\d+)?)/i);
+      if (topupAllMatch) {
+        const amount = parseFloat(topupAllMatch[1]);
+        const allCustomers = await storage.getAllCustomers();
+        let count = 0;
+        for (const c of allCustomers) {
+          await storage.creditWallet(c.id, amount, `Admin bot mass top-up: KES ${amount}`, `bot-topup-all-${Date.now()}-${c.id}`);
+          count++;
+        }
+        return res.json({ success: true, response: `✅ Topped up **${count} customers** each with **KES ${amount}**\n🎉 Mass wallet credit complete!` });
+      }
+
       const response = processAdminCommand(message.trim());
       res.json({ success: true, response });
     } catch (err: any) {
@@ -3479,6 +3505,123 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.delete("/api/admin/ai-assistant/session/:sessionId", adminAuthMiddleware, (_req: any, res: any) => {
     res.json({ success: true });
+  });
+
+  // ─── Admin: Full customer profile ────────────────────────────────────────
+  app.get("/api/admin/customers/:id/profile", adminAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const id = parseInt(req.params.id);
+      const customer = await storage.getCustomerById(id);
+      if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
+      const [wallet, txs, referralStats, loginLogs, ratings] = await Promise.all([
+        storage.getWallet(id),
+        storage.getCustomerTransactions ? storage.getCustomerTransactions(customer.email) : storage.getAllTransactions().then((all: any[]) => all.filter((t: any) => t.customerEmail === customer.email)),
+        storage.getReferralStats(id),
+        storage.getLoginLogs ? storage.getLoginLogs(id) : [],
+        storage.getAllRatings(100).then((all: any[]) => all.filter((r: any) => r.customerEmail === customer.email)),
+      ]);
+      res.json({
+        success: true,
+        customer: {
+          id: customer.id, email: customer.email, name: customer.name, avatarUrl: (customer as any).avatarUrl,
+          emailVerified: customer.emailVerified, suspended: customer.suspended, totpEnabled: (customer as any).totpEnabled,
+          createdAt: (customer as any).createdAt,
+        },
+        wallet: { balance: wallet.balance },
+        orders: txs.slice(0, 20),
+        referral: referralStats,
+        loginHistory: loginLogs.slice(0, 10),
+        ratings,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Feature Requests (customer submits, admin views) ────────────────────
+  function getFeatureRequests(): any[] {
+    try { return JSON.parse(dbSettingsGet("feature_requests") || "[]"); } catch { return []; }
+  }
+  function saveFeatureRequests(list: any[]) { dbSettingsSet("feature_requests", JSON.stringify(list)); }
+
+  app.post("/api/customer/feature-requests", customerAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const { title, description } = req.body;
+      if (!title?.trim()) return res.status(400).json({ success: false, error: "Title is required" });
+      const all = getFeatureRequests();
+      const req_obj = {
+        id: Date.now().toString(),
+        customerEmail: req.customer.email,
+        customerName: req.customer.name || req.customer.email.split("@")[0],
+        title: title.trim().slice(0, 120),
+        description: (description || "").trim().slice(0, 1000),
+        status: "pending" as const,
+        votes: 1,
+        createdAt: new Date().toISOString(),
+      };
+      all.unshift(req_obj);
+      saveFeatureRequests(all.slice(0, 500));
+      res.json({ success: true, request: req_obj });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/customer/feature-requests", customerAuthMiddleware, async (_req: any, res: any) => {
+    try {
+      const all = getFeatureRequests();
+      res.json({ success: true, requests: all });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/customer/feature-requests/:id/vote", customerAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const all = getFeatureRequests();
+      const idx = all.findIndex((r: any) => r.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ success: false, error: "Not found" });
+      all[idx].votes = (all[idx].votes || 1) + 1;
+      saveFeatureRequests(all);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/admin/feature-requests", adminAuthMiddleware, (_req: any, res: any) => {
+    try {
+      const all = getFeatureRequests();
+      res.json({ success: true, requests: all });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.patch("/api/admin/feature-requests/:id", adminAuthMiddleware, (req: any, res: any) => {
+    try {
+      const { status, adminNote } = req.body;
+      const all = getFeatureRequests();
+      const idx = all.findIndex((r: any) => r.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ success: false, error: "Not found" });
+      if (status) all[idx].status = status;
+      if (adminNote !== undefined) all[idx].adminNote = adminNote;
+      all[idx].updatedAt = new Date().toISOString();
+      saveFeatureRequests(all);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/admin/feature-requests/:id", adminAuthMiddleware, (req: any, res: any) => {
+    try {
+      const all = getFeatureRequests().filter((r: any) => r.id !== req.params.id);
+      saveFeatureRequests(all);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   return httpServer;
