@@ -40,6 +40,10 @@ export function getAdminPassword(): string {
   return getCredentialsOverride().adminPassword || process.env.ADMIN_PASSWORD || "admin123";
 }
 
+export function getCloudflareApiToken(): string {
+  return getCredentialsOverride().cloudflareApiToken || process.env.CLOUDFLARE_API_TOKEN || "";
+}
+
 export function getSecretsStatus() {
   const paystackPublicKey  = process.env.PAYSTACK_PUBLIC_KEY  || "";
   const paystackSecretKey  = process.env.PAYSTACK_SECRET_KEY  || "";

@@ -4319,6 +4319,17 @@ function CredentialsEditor({ inputCls }: { inputCls: string }) {
         {/* WhatsApp Bot */}
         <WhatsAppWebPanel inputCls={inputCls} />
 
+        {/* Cloudflare */}
+        <div className="glass rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Globe className="w-3.5 h-3.5 text-orange-400" />
+            <p className="text-[10px] font-semibold text-white/40 uppercase tracking-widest">Cloudflare DNS</p>
+            {(creds.cloudflareApiTokenSet || !!envVarSet?.cloudflareApiToken) && <Badge className="text-[9px] bg-emerald-500/20 text-emerald-400 border-0 px-1.5">Active</Badge>}
+          </div>
+          <CredRow label="API Token" field="cloudflareApiToken" type="password" placeholder="••••••••••••••••••••••••••••••••••••••••"
+            hint="Create at dash.cloudflare.com → My Profile → API Tokens. Needs Zone:DNS:Edit permission for your domain." />
+        </div>
+
         {/* Database */}
         <div className="glass rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-2 mb-1">
@@ -5263,6 +5274,23 @@ function DomainsTab() {
     },
   });
 
+  const [cfVerifyingId, setCfVerifyingId] = useState<string | null>(null);
+  const cfVerifyMutation = useMutation({
+    mutationFn: (id: string) => {
+      setCfVerifyingId(id);
+      return authFetchD(`/api/admin/domains/${id}/cloudflare-verify`, { method: "POST" });
+    },
+    onSuccess: (res, id) => {
+      setCfVerifyingId(null);
+      if (res.success) {
+        toast({ title: `DNS record ${res.action === "updated" ? "updated" : "created"} on Cloudflare`, description: `${res.record?.name} → ${res.record?.content}` });
+      } else {
+        toast({ title: "Cloudflare error", description: res.error, variant: "destructive" });
+      }
+    },
+    onError: (_err, _id) => { setCfVerifyingId(null); toast({ title: "Request failed", variant: "destructive" }); },
+  });
+
   function copyText(text: string, id: string) {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
@@ -5452,6 +5480,16 @@ function DomainsTab() {
                       <Star className="w-3.5 h-3.5" /><span className="ml-1.5 text-xs">Set Primary</span>
                     </Button>
                   )}
+                  <Button size="sm" variant="outline"
+                    onClick={() => cfVerifyMutation.mutate(d.id)}
+                    disabled={cfVerifyingId === d.id}
+                    title="Auto-add CNAME record on Cloudflare"
+                    className="border-orange-500/25 text-orange-400 hover:bg-orange-500/10 h-8">
+                    {cfVerifyingId === d.id
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <Zap className="w-3.5 h-3.5" />}
+                    <span className="ml-1.5 text-xs">CF Auto</span>
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => deleteMutation.mutate(d.id)} disabled={deleteMutation.isPending}
                     className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-8">
                     <Trash2 className="w-3.5 h-3.5" />

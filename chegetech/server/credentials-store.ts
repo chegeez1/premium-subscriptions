@@ -19,6 +19,7 @@ export interface CredentialsOverride {
   whatsappAdminPhone?: string;
   openaiApiKey?: string;
   externalDatabaseUrl?: string;
+  cloudflareApiToken?: string;
 }
 
 export function getCredentialsOverride(): CredentialsOverride {

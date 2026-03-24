@@ -31,7 +31,7 @@ import {
   requirePermission,
   setStorageRef,
 } from "./auth";
-import { getPaystackSecretKey, getPaystackPublicKey, getSecretsStatus, getResendApiKey, getResendFrom, getResendOtpFrom, getEmailUser, getEmailPass } from "./secrets";
+import { getPaystackSecretKey, getPaystackPublicKey, getSecretsStatus, getResendApiKey, getResendFrom, getResendOtpFrom, getEmailUser, getEmailPass, getCloudflareApiToken } from "./secrets";
 import nodemailer from "nodemailer";
 import { getAppConfig, saveAppConfig } from "./app-config";
 import { getCredentialsOverride, saveCredentialsOverride } from "./credentials-store";
@@ -2051,6 +2051,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         openaiApiKeySet: !!override.openaiApiKey,
         externalDatabaseUrl: override.externalDatabaseUrl ? "••••••••••••••••" : "",
         externalDatabaseUrlSet: !!override.externalDatabaseUrl,
+        cloudflareApiToken: override.cloudflareApiToken ? "••••••••••••••••" : "",
+        cloudflareApiTokenSet: !!override.cloudflareApiToken,
       },
       effective: {
         paystackPublicKey: status.paystackPublicKey,
@@ -2069,6 +2071,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         whatsappPhoneId: !!override.whatsappPhoneId,
         openaiApiKey: !!override.openaiApiKey,
         externalDatabaseUrl: !!override.externalDatabaseUrl,
+        cloudflareApiToken: !!override.cloudflareApiToken,
       },
       envVarSet: {
         paystackPublicKey: !!process.env.PAYSTACK_PUBLIC_KEY,
@@ -2091,7 +2094,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.put("/api/admin/credentials", adminAuthMiddleware, superAdminOnly, (req, res) => {
     try {
       const { paystackPublicKey, paystackSecretKey, resendApiKey, resendFrom, emailUser, emailPass, adminEmail, adminPassword, telegramBotToken, telegramChatId,
-        whatsappAccessToken, whatsappPhoneId, whatsappVerifyToken, whatsappAdminPhone, openaiApiKey, externalDatabaseUrl } = req.body;
+        whatsappAccessToken, whatsappPhoneId, whatsappVerifyToken, whatsappAdminPhone, openaiApiKey, externalDatabaseUrl, cloudflareApiToken } = req.body;
       const toSave: Record<string, string | undefined> = {};
       if (paystackPublicKey !== undefined) toSave.paystackPublicKey = paystackPublicKey || undefined;
       if (paystackSecretKey !== undefined && paystackSecretKey !== "••••••••••••••••") toSave.paystackSecretKey = paystackSecretKey || undefined;
@@ -2109,6 +2112,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (whatsappAdminPhone !== undefined) toSave.whatsappAdminPhone = whatsappAdminPhone || undefined;
       if (openaiApiKey !== undefined && openaiApiKey !== "••••••••••••••••") toSave.openaiApiKey = openaiApiKey || undefined;
       if (externalDatabaseUrl !== undefined && externalDatabaseUrl !== "••••••••••••••••") toSave.externalDatabaseUrl = externalDatabaseUrl || undefined;
+      if (cloudflareApiToken !== undefined && cloudflareApiToken !== "••••••••••••••••") toSave.cloudflareApiToken = cloudflareApiToken || undefined;
 
       saveCredentialsOverride(toSave);
       logAdminAction({ action: "Credentials updated", category: "settings", details: `Updated: ${Object.keys(toSave).join(", ")}`, status: "success" });
@@ -2740,6 +2744,72 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       saveAppConfig({ appDomain: (appDomain || "").trim() });
       logAdminAction({ action: "CNAME target updated", category: "settings", details: `appDomain set to: ${appDomain}`, status: "success" });
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Admin: Cloudflare auto-verify (push CNAME record) ───────────────────
+  app.post("/api/admin/domains/:id/cloudflare-verify", adminAuthMiddleware, superAdminOnly, async (req, res) => {
+    try {
+      const token = getCloudflareApiToken();
+      if (!token) return res.status(400).json({ success: false, error: "Cloudflare API token not configured. Add it in Settings → Credentials." });
+
+      const domains = getDomains();
+      const domain = domains.find((d: any) => d.id === req.params.id);
+      if (!domain) return res.status(404).json({ success: false, error: "Domain not found" });
+
+      const config = getAppConfig();
+      const cnameDest = config.appDomain || process.env.REPLIT_DEV_DOMAIN || process.env.REPLIT_DOMAINS?.split(",")[0] || "";
+      if (!cnameDest) return res.status(400).json({ success: false, error: "CNAME target not set. Configure it in Domains tab first." });
+
+      const cfHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+      // Extract root domain (e.g. store.streamvault-premium.site → streamvault-premium.site)
+      const parts = domain.domain.split(".");
+      const rootDomain = parts.length > 2 ? parts.slice(-2).join(".") : domain.domain;
+      const subdomain = parts.length > 2 ? parts.slice(0, -2).join(".") : "@";
+
+      // Find Cloudflare zone
+      const zonesResp = await fetch(`https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(rootDomain)}&status=active`, { headers: cfHeaders });
+      const zonesData = await zonesResp.json() as any;
+      if (!zonesData.success || !zonesData.result?.length) {
+        return res.status(404).json({ success: false, error: `Zone for "${rootDomain}" not found in your Cloudflare account. Make sure the domain is active there.` });
+      }
+      const zoneId = zonesData.result[0].id;
+
+      // Check for existing CNAME
+      const existResp = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records?type=CNAME&name=${encodeURIComponent(domain.domain)}`, { headers: cfHeaders });
+      const existData = await existResp.json() as any;
+      const existing = existData.result?.[0];
+
+      let result: any;
+      if (existing) {
+        // Update existing record
+        const upResp = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records/${existing.id}`, {
+          method: "PUT",
+          headers: cfHeaders,
+          body: JSON.stringify({ type: "CNAME", name: subdomain, content: cnameDest, ttl: 1, proxied: false }),
+        });
+        result = await upResp.json() as any;
+      } else {
+        // Create new record
+        const crResp = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records`, {
+          method: "POST",
+          headers: cfHeaders,
+          body: JSON.stringify({ type: "CNAME", name: subdomain, content: cnameDest, ttl: 1, proxied: false }),
+        });
+        result = await crResp.json() as any;
+      }
+
+      if (!result.success) {
+        const errMsg = result.errors?.[0]?.message || "Cloudflare API error";
+        return res.status(400).json({ success: false, error: errMsg });
+      }
+
+      const action = existing ? "updated" : "created";
+      logAdminAction({ action: `Cloudflare CNAME ${action}`, category: "settings", details: `${domain.domain} → ${cnameDest}`, status: "success" });
+      res.json({ success: true, action, record: { name: domain.domain, content: cnameDest }, zone: rootDomain });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
