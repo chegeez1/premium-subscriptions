@@ -5291,6 +5291,21 @@ function DomainsTab() {
     onError: (_err, _id) => { setCfVerifyingId(null); toast({ title: "Request failed", variant: "destructive" }); },
   });
 
+  const [dnsResults, setDnsResults] = useState<Record<string, { verified: boolean; found: string | null; expected: string | null; propagated: boolean } | null>>({});
+  const [dnsCheckingId, setDnsCheckingId] = useState<string | null>(null);
+  async function checkDns(id: string) {
+    setDnsCheckingId(id);
+    try {
+      const res = await authFetchD(`/api/admin/domains/${id}/verify`);
+      setDnsResults((prev) => ({ ...prev, [id]: res.success ? res : null }));
+      if (!res.success) toast({ title: "DNS check failed", description: res.error, variant: "destructive" });
+    } catch {
+      toast({ title: "DNS check failed", variant: "destructive" });
+    } finally {
+      setDnsCheckingId(null);
+    }
+  }
+
   function copyText(text: string, id: string) {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
@@ -5490,6 +5505,16 @@ function DomainsTab() {
                       : <Zap className="w-3.5 h-3.5" />}
                     <span className="ml-1.5 text-xs">CF Auto</span>
                   </Button>
+                  <Button size="sm" variant="outline"
+                    onClick={() => checkDns(d.id)}
+                    disabled={dnsCheckingId === d.id}
+                    title="Check if DNS is pointing correctly"
+                    className="border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/10 h-8">
+                    {dnsCheckingId === d.id
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <span className="ml-1.5 text-xs">Verify</span>
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => deleteMutation.mutate(d.id)} disabled={deleteMutation.isPending}
                     className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-8">
                     <Trash2 className="w-3.5 h-3.5" />
@@ -5510,6 +5535,26 @@ function DomainsTab() {
                   </button>
                 </div>
               </div>
+
+              {/* DNS verify result */}
+              {dnsResults[d.id] !== undefined && dnsResults[d.id] !== null && (() => {
+                const r = dnsResults[d.id]!;
+                return (
+                  <div className={`mt-2 p-3 rounded-xl border text-xs font-mono flex flex-col gap-1 ${r.verified ? "bg-emerald-500/8 border-emerald-500/20" : "bg-red-500/8 border-red-500/20"}`}>
+                    <div className="flex items-center gap-2">
+                      {r.verified
+                        ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        : <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
+                      <span className={r.verified ? "text-emerald-300 font-semibold" : "text-red-300 font-semibold"}>
+                        {r.verified ? "DNS verified — pointing correctly" : r.propagated ? "DNS found but points elsewhere" : "DNS not yet propagated"}
+                      </span>
+                    </div>
+                    {r.found && <span className="text-white/40 pl-5">Found: <span className="text-white/70">{r.found}</span></span>}
+                    {!r.found && <span className="text-white/40 pl-5">No CNAME record found yet — may still be propagating (up to 48h)</span>}
+                    {r.expected && !r.verified && <span className="text-white/40 pl-5">Expected: <span className="text-white/70">{r.expected}</span></span>}
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>

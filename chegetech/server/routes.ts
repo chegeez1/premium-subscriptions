@@ -2815,6 +2815,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Admin: Verify domain DNS (CNAME check via Google DoH) ───────────────
+  app.get("/api/admin/domains/:id/verify", adminAuthMiddleware, superAdminOnly, async (req, res) => {
+    try {
+      const domains = getDomains();
+      const domain = domains.find((d: any) => d.id === req.params.id);
+      if (!domain) return res.status(404).json({ success: false, error: "Domain not found" });
+
+      const config = getAppConfig();
+      const expectedTarget = config.appDomain || process.env.REPLIT_DEV_DOMAIN || process.env.REPLIT_DOMAINS?.split(",")[0] || "";
+
+      const dohResp = await fetch(
+        `https://dns.google/resolve?name=${encodeURIComponent(domain.domain)}&type=CNAME`,
+        { headers: { Accept: "application/dns-json" } }
+      );
+      const dohData = await dohResp.json() as any;
+
+      const answers: any[] = dohData.Answer || [];
+      const cnameRecords = answers.filter((a: any) => a.type === 5);
+      const found = cnameRecords[0]?.data?.replace(/\.$/, "") || null;
+
+      const verified = expectedTarget
+        ? !!(found && found.toLowerCase() === expectedTarget.toLowerCase())
+        : !!found;
+
+      res.json({
+        success: true,
+        verified,
+        domain: domain.domain,
+        found,
+        expected: expectedTarget || null,
+        dnsStatus: dohData.Status,
+        propagated: dohData.Status === 0 && answers.length > 0,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.post("/api/admin/domains", adminAuthMiddleware, superAdminOnly, (req, res) => {
     const { domain, label } = req.body;
     if (!domain) return res.status(400).json({ success: false, error: "domain is required" });
