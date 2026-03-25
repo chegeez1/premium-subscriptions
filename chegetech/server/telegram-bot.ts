@@ -100,18 +100,117 @@ function stockBar(avail: number, total: number) {
   return "█".repeat(filled) + "░".repeat(5 - filled);
 }
 
+// ─── Account linking helpers ──────────────────────────────────────────────
+
+function getTgCustomerId(chatId: string): string | null {
+  const { dbSettingsGet } = require("./storage") as typeof import("./storage");
+  return dbSettingsGet(`tg_chatid_${chatId}`) || null;
+}
+
+async function handleLink(chatId: string, token: string, text: string) {
+  const { dbSettingsGet, dbSettingsSet } = await import("./storage");
+  const parts = text.trim().split(/\s+/);
+  const code = parts[1]?.trim();
+
+  if (!code || !/^\d{6}$/.test(code)) {
+    await sendMsg(chatId, token,
+      `🔗 <b>Link your Chege Tech account</b>\n\n` +
+      `1. Open the store in your browser\n` +
+      `2. Go to Dashboard → Profile tab\n` +
+      `3. Click <b>Connect Telegram</b> to get your 6-digit code\n` +
+      `4. Send: <code>/link 123456</code> (replace with your code)\n\n` +
+      `Code expires after 10 minutes.`
+    );
+    return;
+  }
+
+  const customerId = dbSettingsGet(`tg_link_${code}`);
+  if (!customerId || customerId === "used" || customerId === "") {
+    await sendMsg(chatId, token, `❌ Invalid or expired code. Generate a new one from Dashboard → Profile.`);
+    return;
+  }
+
+  dbSettingsSet(`tg_link_${code}`, "used");
+  dbSettingsSet(`tg_chatid_${chatId}`, customerId);
+  dbSettingsSet(`tg_customer_${customerId}`, chatId);
+
+  const customer = await storage.getCustomerById(parseInt(customerId)).catch(() => null);
+  await sendMsg(chatId, token,
+    `✅ <b>Account linked!</b>\n\n` +
+    `Welcome, <b>${customer?.name || customer?.email || "friend"}</b>!\n\n` +
+    `You can now use:\n` +
+    `/balance — Check wallet balance\n` +
+    `/myorders — View your orders\n` +
+    `/me — Your account info`
+  );
+}
+
+async function handleBalance(chatId: string, token: string) {
+  const customerId = getTgCustomerId(chatId);
+  if (!customerId) {
+    await sendMsg(chatId, token,
+      `🔒 Your Telegram is not linked yet.\n\nSend /link to connect your Chege Tech account.`
+    );
+    return;
+  }
+  try {
+    const wallet = await storage.getWallet(parseInt(customerId));
+    const balance = wallet?.balance ?? 0;
+    await sendMsg(chatId, token,
+      `💰 <b>Wallet Balance</b>\n\n` +
+      `<b>KES ${balance.toLocaleString()}</b>\n\n` +
+      `Top up via the store: ${getStoreUrl()}`
+    );
+  } catch {
+    await sendMsg(chatId, token, `❌ Could not fetch balance. Try again later.`);
+  }
+}
+
+async function handleMe(chatId: string, token: string) {
+  const customerId = getTgCustomerId(chatId);
+  if (!customerId) {
+    await sendMsg(chatId, token,
+      `🔒 Your Telegram is not linked yet.\n\nSend /link to connect your Chege Tech account.`
+    );
+    return;
+  }
+  try {
+    const customer = await storage.getCustomerById(parseInt(customerId));
+    if (!customer) { await sendMsg(chatId, token, "❌ Account not found."); return; }
+    const wallet = await storage.getWallet(parseInt(customerId));
+    const txs = await storage.getTransactionsByEmail(customer.email);
+    const orders = txs.filter((t: any) => t.status === "success");
+    await sendMsg(chatId, token,
+      `👤 <b>Your Account</b>\n\n` +
+      `Name: ${customer.name || "Not set"}\n` +
+      `Email: ${customer.email}\n` +
+      `Wallet: KES ${(wallet?.balance ?? 0).toLocaleString()}\n` +
+      `Orders: ${orders.length} completed\n` +
+      `2FA: ${customer.totpEnabled ? "✅ Enabled" : "❌ Disabled"}\n\n` +
+      `Visit the store: ${getStoreUrl()}`
+    );
+  } catch {
+    await sendMsg(chatId, token, `❌ Could not fetch account info.`);
+  }
+}
+
 // ─── USER commands (open to everyone) ────────────────────────────────────
 
 async function handleUserStart(chatId: string, token: string) {
   const { siteName } = getAppConfig();
+  const isLinked = !!getTgCustomerId(chatId);
   setUserState(chatId, { type: "idle" });
   await sendMsg(chatId, token,
     `👋 Welcome to <b>${siteName}</b>!\n\n` +
     `We sell premium shared subscription accounts at great prices.\n\n` +
-    `What would you like to do?\n\n` +
+    `<b>Shopping:</b>\n` +
     `/buy — Browse plans and purchase\n` +
-    `/myorders — Check your order status\n` +
-    `/help — Show this menu`
+    `/myorders — Check your order status\n\n` +
+    `<b>Your Account:</b>\n` +
+    (isLinked
+      ? `/balance — Wallet balance\n/me — Account info\n`
+      : `/link — Connect your store account\n`) +
+    `\n/help — Show this menu`
   );
 }
 
@@ -384,6 +483,9 @@ async function handleMessage(msg: any, botToken: string, adminChatId: string) {
 
   if (text === "/buy") { return handleBuy(chatId, botToken); }
   if (text === "/myorders") { return handleMyOrders(chatId, botToken); }
+  if (text === "/balance" || text === "/wallet") { return handleBalance(chatId, botToken); }
+  if (text === "/me") { return handleMe(chatId, botToken); }
+  if (text.startsWith("/link")) { return handleLink(chatId, botToken, text); }
 
   if (text === "/start" || text === "/help") {
     if (isAdmin) return handleAdminStart(chatId, botToken);

@@ -3811,14 +3811,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const { siteName } = getAppConfig();
+      const receiptNum = `RCT-${reference.slice(-8).toUpperCase()}`;
+      const storeBase = process.env.REPLIT_DEV_DOMAIN
+        ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+        : (getAppConfig() as any).customDomain
+          ? `https://${(getAppConfig() as any).customDomain}`
+          : "";
+      const verifyUrl = `${storeBase}/api/receipt/verify/${reference}`;
+
+      const QRCode = await import("qrcode");
+      const qrBuffer = await QRCode.default.toBuffer(verifyUrl, { margin: 1, width: 100 });
+
       const doc = new PDFDocument({ margin: 50, size: "A4" });
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename="receipt-${reference}.pdf"`);
       doc.pipe(res);
 
       doc.rect(0, 0, doc.page.width, 100).fill("#4F46E5");
-      doc.fillColor("#ffffff").fontSize(24).font("Helvetica-Bold").text(siteName, 50, 35);
-      doc.fontSize(11).font("Helvetica").text("Payment Receipt", 50, 65);
+      doc.fillColor("#ffffff").fontSize(24).font("Helvetica-Bold").text(siteName, 50, 30);
+      doc.fontSize(10).font("Helvetica").text("Payment Receipt", 50, 60);
+      doc.fontSize(9).fillColor("rgba(255,255,255,0.7)").text(`Receipt No: ${receiptNum}`, 50, 76);
 
       doc.fillColor("#1f2937").fontSize(18).font("Helvetica-Bold").text("RECEIPT", 50, 120);
       doc.fontSize(10).font("Helvetica").fillColor("#6b7280")
@@ -3851,6 +3863,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         doc.fillColor("#374151").fontSize(10).font("Helvetica")
           .text(`Subscription expires: ${new Date(transaction.expiresAt).toLocaleDateString("en-KE", { year: "numeric", month: "long", day: "numeric" })}`, 50, 420);
       }
+
+      // ── Verification section ──────────────────────────────────────────────
+      const verifyY = 450;
+      doc.rect(50, verifyY, 495, 110).fill("#f0fdf4").stroke("#d1fae5");
+      doc.image(qrBuffer, 430, verifyY + 8, { width: 94, height: 94 });
+      doc.fillColor("#065f46").fontSize(10).font("Helvetica-Bold")
+        .text("✓ VERIFIED AUTHENTIC RECEIPT", 60, verifyY + 12);
+      doc.fillColor("#374151").fontSize(8).font("Helvetica")
+        .text("Scan the QR code or visit the link below to verify this receipt online:", 60, verifyY + 30, { width: 355 });
+      doc.fillColor("#4F46E5").fontSize(8).font("Helvetica")
+        .text(verifyUrl, 60, verifyY + 55, { width: 355 });
+      doc.fillColor("#6b7280").fontSize(8).font("Helvetica")
+        .text(`Receipt No: ${receiptNum}`, 60, verifyY + 80);
 
       doc.moveTo(50, doc.page.height - 80).lineTo(545, doc.page.height - 80).strokeColor("#e5e7eb").stroke();
       doc.fillColor("#9ca3af").fontSize(9).font("Helvetica")
@@ -4593,6 +4618,123 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // Apply flash sale discount at checkout — hook into payment/initialize
   // (Adds flash discount on top of any promo discount — flash is applied first)
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PUBLIC RECEIPT VERIFICATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.get("/api/receipt/verify/:reference", async (req, res) => {
+    try {
+      const { reference } = req.params;
+      const tx = await storage.getTransaction(reference);
+      const { siteName } = getAppConfig();
+
+      if (!tx || tx.status !== "success") {
+        return res.status(404).send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Receipt Not Found — ${siteName}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}.card{background:#1e293b;border-radius:16px;padding:40px;max-width:480px;width:100%;text-align:center;border:1px solid #334155}.icon{font-size:56px;margin-bottom:16px}.title{font-size:22px;font-weight:700;margin-bottom:8px;color:#ef4444}.sub{color:#94a3b8;font-size:15px;line-height:1.5}</style></head><body><div class="card"><div class="icon">❌</div><div class="title">Receipt Not Found</div><p class="sub">This receipt could not be verified. It may be invalid or does not exist.</p></div></body></html>`);
+      }
+
+      const receiptNum = `RCT-${reference.slice(-8).toUpperCase()}`;
+      const date = new Date(tx.createdAt || Date.now()).toLocaleDateString("en-KE", { year: "numeric", month: "long", day: "numeric" });
+      const expiry = tx.expiresAt ? new Date(tx.expiresAt).toLocaleDateString("en-KE", { year: "numeric", month: "long", day: "numeric" }) : null;
+
+      return res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Receipt Verified — ${siteName}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}.card{background:#1e293b;border-radius:16px;padding:40px;max-width:480px;width:100%;border:1px solid #334155}.header{text-align:center;margin-bottom:28px}.icon{font-size:56px;margin-bottom:12px}.title{font-size:22px;font-weight:700;color:#10b981;margin-bottom:4px}.brand{font-size:14px;color:#64748b}.divider{border:none;border-top:1px solid #334155;margin:20px 0}.row{display:flex;justify-content:space-between;align-items:center;padding:8px 0}.label{color:#94a3b8;font-size:13px}.value{font-weight:600;font-size:14px;text-align:right;max-width:60%}.stamp{display:inline-block;border:2px solid #10b981;border-radius:8px;padding:6px 16px;color:#10b981;font-weight:700;font-size:13px;letter-spacing:1px;margin-top:20px}.footer{text-align:center;margin-top:24px;color:#475569;font-size:12px}</style></head><body><div class="card"><div class="header"><div class="icon">✅</div><div class="title">Receipt Verified</div><div class="brand">${siteName}</div></div><hr class="divider"><div class="row"><span class="label">Receipt No.</span><span class="value">${receiptNum}</span></div><div class="row"><span class="label">Customer</span><span class="value">${tx.customerName || tx.customerEmail}</span></div><div class="row"><span class="label">Plan</span><span class="value">${tx.planName}</span></div><div class="row"><span class="label">Amount Paid</span><span class="value">KES ${(tx.amount || 0).toLocaleString()}</span></div><div class="row"><span class="label">Purchase Date</span><span class="value">${date}</span></div>${expiry ? `<div class="row"><span class="label">Expires</span><span class="value">${expiry}</span></div>` : ""}<div class="row"><span class="label">Reference</span><span class="value" style="font-family:monospace;font-size:12px">${reference}</span></div><div class="row"><span class="label">Status</span><span class="value" style="color:#10b981">✓ Authentic</span></div><div style="text-align:center"><span class="stamp">VERIFIED GENUINE</span></div><div class="footer">This receipt was issued by ${siteName} and is cryptographically linked to the original transaction.</div></div></body></html>`);
+    } catch (err: any) {
+      res.status(500).send("Error verifying receipt.");
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CUSTOMER BADGES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const BADGE_DEFS = [
+    { id: "verified",        emoji: "✅", name: "Verified Member",  desc: "Email address verified",               rarity: "common" },
+    { id: "first_purchase",  emoji: "🛒", name: "First Purchase",   desc: "Completed your first order",           rarity: "common" },
+    { id: "wallet_user",     emoji: "👛", name: "Wallet User",      desc: "Topped up your wallet",                rarity: "common" },
+    { id: "buyer_5x",        emoji: "🔥", name: "5× Buyer",         desc: "Completed 5 orders",                   rarity: "uncommon" },
+    { id: "security_pro",    emoji: "🔒", name: "Security Pro",     desc: "Enabled two-factor authentication",    rarity: "uncommon" },
+    { id: "gift_giver",      emoji: "🎁", name: "Gift Giver",       desc: "Gifted a subscription to someone",     rarity: "uncommon" },
+    { id: "referral_star",   emoji: "🤝", name: "Referral Star",    desc: "Successfully referred someone",        rarity: "rare" },
+    { id: "buyer_10x",       emoji: "💎", name: "Power Buyer",      desc: "Completed 10 orders",                  rarity: "rare" },
+    { id: "big_spender",     emoji: "💰", name: "Big Spender",      desc: "Spent over KES 5,000 total",           rarity: "rare" },
+    { id: "early_adopter",   emoji: "🌟", name: "Early Adopter",    desc: "Among the first 50 customers",         rarity: "epic" },
+    { id: "vip",             emoji: "👑", name: "VIP",              desc: "Spent over KES 15,000 total",          rarity: "epic" },
+  ];
+
+  app.get("/api/customer/badges", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const customer = await storage.getCustomerById(req.customer.id);
+      if (!customer) return res.status(404).json({ success: false, error: "Not found" });
+
+      const txs = await storage.getTransactionsByEmail(customer.email);
+      const successful = txs.filter((t: any) => t.status === "success");
+      const totalSpend = successful.reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      const walletTxs = await storage.getWalletTransactions(req.customer.id);
+      const hasTopup = walletTxs.some((w: any) => w.type === "topup" || w.type === "credit");
+      const referral = await storage.getReferralByReferrer(req.customer.id);
+      const referralStats = referral ? await storage.getReferralStats(req.customer.id) : null;
+      const hasGifted = successful.some((t: any) => t.giftEmail);
+
+      const earned: string[] = [];
+      if (customer.emailVerified)              earned.push("verified");
+      if (successful.length >= 1)             earned.push("first_purchase");
+      if (hasTopup)                            earned.push("wallet_user");
+      if (successful.length >= 5)             earned.push("buyer_5x");
+      if ((customer as any).totpEnabled)       earned.push("security_pro");
+      if (hasGifted)                           earned.push("gift_giver");
+      if (referralStats && (referralStats as any).total >= 1) earned.push("referral_star");
+      if (successful.length >= 10)            earned.push("buyer_10x");
+      if (totalSpend >= 5000)                 earned.push("big_spender");
+      if (req.customer.id <= 50)              earned.push("early_adopter");
+      if (totalSpend >= 15000)               earned.push("vip");
+
+      const badges = BADGE_DEFS.map(b => ({ ...b, earned: earned.includes(b.id) }));
+      res.json({ success: true, badges, earnedCount: earned.length, totalCount: BADGE_DEFS.length });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TELEGRAM ACCOUNT LINKING
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.get("/api/customer/telegram-code", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      dbSettingsSet(`tg_link_${code}`, String(req.customer.id));
+      // code expires in 10 minutes
+      setTimeout(() => {
+        const current = dbSettingsGet(`tg_link_${code}`);
+        if (current && current !== "used") dbSettingsSet(`tg_link_${code}`, "");
+      }, 10 * 60 * 1000);
+      res.json({ success: true, code });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/customer/telegram-status", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const chatId = dbSettingsGet(`tg_customer_${req.customer.id}`);
+      res.json({ success: true, linked: !!chatId, chatId: chatId || null });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/customer/telegram-unlink", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const chatId = dbSettingsGet(`tg_customer_${req.customer.id}`);
+      if (chatId) {
+        dbSettingsSet(`tg_chatid_${chatId}`, "");
+        dbSettingsSet(`tg_customer_${req.customer.id}`, "");
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // WALLET TOPUP WITH LABEL

@@ -180,6 +180,34 @@ export default function Dashboard() {
     });
   }
 
+  const { data: badgesData } = useQuery<any>({
+    queryKey: ["/api/customer/badges"],
+    queryFn: () => customerFetch("/api/customer/badges"),
+    enabled: tab === "profile",
+    staleTime: 60000,
+  });
+
+  const { data: tgStatusData, refetch: refetchTgStatus } = useQuery<any>({
+    queryKey: ["/api/customer/telegram-status"],
+    queryFn: () => customerFetch("/api/customer/telegram-status"),
+    enabled: tab === "profile",
+    staleTime: 30000,
+  });
+  const [tgCode, setTgCode] = useState<string | null>(null);
+  const [tgCodeLoading, setTgCodeLoading] = useState(false);
+  async function generateTgCode() {
+    setTgCodeLoading(true);
+    try {
+      const d = await customerFetch("/api/customer/telegram-code");
+      if (d.success) setTgCode(d.code);
+    } finally { setTgCodeLoading(false); }
+  }
+  async function unlinkTelegram() {
+    await customerFetch("/api/customer/telegram-unlink", { method: "POST" });
+    setTgCode(null);
+    refetchTgStatus();
+  }
+
   const { data: keysData, isLoading: keysLoading } = useQuery<any>({
     queryKey: ["/api/customer/api-keys"],
     queryFn: () => customerFetch("/api/customer/api-keys"),
@@ -2133,6 +2161,97 @@ export default function Dashboard() {
                 <><Save className="w-4 h-4 mr-2" />Save Changes</>
               )}
             </Button>
+
+            {/* ── Telegram Connect ───────────────────────────────────────── */}
+            <div className="rounded-2xl border border-white/8 p-5 space-y-4" style={{ background: "rgba(255,255,255,.04)", backdropFilter: "blur(12px)" }}>
+              <div className="flex items-center gap-3 pb-3 border-b border-white/8">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(0,136,204,.2)" }}>
+                  <Send className="w-5 h-5 text-sky-400" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-white">Telegram Storefront</p>
+                  <p className="text-xs text-white/40">Link your account to check balance &amp; orders in Telegram</p>
+                </div>
+                {tgStatusData?.linked && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 font-medium">Connected</span>
+                )}
+              </div>
+              {tgStatusData?.linked ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-white/60">Your Telegram is connected. You can now use <span className="text-sky-400 font-mono">/balance</span>, <span className="text-sky-400 font-mono">/me</span>, and <span className="text-sky-400 font-mono">/myorders</span> in the bot.</p>
+                  <Button size="sm" variant="outline" onClick={unlinkTelegram} className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-8 text-xs">
+                    Disconnect Telegram
+                  </Button>
+                </div>
+              ) : tgCode ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-white/60">Open the Telegram bot and send this command:</p>
+                  <div className="flex items-center gap-2 bg-black/30 rounded-xl px-4 py-3 border border-white/8">
+                    <code className="text-sky-300 font-mono text-sm flex-1">/link {tgCode}</code>
+                    <button onClick={() => { navigator.clipboard.writeText(`/link ${tgCode}`); }} className="text-white/40 hover:text-white/80 transition-colors">
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-white/30">This code expires in 10 minutes. <button className="text-indigo-400 underline" onClick={generateTgCode}>Generate new code</button></p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-white/50">Connect your account to the Telegram bot to check your wallet balance and orders without opening the browser.</p>
+                  <Button size="sm" onClick={generateTgCode} disabled={tgCodeLoading} className="bg-sky-600 hover:bg-sky-500 text-white border-0 h-9 text-sm">
+                    {tgCodeLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+                    Connect Telegram
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* ── Badge Wall ─────────────────────────────────────────────── */}
+            <div className="rounded-2xl border border-white/8 p-5 space-y-4" style={{ background: "rgba(255,255,255,.04)", backdropFilter: "blur(12px)" }}>
+              <div className="flex items-center gap-3 pb-3 border-b border-white/8">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(245,158,11,.2)" }}>
+                  <Trophy className="w-5 h-5 text-amber-400" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-white">Badge Wall</p>
+                  <p className="text-xs text-white/40">
+                    {badgesData ? `${badgesData.earnedCount} of ${badgesData.totalCount} earned` : "Achievements you've unlocked"}
+                  </p>
+                </div>
+              </div>
+              {badgesData?.badges ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {badgesData.badges.map((b: any) => (
+                    <div
+                      key={b.id}
+                      className={`rounded-xl p-3 border transition-all ${b.earned
+                        ? b.rarity === "epic" ? "border-amber-500/40 bg-amber-500/10"
+                          : b.rarity === "rare" ? "border-indigo-500/40 bg-indigo-500/10"
+                          : b.rarity === "uncommon" ? "border-emerald-500/30 bg-emerald-500/8"
+                          : "border-white/12 bg-white/5"
+                        : "border-white/5 bg-white/2 opacity-40 grayscale"}`}
+                      title={b.desc}
+                    >
+                      <div className="text-2xl mb-1.5">{b.emoji}</div>
+                      <p className={`text-xs font-semibold ${b.earned ? "text-white" : "text-white/40"}`}>{b.name}</p>
+                      <p className="text-[10px] text-white/30 mt-0.5 leading-tight">{b.desc}</p>
+                      {b.earned && b.rarity !== "common" && (
+                        <span className={`inline-block mt-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${
+                          b.rarity === "epic" ? "bg-amber-500/20 text-amber-400"
+                          : b.rarity === "rare" ? "bg-indigo-500/20 text-indigo-400"
+                          : "bg-emerald-500/20 text-emerald-400"
+                        }`}>{b.rarity}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {Array.from({length: 6}).map((_, i) => (
+                    <div key={i} className="rounded-xl p-3 border border-white/5 bg-white/2 h-20 animate-pulse" />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
