@@ -112,11 +112,21 @@ export function processAdminCommand(input: string): string {
       `📦 \`stock\` — inventory per plan`,
       `⚠️ \`expiring\` / \`expiring 7 days\` — accounts due`,
       `💰 \`revenue breakdown\` — earnings by plan`,
-      `💳 \`wallet balances\` — top wallet holders`,
+      `💳 \`wallets\` — top wallet holders`,
       `🎯 \`referrals\` — top referrers`,
+      `🔥 \`flash sales\` — view active flash sales`,
+      `👥 \`groups\` — customer group summary`,
+      `📈 \`funnel\` — conversion funnel stats`,
       `🔄 \`status\` — full system health check`,
       ``,
-      `I also auto-refresh every 30 seconds with live alerts.`,
+      `**Customer Actions:**`,
+      `🚫 \`ban email@example.com reason\` — suspend account`,
+      `✅ \`unban email@example.com\` — restore access`,
+      `🔁 \`resend email@example.com\` — show last orders for resend`,
+      `💰 \`topup email@example.com 50\` — credit wallet`,
+      `🎁 \`topup all 10\` — credit everyone's wallet`,
+      ``,
+      `I auto-refresh every 30 seconds with live alerts.`,
     ].join("\n");
   }
 
@@ -277,6 +287,108 @@ export function processAdminCommand(input: string): string {
     if (top.length === 0) return "💳 No wallet balances — customers haven't topped up yet.";
     const lines = [`💳 **Wallet Balances** (platform float: ${fmt(total?.total ?? 0)}):\n`];
     top.forEach(r => lines.push(`- **${r.email}** — ${fmt(r.wallet_balance)}`));
+    return lines.join("\n");
+  }
+
+  // ── FLASH SALES ────────────────────────────────────────────────────────────
+  if (/\b(flash|sale|deal|discount)\b/.test(cmd)) {
+    let sales: any[] = [];
+    try { sales = JSON.parse(runSqlFirst("SELECT value FROM settings WHERE key='flash_sales'")?.value || "[]"); } catch {}
+    const now = new Date();
+    const active = sales.filter((s: any) => new Date(s.endsAt) > now);
+    const expired = sales.filter((s: any) => new Date(s.endsAt) <= now);
+    if (sales.length === 0) return "🔥 No flash sales created yet. Go to the Flash Sales tab to launch one.";
+    const lines = [`🔥 **Flash Sales (${active.length} active, ${expired.length} expired):**\n`];
+    active.forEach((s: any) => {
+      const ms = new Date(s.endsAt).getTime() - now.getTime();
+      const h = Math.floor(ms / 3600000);
+      const m = Math.floor((ms % 3600000) / 60000);
+      lines.push(`✅ **${s.planName}** — ${s.discountPct}% off — ⏱ ${h > 0 ? `${h}h ` : ""}${m}m left`);
+      lines.push(`   "${s.label}"`);
+    });
+    expired.forEach((s: any) => lines.push(`❌ ~~${s.planName}~~ — ended ${new Date(s.endsAt).toLocaleDateString()}`));
+    return lines.join("\n");
+  }
+
+  // ── CUSTOMER GROUPS ────────────────────────────────────────────────────────
+  if (/\b(group|segment|tag)\b/.test(cmd)) {
+    const rows = runSql("SELECT id, name, color, discount_percent, is_banned, (SELECT COUNT(*) FROM customers WHERE group_id=cg.id) as cnt FROM customer_groups cg ORDER BY cnt DESC");
+    if (rows.length === 0) return "👥 No customer groups created yet. Go to the Customer Groups tab to set them up.";
+    const lines = [`👥 **Customer Groups (${rows.length}):**\n`];
+    rows.forEach((r: any) => {
+      const banned = r.is_banned ? " 🚫 BANNED" : "";
+      const disc = r.discount_percent > 0 ? ` · ${r.discount_percent}% discount` : "";
+      lines.push(`- **${r.name}**${banned}${disc} — ${r.cnt} member(s)`);
+    });
+    return lines.join("\n");
+  }
+
+  // ── CONVERSION FUNNEL ──────────────────────────────────────────────────────
+  if (/\b(funnel|conversion|drop|journey)\b/.test(cmd)) {
+    const events = ["page_view", "plan_view", "checkout_start", "checkout_complete"];
+    const labels: Record<string, string> = { page_view: "Store Visits", plan_view: "Plan Views", checkout_start: "Checkout Started", checkout_complete: "Orders Completed" };
+    const lines = [`📈 **Conversion Funnel (all time):**\n`];
+    let prev = 0;
+    for (const ev of events) {
+      const r = runSqlFirst("SELECT COUNT(DISTINCT session_id) as cnt FROM funnel_events WHERE event_type=?", [ev]);
+      const cnt = r?.cnt ?? 0;
+      const drop = prev > 0 && cnt < prev ? ` ↓ ${(((prev - cnt) / prev) * 100).toFixed(0)}% drop` : "";
+      lines.push(`- **${labels[ev]}**: ${cnt}${drop}`);
+      prev = cnt || prev;
+    }
+    const paid = runSqlFirst("SELECT COUNT(*) as cnt FROM transactions WHERE status='paid'");
+    const visits = runSqlFirst("SELECT COUNT(DISTINCT session_id) as cnt FROM funnel_events WHERE event_type='page_view'");
+    const convRate = visits?.cnt > 0 ? ((paid?.cnt / visits.cnt) * 100).toFixed(1) : "0";
+    lines.push(`\n**Overall Conversion Rate**: ${convRate}%`);
+    return lines.join("\n");
+  }
+
+  // ── BAN CUSTOMER ───────────────────────────────────────────────────────────
+  if (/^ban\s+/.test(cmd)) {
+    const parts = input.trim().split(/\s+/);
+    const email = parts[1];
+    const reason = parts.slice(2).join(" ") || "Banned by admin";
+    if (!email || !email.includes("@")) return "❌ Usage: `ban customer@email.com reason`";
+    try {
+      const result = getDb().prepare("UPDATE customers SET suspended=1 WHERE email=?").run(email.toLowerCase());
+      if (result.changes === 0) return `❌ No customer found with email **${email}**`;
+    } catch { return `❌ Could not ban **${email}** — database error`; }
+    return `🚫 **${email}** has been banned.\nReason: ${reason}`;
+  }
+
+  // ── UNBAN CUSTOMER ─────────────────────────────────────────────────────────
+  if (/^unban\s+/.test(cmd)) {
+    const email = input.trim().split(/\s+/)[1];
+    if (!email || !email.includes("@")) return "❌ Usage: `unban customer@email.com`";
+    try {
+      const result = getDb().prepare("UPDATE customers SET suspended=0 WHERE email=?").run(email.toLowerCase());
+      if (result.changes === 0) return `❌ No customer found with email **${email}**`;
+    } catch { return `❌ Could not unban **${email}** — database error`; }
+    return `✅ **${email}** has been unbanned and can now log in.`;
+  }
+
+  // ── RESEND CREDENTIALS ─────────────────────────────────────────────────────
+  if (/^resend\s+/.test(cmd)) {
+    const email = input.trim().split(/\s+/)[1];
+    if (!email || !email.includes("@")) return "❌ Usage: `resend customer@email.com`";
+    const txs = runSql("SELECT reference, plan_name, amount, created_at FROM transactions WHERE customer_email=? AND status='paid' ORDER BY created_at DESC LIMIT 5", [email.toLowerCase()]);
+    if (txs.length === 0) return `❌ No completed orders found for **${email}**`;
+    const lines = [`📧 **Last 5 paid orders for ${email}** (use the Transactions tab to resend emails):\n`];
+    txs.forEach((t: any, i: number) => {
+      const d = new Date(t.created_at).toLocaleDateString();
+      lines.push(`${i + 1}. ${t.plan_name} — ${fmt(t.amount)} — ${d} — ref: \`${t.reference}\``);
+    });
+    lines.push(`\n_Tip: Click "Resend" next to the order in the Transactions tab._`);
+    return lines.join("\n");
+  }
+
+  // ── WALLET (alias) ─────────────────────────────────────────────────────────
+  if (/^wallets?$/.test(cmd)) {
+    const top = runSql("SELECT email, wallet_balance FROM customers WHERE wallet_balance > 0 ORDER BY wallet_balance DESC LIMIT 10");
+    const total = runSqlFirst("SELECT SUM(wallet_balance) as total FROM customers");
+    if (top.length === 0) return "💳 No wallet balances — customers haven't topped up yet.";
+    const lines = [`💳 **Wallet Balances** (platform float: ${fmt(total?.total ?? 0)}):\n`];
+    top.forEach((r: any) => lines.push(`- **${r.email}** — ${fmt(r.wallet_balance)}`));
     return lines.join("\n");
   }
 

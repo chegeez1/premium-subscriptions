@@ -563,6 +563,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       } catch (_) {}
 
+      // ─── Apply flash sale discount ─────────────────────────────────────────
+      try {
+        const activeSales = getActiveFlashSales();
+        const flashSale = activeSales.find((s: any) => s.planId === planId);
+        if (flashSale?.discountPct > 0) {
+          finalAmount = Math.max(0, finalAmount - Math.round((finalAmount * flashSale.discountPct) / 100));
+        }
+      } catch (_) {}
+
       const reference = `SUB-${planId.toUpperCase()}-${Date.now()}`;
       await storage.createTransaction({
         reference,
@@ -2982,7 +2991,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Customer: Wallet Top-Up ──────────────────────────────────────────────
   app.post("/api/customer/wallet/topup/initiate", customerAuthMiddleware, async (req: any, res) => {
     try {
-      const { amount } = req.body;
+      const { amount, label } = req.body;
       const customerId = req.customer.id;
       const customer = await storage.getCustomerById(customerId);
       if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
@@ -2992,11 +3001,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const paystackSecret = getPaystackSecretKey();
       const reference = `TOPUP-${customerId}-${Date.now()}`;
+      const topupLabel = label?.trim() ? label.trim() : "Wallet Top-Up";
+
+      // Store label for use during verify
+      dbSettingsSet(`topup_label_${reference}`, topupLabel);
 
       await storage.createTransaction({
         reference,
         planId: "WALLET_TOPUP",
-        planName: "Wallet Top-Up",
+        planName: topupLabel,
         customerEmail: customer.email,
         customerName: customer.name || "Customer",
         amount: amountNum,
@@ -3016,13 +3029,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           amount: amountNum * 100,
           reference,
           currency: "KES",
-          metadata: { type: "wallet_topup", customerId, amount: amountNum },
+          metadata: { type: "wallet_topup", customerId, amount: amountNum, label: topupLabel },
           callback_url: `${getBaseUrl(req)}/dashboard?tab=wallet&topup=success`,
         },
         { headers: { Authorization: `Bearer ${paystackSecret}` } }
       );
 
-      res.json({ success: true, reference, authorizationUrl: psRes.data.data.authorization_url, accessCode: psRes.data.data.access_code, paystackConfigured: true, amount: amountNum });
+      res.json({ success: true, reference, authorizationUrl: psRes.data.data.authorization_url, accessCode: psRes.data.data.access_code, paystackConfigured: true, amount: amountNum, label: topupLabel });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -3048,7 +3061,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.json({ success: false, error: "Payment was not successful" });
       }
 
-      await storage.creditWallet(customerId, transaction.amount, `Wallet top-up — KES ${transaction.amount}`, reference);
+      const storedLabel = dbSettingsGet(`topup_label_${reference}`) || transaction.planName || "Wallet Top-Up";
+      const creditDesc = storedLabel === "Wallet Top-Up"
+        ? `Wallet top-up — KES ${transaction.amount}`
+        : `${storedLabel} — KES ${transaction.amount}`;
+      await storage.creditWallet(customerId, transaction.amount, creditDesc, reference);
+      dbSettingsSet(`topup_label_${reference}`, ""); // cleanup
       await storage.updateTransaction(reference, { status: "success", accountAssigned: true, emailSent: true });
       await storage.createNotification(customerId, "wallet", "Wallet Topped Up 💰", `KES ${transaction.amount} has been added to your wallet.`);
 
@@ -3810,6 +3828,86 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ).all(req.params.id) as any[];
       res.json({ success: true, members });
     } catch { res.json({ success: true, members: [] }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FLASH SALES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function getFlashSales(): any[] {
+    try { return JSON.parse(dbSettingsGet("flash_sales") || "[]"); } catch { return []; }
+  }
+  function saveFlashSales(sales: any[]) { dbSettingsSet("flash_sales", JSON.stringify(sales)); }
+  function getActiveFlashSales(): any[] {
+    const now = new Date();
+    return getFlashSales().filter((s: any) => new Date(s.endsAt) > now);
+  }
+
+  // Public: get active flash sales (used by store)
+  app.get("/api/flash-sales", (_req, res) => {
+    try {
+      const active = getActiveFlashSales();
+      res.json({ success: true, sales: active });
+    } catch { res.json({ success: true, sales: [] }); }
+  });
+
+  // Admin: get all flash sales
+  app.get("/api/admin/flash-sales", adminAuthMiddleware, (_req, res) => {
+    try { res.json({ success: true, sales: getFlashSales() }); }
+    catch { res.json({ success: true, sales: [] }); }
+  });
+
+  // Admin: create flash sale
+  app.post("/api/admin/flash-sales", adminAuthMiddleware, (req, res) => {
+    try {
+      const { planId, planName, discountPct, label, durationHours } = req.body;
+      if (!planId || !discountPct || !durationHours) {
+        return res.status(400).json({ success: false, error: "planId, discountPct, and durationHours are required" });
+      }
+      const sale = {
+        id: `flash-${Date.now()}`,
+        planId,
+        planName: planName || planId,
+        discountPct: Math.min(99, Math.max(1, parseInt(discountPct))),
+        label: label || `🔥 Flash Sale — ${discountPct}% Off`,
+        endsAt: new Date(Date.now() + parseFloat(durationHours) * 3600000).toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+      const sales = getFlashSales();
+      sales.push(sale);
+      saveFlashSales(sales);
+      res.json({ success: true, sale });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: delete flash sale
+  app.delete("/api/admin/flash-sales/:id", adminAuthMiddleware, (req, res) => {
+    try {
+      const sales = getFlashSales().filter((s: any) => s.id !== req.params.id);
+      saveFlashSales(sales);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Apply flash sale discount at checkout — hook into payment/initialize
+  // (Adds flash discount on top of any promo discount — flash is applied first)
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // WALLET TOPUP WITH LABEL
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Admin: credit wallet with label (label appears in wallet tx history)
+  app.post("/api/admin/customers/:id/wallet/credit", adminAuthMiddleware, requirePermission("customers"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { amount, label } = req.body;
+      const amountNum = parseFloat(amount);
+      if (!amountNum || amountNum <= 0) return res.status(400).json({ success: false, error: "Invalid amount" });
+      const description = label?.trim() ? label.trim() : "Admin wallet credit";
+      await storage.creditWallet(id, amountNum, description, `admin-credit-${id}-${Date.now()}`);
+      const wallet = await storage.getWallet(id);
+      res.json({ success: true, newBalance: wallet?.balance ?? 0 });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
   return httpServer;

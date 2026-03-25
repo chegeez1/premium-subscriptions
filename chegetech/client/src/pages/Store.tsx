@@ -142,6 +142,18 @@ export default function Store() {
     queryKey: ["/api/plans"],
   });
 
+  const { data: flashData } = useQuery<{ success: boolean; sales: any[] }>({
+    queryKey: ["/api/flash-sales"],
+    refetchInterval: 30000,
+  });
+  const flashSales: any[] = flashData?.sales ?? [];
+
+  const [flashNow, setFlashNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setFlashNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   const categories = data?.categories ?? {};
   const allPlans = useMemo(() => {
     const result: Plan[] = [];
@@ -544,6 +556,34 @@ export default function Store() {
       </section>
 
       {/* Plans by Category */}
+      {/* Flash Sale Banner */}
+      {flashSales.length > 0 && (
+        <div className="relative z-20 bg-gradient-to-r from-amber-600 via-orange-500 to-red-500 overflow-hidden">
+          <div className="absolute inset-0 opacity-20" style={{ background: "repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.1) 10px, rgba(0,0,0,0.1) 20px)" }} />
+          <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2">
+            {flashSales.map((s: any) => {
+              const ms = new Date(s.endsAt).getTime() - flashNow;
+              if (ms <= 0) return null;
+              const h = Math.floor(ms / 3600000);
+              const m = Math.floor((ms % 3600000) / 60000);
+              const sec = Math.floor((ms % 60000) / 1000);
+              const timer = `${h > 0 ? `${String(h).padStart(2,"0")}:` : ""}${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+              return (
+                <div key={s.id} className="flex items-center gap-3 flex-1">
+                  <Zap className="w-4 h-4 text-white shrink-0 animate-pulse" />
+                  <span className="text-white font-bold text-sm">{s.label}</span>
+                  <span className="text-white/80 text-xs hidden sm:inline">on {s.planName}</span>
+                  <div className="ml-auto flex items-center gap-1.5 bg-black/20 rounded-lg px-3 py-1">
+                    <span className="text-white/70 text-xs">Ends in</span>
+                    <span className="text-white font-bold text-sm tabular-nums font-mono">{timer}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 space-y-16 pb-24">
         {isLoading ? (
           Array.from({ length: 2 }).map((_, i) => (
@@ -581,15 +621,19 @@ export default function Store() {
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {planList.map((plan) => (
-                    <PlanCard
-                      key={plan.planId}
-                      plan={plan}
-                      catKey={catKey}
-                      onBuyNow={() => setLocation(`/checkout?planId=${plan.planId}`)}
-                      onAddToCart={() => addToCart(plan)}
-                    />
-                  ))}
+                  {planList.map((plan) => {
+                    const flashSale = flashSales.find((s: any) => s.planId === plan.planId);
+                    return (
+                      <PlanCard
+                        key={plan.planId}
+                        plan={plan}
+                        catKey={catKey}
+                        flashSale={flashSale}
+                        onBuyNow={() => setLocation(`/checkout?planId=${plan.planId}`)}
+                        onAddToCart={() => addToCart(plan)}
+                      />
+                    );
+                  })}
                 </div>
               </section>
             );
@@ -621,24 +665,36 @@ export default function Store() {
   );
 }
 
-function PlanCard({ plan, catKey, onBuyNow, onAddToCart }: {
+function PlanCard({ plan, catKey, flashSale, onBuyNow, onAddToCart }: {
   plan: Plan;
   catKey: string;
+  flashSale?: any;
   onBuyNow: () => void;
   onAddToCart: () => void;
 }) {
   const gradient = CATEGORY_GRADIENTS[catKey] ?? "from-indigo-500 to-violet-600";
   const glow = CATEGORY_GLOW[catKey] ?? "rgba(99,102,241,0.3)";
+  const flashPrice = flashSale ? Math.round((plan.price ?? 0) * (1 - flashSale.discountPct / 100)) : null;
 
   return (
     <div
       data-testid={`card-plan-${plan.planId}`}
       className={`relative rounded-2xl glass-card flex flex-col overflow-hidden transition-all duration-300 ${
         plan.inStock ? "hover:border-white/20 hover:shadow-xl hover:-translate-y-1" : "opacity-50"
-      }`}
+      } ${flashSale ? "ring-2 ring-amber-500/40 shadow-[0_0_20px_rgba(245,158,11,0.15)]" : ""}`}
     >
+      {/* Flash Sale badge */}
+      {flashSale && (
+        <div className="absolute top-3 left-3 z-10">
+          <Badge className="bg-gradient-to-r from-amber-500 to-orange-500 text-white border-0 text-xs px-2 shadow-lg backdrop-blur-sm animate-pulse">
+            <Zap className="w-2.5 h-2.5 mr-1 fill-white" />
+            {flashSale.discountPct}% OFF
+          </Badge>
+        </div>
+      )}
+
       {/* Offer / Popular badge */}
-      {(plan.offerLabel || plan.popular) && (
+      {!flashSale && (plan.offerLabel || plan.popular) && (
         <div className="absolute top-3 right-3 z-10">
           <Badge className="bg-amber-500/90 text-white border-0 text-xs px-2 shadow-lg backdrop-blur-sm">
             <Star className="w-2.5 h-2.5 mr-1 fill-white" />
@@ -661,14 +717,23 @@ function PlanCard({ plan, catKey, onBuyNow, onAddToCart }: {
         }} />
         <div className="relative">
           <div className="flex items-start justify-between gap-1 mb-1">
-            <h3 className="font-semibold text-sm leading-tight text-white">{plan.name}</h3>
+            <h3 className={`font-semibold text-sm leading-tight text-white ${flashSale ? "mt-6" : ""}`}>{plan.name}</h3>
             {plan.isCustom && <Sparkles className="w-3 h-3 text-white/70 shrink-0 mt-0.5" />}
           </div>
           <p className="text-xs text-white/60">{plan.duration}</p>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">KES {(plan.price ?? 0).toLocaleString()}</span>
-            {plan.originalPrice && (
-              <span className="text-sm text-white/50 line-through">KES {(plan.originalPrice ?? 0).toLocaleString()}</span>
+            {flashSale ? (
+              <>
+                <span className="text-2xl font-bold text-white">KES {(flashPrice ?? 0).toLocaleString()}</span>
+                <span className="text-sm text-white/60 line-through">KES {(plan.price ?? 0).toLocaleString()}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-2xl font-bold text-white">KES {(plan.price ?? 0).toLocaleString()}</span>
+                {plan.originalPrice && (
+                  <span className="text-sm text-white/50 line-through">KES {(plan.originalPrice ?? 0).toLocaleString()}</span>
+                )}
+              </>
             )}
           </div>
         </div>

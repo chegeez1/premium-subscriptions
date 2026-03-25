@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups" | "flash-sales";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -143,6 +143,7 @@ export default function Admin() {
     { id: "customers", label: "Customers", icon: Users },
     { id: "groups", label: "Customer Groups", icon: Tags },
     { id: "funnel", label: "Conversion Funnel", icon: TrendingUp },
+    { id: "flash-sales", label: "Flash Sales", icon: Zap },
     { id: "ratings", label: "Ratings", icon: Star },
     { id: "feature-requests", label: "Feature Requests", icon: Sparkles },
     { id: "emailblast", label: "Email Blast", icon: Send },
@@ -249,6 +250,7 @@ export default function Admin() {
           {activeTab === "customers" && <CustomersTab />}
           {activeTab === "groups" && <CustomerGroupsTab />}
           {activeTab === "funnel" && <ConversionFunnelTab />}
+          {activeTab === "flash-sales" && <FlashSalesTab />}
           {activeTab === "ratings" && <RatingsTab />}
           {activeTab === "feature-requests" && <FeatureRequestsAdminTab />}
           {activeTab === "emailblast" && <EmailBlastTab />}
@@ -286,6 +288,14 @@ const QUICK_CMDS = [
   { label: "🏷️ Promos", cmd: "promo codes" },
   { label: "💰 Top-up", cmd: "topup customer@email.com 30" },
   { label: "🎁 Mass top-up", cmd: "topup all 10" },
+  { label: "🔥 Flash Sales", cmd: "flash sales" },
+  { label: "👥 Groups", cmd: "groups" },
+  { label: "📈 Funnel", cmd: "funnel" },
+  { label: "🚫 Ban", cmd: "ban customer@email.com spam" },
+  { label: "✅ Unban", cmd: "unban customer@email.com" },
+  { label: "🔁 Resend", cmd: "resend customer@email.com" },
+  { label: "💳 Wallets", cmd: "wallets" },
+  { label: "🎯 Referrals", cmd: "referrals" },
   { label: "❓ Help", cmd: "help" },
 ];
 
@@ -6592,6 +6602,223 @@ function CustomerGroupsTab() {
                   {m.suspended?<span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 rounded">Suspended</span>:null}
                   <button onClick={() => removeFromGroup(m.id)} className="p-1 rounded hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-colors shrink-0">
                     <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FLASH SALES TAB
+// ═══════════════════════════════════════════════════════════════
+function FlashSalesTab() {
+  const { toast } = useToast();
+  const [planId, setPlanId] = useState("");
+  const [planName, setPlanName] = useState("");
+  const [discountPct, setDiscountPct] = useState("20");
+  const [label, setLabel] = useState("");
+  const [durationHours, setDurationHours] = useState("2");
+  const [creating, setCreating] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
+  // Live countdown ticker
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const { data, isLoading, refetch } = useQuery<{ success: boolean; sales: any[] }>({
+    queryKey: ["/api/admin/flash-sales"],
+    queryFn: async () => {
+      const token = localStorage.getItem("admin_token");
+      const r = await fetch("/api/admin/flash-sales", { headers: { Authorization: `Bearer ${token}` } });
+      return r.json();
+    },
+    refetchInterval: 10000,
+  });
+
+  const sales = data?.sales ?? [];
+  const active = sales.filter((s: any) => new Date(s.endsAt).getTime() > now);
+  const expired = sales.filter((s: any) => new Date(s.endsAt).getTime() <= now);
+
+  function countdown(endsAt: string) {
+    const ms = new Date(endsAt).getTime() - now;
+    if (ms <= 0) return "Expired";
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    return `${h > 0 ? `${h}h ` : ""}${m}m ${s}s`;
+  }
+
+  async function create() {
+    if (!planId.trim() || !discountPct || !durationHours) {
+      toast({ title: "Plan ID, discount %, and duration are required", variant: "destructive" }); return;
+    }
+    setCreating(true);
+    try {
+      const token = localStorage.getItem("admin_token");
+      const r = await fetch("/api/admin/flash-sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ planId: planId.trim(), planName: planName.trim() || planId.trim(), discountPct: parseInt(discountPct), label: label.trim(), durationHours: parseFloat(durationHours) }),
+      });
+      const d = await r.json();
+      if (!d.success) { toast({ title: d.error || "Failed to create", variant: "destructive" }); return; }
+      toast({ title: `Flash sale created! Ends in ${durationHours}h` });
+      setPlanId(""); setPlanName(""); setLabel(""); setDiscountPct("20"); setDurationHours("2");
+      refetch();
+    } finally { setCreating(false); }
+  }
+
+  async function deleteSale(id: string) {
+    const token = localStorage.getItem("admin_token");
+    await fetch(`/api/admin/flash-sales/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    toast({ title: "Flash sale removed" });
+    refetch();
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg">
+          <Zap className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-white">Flash Sales</h2>
+          <p className="text-sm text-white/40">Time-limited discounts that countdown live on the store</p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">{active.length} active</span>
+          {expired.length > 0 && <span className="text-xs px-2 py-1 rounded-full bg-white/5 text-white/30 border border-white/10">{expired.length} expired</span>}
+        </div>
+      </div>
+
+      {/* Create form */}
+      <div className="glass-card rounded-2xl p-5 border border-white/8">
+        <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+          <Plus className="w-4 h-4 text-amber-400" /> Create Flash Sale
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs text-white/40 block mb-1">Plan ID <span className="text-red-400">*</span></label>
+            <input
+              className="w-full glass border border-white/10 rounded-xl px-3 py-2 text-sm text-white bg-white/5 focus:outline-none focus:border-amber-500/50"
+              placeholder="e.g. netflix-4k"
+              value={planId}
+              onChange={e => setPlanId(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-white/40 block mb-1">Plan Display Name</label>
+            <input
+              className="w-full glass border border-white/10 rounded-xl px-3 py-2 text-sm text-white bg-white/5 focus:outline-none focus:border-amber-500/50"
+              placeholder="e.g. Netflix 4K"
+              value={planName}
+              onChange={e => setPlanName(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-white/40 block mb-1">Discount % <span className="text-red-400">*</span></label>
+            <input
+              type="number" min={1} max={99}
+              className="w-full glass border border-white/10 rounded-xl px-3 py-2 text-sm text-white bg-white/5 focus:outline-none focus:border-amber-500/50"
+              placeholder="e.g. 30"
+              value={discountPct}
+              onChange={e => setDiscountPct(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-white/40 block mb-1">Duration (hours) <span className="text-red-400">*</span></label>
+            <input
+              type="number" min={0.5} step={0.5}
+              className="w-full glass border border-white/10 rounded-xl px-3 py-2 text-sm text-white bg-white/5 focus:outline-none focus:border-amber-500/50"
+              placeholder="e.g. 2"
+              value={durationHours}
+              onChange={e => setDurationHours(e.target.value)}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="text-xs text-white/40 block mb-1">Banner Label (optional)</label>
+            <input
+              className="w-full glass border border-white/10 rounded-xl px-3 py-2 text-sm text-white bg-white/5 focus:outline-none focus:border-amber-500/50"
+              placeholder="e.g. 🔥 Weekend Flash — 30% Off!"
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <Button
+            onClick={create}
+            disabled={creating}
+            className="bg-gradient-to-r from-amber-500 to-orange-600 text-white border-0 shadow-lg hover:opacity-90"
+          >
+            <Zap className="w-4 h-4 mr-1.5" />
+            {creating ? "Creating..." : "Launch Flash Sale"}
+          </Button>
+          <p className="text-xs text-white/30">The countdown timer will appear live on your storefront immediately.</p>
+        </div>
+      </div>
+
+      {/* Active sales */}
+      {isLoading ? (
+        <div className="text-center py-10 text-white/30 text-sm">Loading flash sales...</div>
+      ) : active.length === 0 && expired.length === 0 ? (
+        <div className="glass-card rounded-2xl p-10 text-center border border-white/8">
+          <Zap className="w-12 h-12 text-amber-400/30 mx-auto mb-3" />
+          <p className="text-white/40 text-sm">No flash sales yet. Create one above to show a live countdown on your store.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {active.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-emerald-400 uppercase tracking-widest mb-2">Active</h3>
+              {active.map((s: any) => (
+                <div key={s.id} className="glass-card rounded-xl p-4 border border-amber-500/20 bg-amber-500/5 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shrink-0">
+                    <Zap className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-white text-sm truncate">{s.label}</p>
+                    <p className="text-xs text-white/40">{s.planName} · {s.discountPct}% off</p>
+                  </div>
+                  <div className="text-center shrink-0">
+                    <p className="text-lg font-bold text-amber-400 tabular-nums">{countdown(s.endsAt)}</p>
+                    <p className="text-[10px] text-white/30">remaining</p>
+                  </div>
+                  <button
+                    onClick={() => deleteSale(s.id)}
+                    className="p-1.5 rounded-lg hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-colors shrink-0"
+                    title="End flash sale"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {expired.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-white/20 uppercase tracking-widest mb-2">Expired</h3>
+              {expired.map((s: any) => (
+                <div key={s.id} className="glass-card rounded-xl p-4 border border-white/8 opacity-50 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
+                    <Zap className="w-5 h-5 text-white/30" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-white/50 text-sm truncate">{s.label}</p>
+                    <p className="text-xs text-white/30">{s.planName} · {s.discountPct}% off · ended {new Date(s.endsAt).toLocaleDateString()}</p>
+                  </div>
+                  <button
+                    onClick={() => deleteSale(s.id)}
+                    className="p-1.5 rounded-lg hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-colors shrink-0"
+                  >
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               ))}

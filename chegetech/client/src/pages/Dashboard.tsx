@@ -73,6 +73,7 @@ export default function Dashboard() {
 
   // Wallet top-up state
   const [topupAmount, setTopupAmount] = useState("");
+  const [topupLabel, setTopupLabel] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
 
   // TOTP state
@@ -208,7 +209,7 @@ export default function Dashboard() {
     if (!amount || amount < 50) { toast({ title: "Minimum top-up is KES 50", variant: "destructive" }); return; }
     setTopupLoading(true);
     try {
-      const data = await customerFetch("/api/customer/wallet/topup/initiate", { method: "POST", body: JSON.stringify({ amount }) });
+      const data = await customerFetch("/api/customer/wallet/topup/initiate", { method: "POST", body: JSON.stringify({ amount, label: topupLabel.trim() || undefined }) });
       if (!data.success) { toast({ title: data.error || "Failed to initiate top-up", variant: "destructive" }); return; }
       if (!data.paystackConfigured || !data.authorizationUrl) {
         toast({ title: "Payment gateway not configured. Contact admin.", variant: "destructive" }); return;
@@ -225,7 +226,7 @@ export default function Dashboard() {
             if (verifyData.success) {
               toast({ title: `KES ${amount} added to your wallet! 💰` });
               queryClient.invalidateQueries({ queryKey: ["/api/customer/wallet"] });
-              setTopupAmount("");
+              setTopupAmount(""); setTopupLabel("");
             } else { toast({ title: verifyData.error || "Top-up verification failed", variant: "destructive" }); }
           },
           onClose: () => toast({ title: "Top-up cancelled" }),
@@ -844,7 +845,7 @@ export default function Dashboard() {
                       </button>
                     ))}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 mb-2">
                     <Input
                       type="number"
                       placeholder="Custom amount (min KES 50)"
@@ -857,6 +858,15 @@ export default function Dashboard() {
                       {topupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Top Up"}
                     </Button>
                   </div>
+                  <Input
+                    placeholder="Label / note (e.g. Welcome Bonus, Promo Credit) — optional"
+                    value={topupLabel}
+                    onChange={e => setTopupLabel(e.target.value)}
+                    className="bg-white/5 border-white/10 text-white placeholder:text-white/25 text-xs h-8"
+                  />
+                  {topupLabel && (
+                    <p className="text-xs text-emerald-400/70 mt-1">This will appear as <strong>{topupLabel}</strong> in your wallet history</p>
+                  )}
                 </div>
 
                 {spendingStats && (
