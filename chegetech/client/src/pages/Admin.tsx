@@ -1250,7 +1250,7 @@ function MonthlySummarySection({ inputCls }: { inputCls: string }) {
       });
       if (r.success) {
         setResult({ sent: r.sent });
-        if (r.sent === 0) toast({ title: "No emails sent", description: "No customers had orders in the previous month (or all already received this month's summary)" });
+        if (r.sent === 0) toast({ title: "No emails sent", description: "No customers had successful orders this month so far" });
         else toast({ title: `${r.sent} summary email${r.sent !== 1 ? "s" : ""} sent` });
       } else {
         toast({ title: r.error ?? "Failed", variant: "destructive" });
