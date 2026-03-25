@@ -115,6 +115,86 @@ async function sendVerificationEmail(email: string, code: string, name?: string)
   if (error) throw new Error(error.message);
 }
 
+async function sendWalletTransferEmail(opts: {
+  toEmail: string;
+  toName: string;
+  type: "sent" | "received";
+  amount: number;
+  counterpartyName: string;
+  counterpartyEmail: string;
+  counterpartyId: number;
+  note?: string;
+  newBalance: number;
+}): Promise<void> {
+  const { Resend } = await import("resend");
+  const key = getResendApiKey();
+  if (!key || key.startsWith("re_xxx") || key === "re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") {
+    console.warn("[email][wallet-transfer] RESEND_API_KEY not set — skipping transfer email.");
+    return;
+  }
+  const resend = new Resend(key);
+  const fromAddr = getResendFrom() || "onboarding@resend.dev";
+  const from = `Chege Tech <${fromAddr}>`;
+
+  const isSent = opts.type === "sent";
+  const subject = isSent
+    ? `Transfer Sent: KES ${opts.amount.toLocaleString()} to ${opts.counterpartyName}`
+    : `You Received KES ${opts.amount.toLocaleString()} from ${opts.counterpartyName}`;
+
+  const accentColor = isSent ? "#EF4444" : "#10B981";
+  const accentBg = isSent ? "#FEF2F2" : "#ECFDF5";
+  const icon = isSent ? "💸" : "💰";
+  const actionLine = isSent
+    ? `You sent <strong>KES ${opts.amount.toLocaleString()}</strong> to <strong>${opts.counterpartyName}</strong>`
+    : `<strong>${opts.counterpartyName}</strong> sent you <strong>KES ${opts.amount.toLocaleString()}</strong>`;
+
+  const noteRow = opts.note
+    ? `<tr><td style="padding:8px 0;color:#6B7280;font-size:14px;">Note</td><td style="padding:8px 0;color:#111;font-size:14px;text-align:right;font-style:italic;">"${opts.note}"</td></tr>`
+    : "";
+
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <div style="max-width:520px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
+    <div style="background:linear-gradient(135deg,#4169E1 0%,#7C3AED 100%);padding:32px;text-align:center;">
+      <p style="font-size:40px;margin:0 0 10px;">${icon}</p>
+      <h1 style="color:#fff;margin:0 0 6px;font-size:22px;font-weight:700;">${isSent ? "Transfer Sent" : "Transfer Received"}</h1>
+      <p style="color:rgba(255,255,255,.8);margin:0;font-size:13px;">Chege Tech Wallet</p>
+    </div>
+    <div style="padding:32px;">
+      <p style="font-size:15px;color:#333;margin:0 0 20px;">Hi <strong>${opts.toName}</strong>,</p>
+      <p style="font-size:15px;color:#333;margin:0 0 24px;">${actionLine}.</p>
+      <div style="background:${accentBg};border-left:4px solid ${accentColor};border-radius:8px;padding:20px 24px;margin-bottom:24px;">
+        <p style="font-size:32px;font-weight:900;color:${accentColor};margin:0 0 4px;font-family:monospace;">
+          ${isSent ? "−" : "+"}KES ${opts.amount.toLocaleString()}
+        </p>
+        <p style="font-size:13px;color:#666;margin:0;">Wallet balance: <strong>KES ${opts.newBalance.toLocaleString()}</strong></p>
+      </div>
+      <table style="width:100%;border-collapse:collapse;">
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:14px;border-top:1px solid #F3F4F6;">${isSent ? "Sent to" : "Sent by"}</td>
+            <td style="padding:8px 0;color:#111;font-size:14px;text-align:right;border-top:1px solid #F3F4F6;">
+              ${opts.counterpartyName} <span style="color:#9CA3AF;">(#${opts.counterpartyId})</span>
+            </td></tr>
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:14px;border-top:1px solid #F3F4F6;">Email</td>
+            <td style="padding:8px 0;color:#111;font-size:14px;text-align:right;border-top:1px solid #F3F4F6;">${opts.counterpartyEmail}</td></tr>
+        ${noteRow}
+        <tr><td style="padding:8px 0;color:#6B7280;font-size:14px;border-top:1px solid #F3F4F6;">Date</td>
+            <td style="padding:8px 0;color:#111;font-size:14px;text-align:right;border-top:1px solid #F3F4F6;">${new Date().toLocaleString("en-KE", { timeZone: "Africa/Nairobi" })}</td></tr>
+      </table>
+      <p style="font-size:12px;color:#9CA3AF;margin:24px 0 0;">If you did not initiate this transfer, please contact support immediately.</p>
+    </div>
+    <div style="background:#F9FAFB;padding:16px;text-align:center;border-top:1px solid #F3F4F6;">
+      <p style="font-size:12px;color:#aaa;margin:0;">&copy; ${new Date().getFullYear()} Chege Tech. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const { error } = await resend.emails.send({ from, to: opts.toEmail, subject, html });
+  if (error) console.warn("[email][wallet-transfer] Resend error:", error.message);
+}
+
 async function customerAuthMiddleware(req: any, res: any, next: any) {
   const auth = req.headers.authorization;
   if (!auth) return res.status(401).json({ error: "Unauthorized" });
@@ -2229,8 +2309,42 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await storage.createNotification(senderId, "wallet", "Transfer Sent 💸", `KES ${amountNum.toLocaleString()} sent to ${recipientLabel} (ID #${recipient.id}).`);
       await storage.createNotification(recipient.id, "wallet", "Wallet Transfer Received 💰", `${senderName} sent you KES ${amountNum.toLocaleString()}${msgLabel}.`);
 
-      const updatedWallet = await storage.getWallet(senderId);
-      res.json({ success: true, newBalance: updatedWallet?.balance ?? 0, recipientName, recipientId: recipient.id, recipientEmail: recipient.email });
+      const updatedSenderWallet = await storage.getWallet(senderId);
+      const updatedRecipientWallet = await storage.getWallet(recipient.id);
+      const senderNewBalance = updatedSenderWallet?.balance ?? 0;
+      const recipientNewBalance = updatedRecipientWallet?.balance ?? 0;
+
+      // Email notifications (fire-and-forget — don't block the response)
+      Promise.allSettled([
+        sendWalletTransferEmail({
+          toEmail: senderEmail,
+          toName: senderName,
+          type: "sent",
+          amount: amountNum,
+          counterpartyName: recipientName,
+          counterpartyEmail: recipient.email,
+          counterpartyId: recipient.id,
+          note: note?.trim() || undefined,
+          newBalance: senderNewBalance,
+        }),
+        sendWalletTransferEmail({
+          toEmail: recipient.email,
+          toName: recipientName,
+          type: "received",
+          amount: amountNum,
+          counterpartyName: senderName,
+          counterpartyEmail: senderEmail,
+          counterpartyId: senderId,
+          note: note?.trim() || undefined,
+          newBalance: recipientNewBalance,
+        }),
+      ]).then(results => {
+        results.forEach((r, i) => {
+          if (r.status === "rejected") console.warn(`[email][wallet-transfer] email ${i} failed:`, r.reason);
+        });
+      });
+
+      res.json({ success: true, newBalance: senderNewBalance, recipientName, recipientId: recipient.id, recipientEmail: recipient.email });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
