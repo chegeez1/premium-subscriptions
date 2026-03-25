@@ -405,8 +405,8 @@ async function executeTool(name: string, args: any): Promise<string> {
           id: cust.id,
           name: cust.name,
           email: cust.email,
-          phone: cust.phone || null,
-          status: cust.isSuspended ? "suspended" : "active",
+          phone: null,
+          status: cust.suspended ? "suspended" : "active",
           wallet_balance: wallet.balance,
           total_orders: txs.filter((t: any) => t.status === "success").length,
           total_spent: txs.filter((t: any) => t.status === "success").reduce((s: number, t: any) => s + (t.amount || 0), 0),
@@ -679,9 +679,9 @@ export async function getAdminAIResponse(
 
       if (choice.finish_reason === "tool_calls" && msg.tool_calls?.length) {
         for (const toolCall of msg.tool_calls) {
-          const toolName = toolCall.function.name;
+          const toolName = (toolCall as any).function.name;
           let toolArgs: any = {};
-          try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+          try { toolArgs = JSON.parse((toolCall as any).function.arguments || "{}"); } catch {}
           const result = await executeTool(toolName, toolArgs);
           messages.push({
             role: "tool",

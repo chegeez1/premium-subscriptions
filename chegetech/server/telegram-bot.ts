@@ -268,7 +268,7 @@ async function handleStock(chatId: string, token: string) {
 
 async function handleStats(chatId: string, token: string) {
   try {
-    const txs = await storage.getTransactions();
+    const txs = await storage.getAllTransactions();
     const today = new Date().toISOString().slice(0, 10);
     const todayTxs = txs.filter((t: any) => t.status === "success" && (t.createdAt || "").startsWith(today));
     const allDone  = txs.filter((t: any) => t.status === "success");

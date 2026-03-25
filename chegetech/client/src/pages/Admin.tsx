@@ -14,7 +14,7 @@ import {
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
   Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera,
   Bot, Sparkles, Minimize2, Database, UserCircle, Wallet, Pencil,
-  MinusCircle, History, ArrowUpCircle, ArrowDownCircle
+  MinusCircle, History, ArrowUpCircle, ArrowDownCircle, Bell
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1423,7 +1423,7 @@ function SettingsTab() {
   });
   const rawVars = secretsData?.secrets?.vars;
   const envVars: { key: string; label: string; set: boolean; group: string }[] = Array.isArray(rawVars) ? rawVars : [];
-  const groups = [...new Set(envVars.map((v) => v.group))];
+  const groups = Array.from(new Set(envVars.map((v) => v.group)));
 
   // ─── Test email state ───────────────────────────────────────────────────
   const [testEmailTo, setTestEmailTo] = useState("");

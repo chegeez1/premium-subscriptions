@@ -1253,7 +1253,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         createdAt: d.created_at,
       }));
       const fromAddrs = [getResendFrom(), getResendOtpFrom(), getResendSupportFrom()].filter(Boolean);
-      const fromDomains = [...new Set(fromAddrs.map(a => a.split("@")[1]).filter(Boolean))];
+      const fromDomains = Array.from(new Set(fromAddrs.map(a => a.split("@")[1]).filter(Boolean)));
       const unverified = fromDomains.filter(d => !domains.find((rd: any) => rd.name === d && rd.status === "verified"));
       res.json({ success: true, domains, fromDomains, unverifiedFromDomains: unverified, allVerified: unverified.length === 0 && domains.length > 0 });
     } catch (err: any) {
@@ -2448,7 +2448,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         openaiApiKeySet: !!(override.openaiApiKey || process.env.OPENAI_API_KEY),
       },
       sourceOverride: {
-        ...status.sourceOverride,
         telegramBotToken: !!override.telegramBotToken,
         telegramChatId: !!override.telegramChatId,
         whatsappAccessToken: !!override.whatsappAccessToken,
@@ -3968,7 +3967,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!customer) return res.status(404).json({ success: false, error: "Customer not found" });
       const [wallet, txs, referralStats, loginLogs, ratings] = await Promise.all([
         storage.getWallet(id),
-        storage.getCustomerTransactions ? storage.getCustomerTransactions(customer.email) : storage.getAllTransactions().then((all: any[]) => all.filter((t: any) => t.customerEmail === customer.email)),
+        storage.getTransactionsByEmail(customer.email),
         storage.getReferralStats(id),
         storage.getLoginLogs ? storage.getLoginLogs(id) : [],
         storage.getAllRatings(100).then((all: any[]) => all.filter((r: any) => r.customerEmail === customer.email)),

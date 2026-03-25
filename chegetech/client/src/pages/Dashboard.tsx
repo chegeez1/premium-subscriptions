@@ -154,8 +154,8 @@ export default function Dashboard() {
   });
   function dismissAnn(id: string) {
     setDismissedAnns(prev => {
-      const next = new Set(prev); next.add(id);
-      try { localStorage.setItem("dismissed_anns", JSON.stringify([...next])); } catch {}
+      const next = new Set(Array.from(prev)); next.add(id);
+      try { localStorage.setItem("dismissed_anns", JSON.stringify(Array.from(next))); } catch {}
       return next;
     });
   }
@@ -331,7 +331,7 @@ export default function Dashboard() {
 
   async function voteFeatureRequest(id: string) {
     if (votedIds.has(id)) return;
-    setVotedIds(prev => new Set([...prev, id]));
+    setVotedIds(prev => new Set(Array.from(prev).concat([id])));
     await customerFetch(`/api/customer/feature-requests/${id}/vote`, { method: "POST" }).catch(() => {});
     refetchFr();
   }
@@ -397,7 +397,7 @@ export default function Dashboard() {
         toast({ title: "API key generated!", description: "Copy it now — it won't be shown in full again" });
         setNewKeyLabel("");
         queryClient.invalidateQueries({ queryKey: ["/api/customer/api-keys"] });
-        if (data.apiKey) setRevealedKeys((prev) => new Set([...prev, data.apiKey.id]));
+        if (data.apiKey) setRevealedKeys((prev) => new Set(Array.from(prev).concat([data.apiKey.id])));
       } else {
         toast({ title: "Failed", description: data.error, variant: "destructive" });
       }
@@ -454,19 +454,19 @@ export default function Dashboard() {
 
   async function toggleCredentials(reference: string) {
     if (expandedCreds.has(reference)) {
-      setExpandedCreds((prev) => { const n = new Set(prev); n.delete(reference); return n; });
+      setExpandedCreds((prev) => { const n = new Set(Array.from(prev)); n.delete(reference); return n; });
       return;
     }
     if (credentialsData[reference]) {
-      setExpandedCreds((prev) => new Set([...prev, reference]));
+      setExpandedCreds((prev) => new Set(Array.from(prev).concat([reference])));
       return;
     }
-    setLoadingCreds((prev) => new Set([...prev, reference]));
+    setLoadingCreds((prev) => new Set(Array.from(prev).concat([reference])));
     try {
       const data = await customerFetch(`/api/customer/orders/${reference}/credentials`);
       if (data.success) {
         setCredentialsData((prev) => ({ ...prev, [reference]: data.account }));
-        setExpandedCreds((prev) => new Set([...prev, reference]));
+        setExpandedCreds((prev) => new Set(Array.from(prev).concat([reference])));
       } else {
         toast({ title: "Credentials unavailable", description: data.error, variant: "destructive" });
       }

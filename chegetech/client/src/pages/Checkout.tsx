@@ -631,12 +631,12 @@ export default function Checkout() {
                           : `bg-gradient-to-r ${gradient}`
                     }`}
                     style={{ boxShadow: isFullWalletMode ? "0 0 24px rgba(16,185,129,0.3)" : "0 0 24px rgba(99,102,241,0.3)" }}
-                    disabled={
+                    disabled={!!(
                       busy ||
                       (payMode === "wallet" && !customerToken) ||
                       (payMode === "wallet" && isWalletEmpty) ||
                       (payMode === "paystack" && configData !== undefined && !configData?.paystackConfigured)
-                    }
+                    )}
                     data-testid="button-pay"
                   >
                     {busy ? (
