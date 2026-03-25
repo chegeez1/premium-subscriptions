@@ -4654,16 +4654,53 @@ function WhatsAppWebPanel({ inputCls }: { inputCls: string }) {
       {/* Blocked by WhatsApp */}
       {status === "blocked" && (
         <div className="space-y-3">
-          <div className="p-3 rounded-xl" style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.2)" }}>
-            <p className="text-xs font-semibold text-red-400 mb-1">Connection blocked by WhatsApp</p>
-            <p className="text-[11px] text-white/40 leading-relaxed">WhatsApp detects and blocks connections from cloud servers like Replit. This is a WhatsApp restriction, not a code bug.</p>
+          {/* Error banner */}
+          <div className="flex gap-2.5 p-3 rounded-xl" style={{ background: "rgba(239,68,68,.07)", border: "1px solid rgba(239,68,68,.18)" }}>
+            <svg className="w-4 h-4 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+            <div>
+              <p className="text-xs font-semibold text-red-400 mb-0.5">Blocked by WhatsApp</p>
+              <p className="text-[11px] text-white/40 leading-relaxed">WhatsApp actively blocks WebSocket connections from cloud-hosted servers (Replit, Render, AWS, etc.). This is a WhatsApp policy — not a bug in the code.</p>
+            </div>
           </div>
-          <div className="p-3 rounded-xl space-y-1.5" style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)" }}>
-            <p className="text-[11px] font-semibold text-white/50">What you can do:</p>
-            <p className="text-[11px] text-white/35">✅ <strong className="text-white/50">Telegram</strong> — works perfectly and is already set up for order notifications</p>
-            <p className="text-[11px] text-white/35">✅ <strong className="text-white/50">WhatsApp Channel</strong> — set your channel link in Site Settings for customers to follow</p>
+
+          {/* Option 1 — Official Meta API */}
+          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(99,102,241,.2)" }}>
+            <div className="px-3 py-2 flex items-center gap-2" style={{ background: "rgba(99,102,241,.1)" }}>
+              <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Option 1 — Recommended</span>
+              <span className="ml-auto text-[9px] text-indigo-300/60 bg-indigo-500/10 px-1.5 py-0.5 rounded-full">Works from cloud</span>
+            </div>
+            <div className="p-3 space-y-1.5">
+              <p className="text-xs font-semibold text-white/70">Official WhatsApp Business API (Meta)</p>
+              <p className="text-[11px] text-white/40 leading-relaxed">Meta's official API works from any server. Go to Settings → Credentials and fill in <strong className="text-white/55">WhatsApp Access Token</strong> + <strong className="text-white/55">Phone Number ID</strong> to enable it.</p>
+              <div className="text-[11px] text-white/30 space-y-1 pt-1">
+                <p>1. Go to <strong className="text-white/45">developers.facebook.com</strong></p>
+                <p>2. Create an app → Add WhatsApp product</p>
+                <p>3. Get your <strong className="text-white/45">Phone Number ID</strong> + <strong className="text-white/45">Access Token</strong></p>
+                <p>4. Paste both in Admin → Settings → Credentials</p>
+              </div>
+            </div>
           </div>
-          <button onClick={disconnect} className="text-xs text-white/30 hover:text-white/50 transition-all">Reset</button>
+
+          {/* Option 2 — Telegram */}
+          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(37,211,102,.15)" }}>
+            <div className="px-3 py-2 flex items-center gap-2" style={{ background: "rgba(37,211,102,.06)" }}>
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Option 2 — Already working</span>
+            </div>
+            <div className="p-3">
+              <p className="text-xs font-semibold text-white/70 mb-1">Telegram Admin Bot</p>
+              <p className="text-[11px] text-white/40">Your Telegram bot is already set up and works perfectly from cloud servers. You get instant order alerts, stock warnings, and weekly reports — all without any restrictions.</p>
+            </div>
+          </div>
+
+          {/* Option 3 — VPS */}
+          <div className="p-3 rounded-xl space-y-1" style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)" }}>
+            <p className="text-[11px] font-semibold text-white/40">Option 3 — Self-hosted VPS</p>
+            <p className="text-[11px] text-white/25">Deploy the app on a VPS with a residential or non-datacenter IP (e.g. Contabo, Hetzner). WhatsApp is less likely to block those IPs. Use Admin → VPS Manager to set one up.</p>
+          </div>
+
+          <button onClick={disconnect} className="text-[11px] text-white/20 hover:text-white/40 transition-all">
+            Clear session and try again
+          </button>
         </div>
       )}
 
