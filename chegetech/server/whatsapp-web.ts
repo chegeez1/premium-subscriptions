@@ -3,7 +3,6 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  makeCacheableSignalKeyStore,
   Browsers,
 } = pkg as any;
 import { Boom } from "@hapi/boom";
@@ -81,10 +80,7 @@ export async function connectWhatsApp(phoneNumber?: string): Promise<void> {
   pairingCode = null;
 
   const localSock = makeWASocket({
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, SILENT_LOGGER),
-    },
+    auth: state,
     printQRInTerminal: false,
     logger: SILENT_LOGGER,
     browser: Browsers.ubuntu("Gifted"),
@@ -136,11 +132,9 @@ export async function connectWhatsApp(phoneNumber?: string): Promise<void> {
       const replaced = statusCode === DisconnectReason.connectionReplaced;
       console.log("[WA] Closed. Code:", statusCode, "loggedOut:", loggedOut);
 
-      // Clean up auth dir always on close during initial pairing
-      try { if (fs.existsSync(AUTH_DIR)) fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch {}
-
       if (loggedOut || statusCode === 401) {
-        // WhatsApp rejected the connection (commonly happens on cloud IPs)
+        // Permanently rejected — wipe session so next connect starts fresh
+        try { if (fs.existsSync(AUTH_DIR)) fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch {}
         connectionStatus = "blocked";
         connectionError = "WhatsApp rejected the connection. This usually happens because WhatsApp blocks cloud server IPs. Try connecting from your local machine or use Telegram notifications instead.";
         savedPhoneNumber = null;
@@ -149,6 +143,7 @@ export async function connectWhatsApp(phoneNumber?: string): Promise<void> {
         sock = null;
         // Do NOT auto-reconnect — it will keep getting blocked
       } else if (!replaced) {
+        // Temporary disconnect — keep session and reconnect
         connectionStatus = "connecting";
         pairingCode = null;
         qrCodeDataUrl = null;
