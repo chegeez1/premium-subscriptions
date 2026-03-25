@@ -49,6 +49,9 @@ export const customerSessions = sqliteTable("customer_sessions", {
   token: text("token").unique().notNull(),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
   expiresAt: text("expires_at").notNull(),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  deviceName: text("device_name"),
 });
 
 export const apiKeys = sqliteTable("api_keys", {

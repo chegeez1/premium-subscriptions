@@ -298,6 +298,34 @@ export default function Dashboard() {
     enabled: tab === "security",
   });
 
+  const { data: sessionsData, refetch: refetchSessions } = useQuery<any>({
+    queryKey: ["/api/customer/sessions"],
+    queryFn: () => customerFetch("/api/customer/sessions"),
+    enabled: tab === "security",
+  });
+  const [revokingId, setRevokingId] = useState<number | null>(null);
+  const [revokingOthers, setRevokingOthers] = useState(false);
+
+  async function revokeSession(id: number) {
+    setRevokingId(id);
+    try {
+      const r = await customerFetch(`/api/customer/sessions/${id}`, { method: "DELETE" });
+      if (r.success) { toast({ title: "Session revoked" }); refetchSessions(); }
+      else toast({ title: r.error || "Failed to revoke", variant: "destructive" });
+    } catch { toast({ title: "Failed to revoke session", variant: "destructive" }); }
+    finally { setRevokingId(null); }
+  }
+
+  async function revokeOtherSessions() {
+    setRevokingOthers(true);
+    try {
+      const r = await customerFetch("/api/customer/sessions/others", { method: "DELETE" });
+      if (r.success) { toast({ title: `Signed out from ${r.revoked} other device(s)` }); refetchSessions(); }
+      else toast({ title: r.error || "Failed", variant: "destructive" });
+    } catch { toast({ title: "Failed to sign out other sessions", variant: "destructive" }); }
+    finally { setRevokingOthers(false); }
+  }
+
   // ─── Feature Requests state ──────────────────────────────────────────────
   const [frTitle, setFrTitle] = useState("");
   const [frDesc, setFrDesc] = useState("");
@@ -1756,6 +1784,85 @@ export default function Dashboard() {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* Active Sessions */}
+            <div className="rounded-2xl border border-white/8 overflow-hidden" style={{ background: "rgba(255,255,255,.04)", backdropFilter: "blur(12px)" }}>
+              <div className="p-4 border-b border-white/8 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(239,68,68,.15)" }}>
+                    <Monitor className="w-4 h-4 text-red-400" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white text-sm">Active Sessions</p>
+                    <p className="text-xs text-white/40">Devices currently signed into your account</p>
+                  </div>
+                </div>
+                {(sessionsData?.sessions ?? []).filter((s: any) => !s.isCurrent).length > 0 && (
+                  <button
+                    onClick={revokeOtherSessions}
+                    disabled={revokingOthers}
+                    className="text-xs text-red-400 hover:text-red-300 transition-colors px-3 py-1.5 rounded-lg flex items-center gap-1.5 shrink-0"
+                    style={{ background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.2)" }}
+                  >
+                    {revokingOthers ? <Loader2 className="w-3 h-3 animate-spin" /> : <LogOut className="w-3 h-3" />}
+                    Sign out all others
+                  </button>
+                )}
+              </div>
+              <div className="divide-y divide-white/5">
+                {!sessionsData ? (
+                  <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /></div>
+                ) : (sessionsData?.sessions ?? []).length === 0 ? (
+                  <div className="text-center py-8">
+                    <Monitor className="w-6 h-6 text-white/15 mx-auto mb-2" />
+                    <p className="text-white/30 text-sm">No active sessions</p>
+                  </div>
+                ) : (sessionsData?.sessions ?? []).map((session: any) => {
+                  const isMobile = /iphone|android|ipad/i.test(session.deviceName || "");
+                  const isTablet = /ipad/i.test(session.deviceName || "");
+                  const created = new Date(session.createdAt);
+                  const expires = new Date(session.expiresAt);
+                  return (
+                    <div key={session.id} className="flex items-center gap-3 p-4">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                        style={{ background: session.isCurrent ? "rgba(52,211,153,.15)" : "rgba(255,255,255,.06)" }}>
+                        {isTablet ? <Monitor className="w-4 h-4 text-violet-400" />
+                          : isMobile ? <Monitor className="w-4 h-4 text-blue-400" />
+                          : <Monitor className="w-4 h-4" style={{ color: session.isCurrent ? "#34d399" : "rgba(255,255,255,.3)" }} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-white truncate">{session.deviceName || "Unknown Device"}</span>
+                          {session.isCurrent && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0"
+                              style={{ background: "rgba(52,211,153,.2)", color: "#34d399" }}>
+                              This device
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <span className="text-xs text-white/30 font-mono">{session.ip}</span>
+                          <span className="text-xs text-white/20">·</span>
+                          <span className="text-xs text-white/25">Signed in {created.toLocaleDateString()}</span>
+                          <span className="text-xs text-white/20">·</span>
+                          <span className="text-xs text-white/20">Expires {expires.toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      {!session.isCurrent && (
+                        <button
+                          onClick={() => revokeSession(session.id)}
+                          disabled={revokingId === session.id}
+                          className="text-xs text-red-400/70 hover:text-red-400 transition-colors px-2.5 py-1 rounded-lg shrink-0"
+                          style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.15)" }}
+                        >
+                          {revokingId === session.id ? <Loader2 className="w-3 h-3 animate-spin" /> : "Revoke"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

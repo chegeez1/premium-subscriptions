@@ -79,6 +79,18 @@ function getBaseUrl(req: any): string {
   return `${proto}://${host}`;
 }
 
+function parseDeviceName(ua: string): string {
+  if (!ua) return "Unknown Device";
+  const mobile = /iphone/i.test(ua) ? "iPhone" : /ipad/i.test(ua) ? "iPad" : /android/i.test(ua) ? "Android" : null;
+  const browser = /edg/i.test(ua) ? "Edge" : /chrome/i.test(ua) ? "Chrome" : /firefox/i.test(ua) ? "Firefox" : /safari/i.test(ua) ? "Safari" : /opera|opr/i.test(ua) ? "Opera" : "Browser";
+  const os = mobile ?? (/windows/i.test(ua) ? "Windows" : /mac os/i.test(ua) ? "macOS" : /linux/i.test(ua) ? "Linux" : "Unknown OS");
+  return `${browser} on ${os}`;
+}
+
+function getReqIp(req: any): string {
+  return (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+}
+
 async function sendVerificationEmail(email: string, code: string, name?: string): Promise<void> {
   const { Resend } = await import("resend");
   const key = getResendApiKey();
@@ -1745,7 +1757,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const token = uuidv4();
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-      await storage.createCustomerSession(customer.id, token, expiresAt);
+      const regUa = req.headers["user-agent"] || "";
+      await storage.createCustomerSession(customer.id, token, expiresAt, {
+        ip: getReqIp(req), userAgent: regUa, deviceName: parseDeviceName(regUa),
+      });
 
       notifyNewCustomer({ name: customer.name || "", email: customer.email }).catch(() => {});
 
@@ -1772,14 +1787,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const token = uuidv4();
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-      await storage.createCustomerSession(customer.id, token, expiresAt);
 
       // ─── Login IP & geo detection ─────────────────────────────────────
-      const rawIp =
-        (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
-        req.socket?.remoteAddress ||
-        "unknown";
+      const rawIp = getReqIp(req);
       const userAgent = req.headers["user-agent"] || "";
+      await storage.createCustomerSession(customer.id, token, expiresAt, {
+        ip: rawIp, userAgent, deviceName: parseDeviceName(userAgent),
+      });
       (async () => {
         try {
           let geoData: any = {};
@@ -3322,6 +3336,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const logs = await storage.getLoginLogs(req.customer.id);
       res.json({ success: true, logs });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Active Sessions ────────────────────────────────────────
+  app.get("/api/customer/sessions", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const currentToken = req.headers.authorization?.replace("Bearer ", "") || "";
+      const now = new Date();
+      const all = await storage.getCustomerSessions(req.customer.id);
+      const active = all
+        .filter((s: any) => new Date(s.expiresAt) > now)
+        .map((s: any) => ({
+          id: s.id,
+          deviceName: s.deviceName || parseDeviceName(s.userAgent || ""),
+          ip: s.ip || "unknown",
+          createdAt: s.createdAt,
+          expiresAt: s.expiresAt,
+          isCurrent: s.token === currentToken,
+        }));
+      res.json({ success: true, sessions: active });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/customer/sessions/others", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const currentToken = req.headers.authorization?.replace("Bearer ", "") || "";
+      const count = await storage.deleteOtherSessions(currentToken, req.customer.id);
+      res.json({ success: true, revoked: count });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/customer/sessions/:id", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const sessionId = parseInt(req.params.id);
+      if (isNaN(sessionId)) return res.status(400).json({ success: false, error: "Invalid session ID" });
+      const currentToken = req.headers.authorization?.replace("Bearer ", "") || "";
+      const all = await storage.getCustomerSessions(req.customer.id);
+      const target = all.find((s: any) => s.id === sessionId);
+      if (!target) return res.status(404).json({ success: false, error: "Session not found" });
+      if (target.token === currentToken) return res.status(400).json({ success: false, error: "Cannot revoke your current session. Use logout instead." });
+      await storage.deleteCustomerSessionById(sessionId, req.customer.id);
+      res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

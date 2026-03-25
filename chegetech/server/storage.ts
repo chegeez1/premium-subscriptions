@@ -302,7 +302,10 @@ function initSqlite() {
       customer_id INTEGER NOT NULL,
       token TEXT UNIQUE NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      ip TEXT,
+      user_agent TEXT,
+      device_name TEXT
     );
 
     CREATE TABLE IF NOT EXISTS api_keys (
@@ -437,6 +440,10 @@ function initSqlite() {
   try { sqliteInstance!.prepare("ALTER TABLE transactions ADD COLUMN expires_at TEXT").run(); } catch {}
   // Migrate: add group_id to customers
   try { sqliteInstance!.prepare("ALTER TABLE customers ADD COLUMN group_id INTEGER").run(); } catch {}
+  // Migrate: add device/ip tracking to sessions
+  try { sqliteInstance!.prepare("ALTER TABLE customer_sessions ADD COLUMN ip TEXT").run(); } catch {}
+  try { sqliteInstance!.prepare("ALTER TABLE customer_sessions ADD COLUMN user_agent TEXT").run(); } catch {}
+  try { sqliteInstance!.prepare("ALTER TABLE customer_sessions ADD COLUMN device_name TEXT").run(); } catch {}
   console.log("[db] Connected to SQLite");
 }
 
@@ -587,9 +594,12 @@ export interface IStorage {
   getCustomerById(id: number): Promise<Customer | undefined>;
   updateCustomer(id: number, data: Partial<Customer>): Promise<Customer | undefined>;
 
-  createCustomerSession(customerId: number, token: string, expiresAt: Date): Promise<CustomerSession>;
+  createCustomerSession(customerId: number, token: string, expiresAt: Date, meta?: { ip?: string; userAgent?: string; deviceName?: string }): Promise<CustomerSession>;
   getCustomerSession(token: string): Promise<CustomerSession | undefined>;
+  getCustomerSessions(customerId: number): Promise<CustomerSession[]>;
   deleteCustomerSession(token: string): Promise<void>;
+  deleteCustomerSessionById(id: number, customerId: number): Promise<void>;
+  deleteOtherSessions(currentToken: string, customerId: number): Promise<number>;
   deleteExpiredSessions(): Promise<void>;
 
   getAllCustomers(): Promise<Customer[]>;
@@ -709,11 +719,19 @@ export class DbStorage implements IStorage {
     return result;
   }
 
-  async createCustomerSession(customerId: number, token: string, expiresAt: Date): Promise<CustomerSession> {
+  async createCustomerSession(
+    customerId: number,
+    token: string,
+    expiresAt: Date,
+    meta?: { ip?: string; userAgent?: string; deviceName?: string }
+  ): Promise<CustomerSession> {
     const [result] = await getDb().insert(customerSessions).values({
       customerId,
       token,
       expiresAt: expiresAt.toISOString(),
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+      deviceName: meta?.deviceName ?? null,
     }).returning();
     return result;
   }
@@ -723,8 +741,31 @@ export class DbStorage implements IStorage {
     return result;
   }
 
+  async getCustomerSessions(customerId: number): Promise<CustomerSession[]> {
+    return getDb()
+      .select()
+      .from(customerSessions)
+      .where(eq(customerSessions.customerId, customerId))
+      .orderBy(desc(customerSessions.createdAt));
+  }
+
   async deleteCustomerSession(token: string): Promise<void> {
     await getDb().delete(customerSessions).where(eq(customerSessions.token, token));
+  }
+
+  async deleteCustomerSessionById(id: number, customerId: number): Promise<void> {
+    await getDb()
+      .delete(customerSessions)
+      .where(and(eq(customerSessions.id, id), eq(customerSessions.customerId, customerId)));
+  }
+
+  async deleteOtherSessions(currentToken: string, customerId: number): Promise<number> {
+    const all = await this.getCustomerSessions(customerId);
+    const others = all.filter(s => s.token !== currentToken);
+    for (const s of others) {
+      await getDb().delete(customerSessions).where(eq(customerSessions.id, s.id));
+    }
+    return others.length;
   }
 
   async deleteExpiredSessions(): Promise<void> {
