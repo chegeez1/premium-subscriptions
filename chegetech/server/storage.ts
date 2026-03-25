@@ -223,6 +223,10 @@ export async function initializeDatabase() {
       await pgPool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS avatar_url TEXT");
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS expires_at TEXT");
       await pgPool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS group_id INTEGER");
+      // Migrate: add device/ip tracking to sessions
+      await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS ip TEXT");
+      await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS user_agent TEXT");
+      await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS device_name TEXT");
 
       const drizzlePgModule = await import("drizzle-orm/node-postgres");
       const drizzlePg = drizzlePgModule.drizzle;
