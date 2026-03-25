@@ -34,7 +34,26 @@ export default function Auth() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ref = params.get("ref");
-    if (ref) { setReferralCode(ref); setMode("signup"); }
+    if (ref) { setReferralCode(ref); setMode("signup"); return; }
+
+    // Already logged in — validate token and redirect away
+    const token = localStorage.getItem("customer_token");
+    if (!token) return;
+    const cachedData = localStorage.getItem("customer_data");
+    if (cachedData) { setLocation("/"); return; }
+    // Token exists but no cached data — check with server
+    fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          localStorage.setItem("customer_data", JSON.stringify(d.customer));
+          setLocation("/");
+        } else {
+          localStorage.removeItem("customer_token");
+          localStorage.removeItem("customer_data");
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

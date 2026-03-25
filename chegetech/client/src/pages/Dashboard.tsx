@@ -123,14 +123,34 @@ export default function Dashboard() {
     }
   }
 
-  const customer = getCustomerData();
-  const isAuthenticated = !!getToken() && !!customer;
+  const [customer, setCustomer] = useState<any>(() => getCustomerData());
+  const [authChecked, setAuthChecked] = useState(() => {
+    const token = localStorage.getItem("customer_token");
+    const data = localStorage.getItem("customer_data");
+    return !!(token && data); // if both present, no need to do async check
+  });
 
+  // If we have a token but no customer_data (partial clear), re-validate silently
   useEffect(() => {
-    if (!isAuthenticated) { setLocation("/auth"); }
-  }, [isAuthenticated]);
+    const token = getToken();
+    if (!token) { setLocation("/auth"); return; }
+    if (authChecked) return; // already verified
+    fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          localStorage.setItem("customer_data", JSON.stringify(d.customer));
+          setCustomer(d.customer);
+          setAuthChecked(true);
+        } else {
+          clearAuth();
+          setLocation("/auth");
+        }
+      })
+      .catch(() => { clearAuth(); setLocation("/auth"); });
+  }, []);
 
-  if (!isAuthenticated) {
+  if (!authChecked) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "linear-gradient(140deg, #0b1020, #0d0724)" }}>
         <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
