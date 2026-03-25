@@ -1314,7 +1314,7 @@ function MonthlySummarySection({ inputCls }: { inputCls: string }) {
             <div className="flex items-center gap-2.5 rounded-xl p-3 text-sm" style={{ background: result.sent > 0 ? "rgba(16,185,129,.08)" : "rgba(156,163,175,.08)", border: result.sent > 0 ? "1px solid rgba(16,185,129,.2)" : "1px solid rgba(156,163,175,.15)" }}>
               {result.sent > 0
                 ? <><CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" /><p className="text-emerald-300 font-semibold">{result.sent} summary email{result.sent !== 1 ? "s" : ""} sent successfully</p></>
-                : <><Info className="w-4 h-4 text-white/30 shrink-0" /><p className="text-white/40">No eligible customers found for the previous month</p></>
+                : <><Info className="w-4 h-4 text-white/30 shrink-0" /><p className="text-white/40">No eligible customers found for the current month so far</p></>
               }
             </div>
           )}
