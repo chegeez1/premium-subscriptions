@@ -196,11 +196,33 @@ export async function initializeDatabase() {
           comment TEXT,
           created_at TEXT DEFAULT (NOW()::text)
         );
+
+        CREATE TABLE IF NOT EXISTS funnel_events (
+          id SERIAL PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          session_id TEXT,
+          plan_id TEXT,
+          plan_name TEXT,
+          customer_email TEXT,
+          ip TEXT,
+          created_at TEXT DEFAULT (NOW()::text)
+        );
+
+        CREATE TABLE IF NOT EXISTS customer_groups (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          color TEXT DEFAULT '#6366f1',
+          discount_percent INTEGER DEFAULT 0,
+          is_banned BOOLEAN DEFAULT false,
+          description TEXT,
+          created_at TEXT DEFAULT (NOW()::text)
+        );
       `);
 
       // Migrate: add avatar_url column if missing (safe for existing PG DBs)
       await pgPool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS avatar_url TEXT");
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS expires_at TEXT");
+      await pgPool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS group_id INTEGER");
 
       const drizzlePgModule = await import("drizzle-orm/node-postgres");
       const drizzlePg = drizzlePgModule.drizzle;
@@ -387,11 +409,34 @@ function initSqlite() {
       comment TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS funnel_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      session_id TEXT,
+      plan_id TEXT,
+      plan_name TEXT,
+      customer_email TEXT,
+      ip TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS customer_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      color TEXT DEFAULT '#6366f1',
+      discount_percent INTEGER DEFAULT 0,
+      is_banned INTEGER DEFAULT 0,
+      description TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
   // Migrate: add avatar_url column if missing (safe for existing DBs)
   try { sqliteInstance!.prepare("ALTER TABLE customers ADD COLUMN avatar_url TEXT").run(); } catch {}
   // Migrate: add expires_at to transactions
   try { sqliteInstance!.prepare("ALTER TABLE transactions ADD COLUMN expires_at TEXT").run(); } catch {}
+  // Migrate: add group_id to customers
+  try { sqliteInstance!.prepare("ALTER TABLE customers ADD COLUMN group_id INTEGER").run(); } catch {}
   console.log("[db] Connected to SQLite");
 }
 

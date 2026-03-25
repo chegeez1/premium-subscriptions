@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -141,6 +141,8 @@ export default function Admin() {
     { id: "transactions", label: "Transactions", icon: ArrowLeftRight },
     { id: "apikeys", label: "API Keys", icon: Key },
     { id: "customers", label: "Customers", icon: Users },
+    { id: "groups", label: "Customer Groups", icon: Tags },
+    { id: "funnel", label: "Conversion Funnel", icon: TrendingUp },
     { id: "ratings", label: "Ratings", icon: Star },
     { id: "feature-requests", label: "Feature Requests", icon: Sparkles },
     { id: "emailblast", label: "Email Blast", icon: Send },
@@ -245,6 +247,8 @@ export default function Admin() {
           {activeTab === "transactions" && <TransactionsTab />}
           {activeTab === "apikeys" && <ApiKeysTab />}
           {activeTab === "customers" && <CustomersTab />}
+          {activeTab === "groups" && <CustomerGroupsTab />}
+          {activeTab === "funnel" && <ConversionFunnelTab />}
           {activeTab === "ratings" && <RatingsTab />}
           {activeTab === "feature-requests" && <FeatureRequestsAdminTab />}
           {activeTab === "emailblast" && <EmailBlastTab />}
@@ -2310,6 +2314,25 @@ function AccountsTab() {
                                 )}
                               </div>
                               <p className="text-xs text-white/30 mt-0.5">Added {new Date(acc.addedAt).toLocaleDateString()} · {acc.usedBy?.length ?? 0} assigned</p>
+                              {acc.usedBy && acc.usedBy.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  {acc.usedBy.map((u: any, ui: number) => {
+                                    const expDate = u.expiresAt ? new Date(u.expiresAt) : null;
+                                    const isExpired = expDate && expDate < new Date();
+                                    const expSoon = expDate && !isExpired && expDate < new Date(Date.now() + 3*86400000);
+                                    return (
+                                      <div key={ui} className="flex items-center gap-2 text-[11px]">
+                                        <span className="text-white/50 truncate max-w-[160px]">{u.customerEmail}</span>
+                                        {expDate ? (
+                                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${isExpired ? "bg-red-500/20 text-red-400" : expSoon ? "bg-amber-500/20 text-amber-400" : "bg-white/5 text-white/30"}`}>
+                                            {isExpired ? "Expired" : "Expires"} {expDate.toLocaleDateString()}
+                                          </span>
+                                        ) : <span className="text-white/20">No expiry</span>}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <Button size="sm" variant="outline" className="glass border-white/10 text-white/60 hover:text-white h-8"
@@ -2981,6 +3004,28 @@ function ApiKeysTab() {
                 <code className="text-xs text-white/70 font-mono">/api/v1/my-orders</code>
               </div>
               <p className="text-xs text-white/35">Get the linked customer's orders</p>
+            </div>
+            <p className="text-xs font-bold text-violet-400 uppercase tracking-wider mt-4">Public Reseller Endpoints</p>
+            <p className="text-xs text-white/30 mb-2">Use <code className="bg-black/30 px-1 rounded">X-Reseller-Key</code> header with an admin key that has reseller scope</p>
+            <div className="rounded-lg p-3 bg-white/5 border border-white/8">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded">GET</span>
+                <code className="text-xs text-white/70 font-mono">/api/v1/plans</code>
+              </div>
+              <p className="text-xs text-white/35 mb-2">List all available plans with prices (public reseller catalogue)</p>
+              <code className="text-[10px] text-white/30 bg-black/30 rounded px-2 py-1 block break-all">
+                curl -H "X-API-Key: YOUR_KEY" {window.location.origin}/api/v1/plans
+              </code>
+            </div>
+            <div className="rounded-lg p-3 bg-white/5 border border-white/8">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold text-orange-400 bg-orange-500/15 px-2 py-0.5 rounded">POST</span>
+                <code className="text-xs text-white/70 font-mono">/api/v1/orders</code>
+              </div>
+              <p className="text-xs text-white/35 mb-2">Create a reseller order — delivers account credentials instantly if in stock</p>
+              <code className="text-[10px] text-white/30 bg-black/30 rounded px-2 py-1 block break-all">
+                {`curl -X POST -H "X-API-Key: KEY" -H "Content-Type: application/json" -d '{"planId":"PLAN_ID","customerEmail":"customer@email.com","customerName":"John"}' ${window.location.origin}/api/v1/orders`}
+              </code>
             </div>
           </div>
         </div>
@@ -6198,6 +6243,360 @@ function CampaignsTab() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONVERSION FUNNEL TAB
+// ═══════════════════════════════════════════════════════════════
+function ConversionFunnelTab() {
+  const { toast } = useToast();
+  const [days, setDays] = useState(30);
+  const authFetch = (url: string, opts: any = {}) => fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${localStorage.getItem("admin_token")}`, "Content-Type": "application/json" } });
+
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/funnel", days],
+    queryFn: () => authFetch(`/api/admin/funnel?days=${days}`).then(r => r.json()),
+  });
+
+  const funnel: any[] = data?.funnel ?? [];
+  const maxCount = Math.max(...funnel.map((f: any) => f.count), 1);
+
+  const STEP_META: Record<string, { label: string; color: string }> = {
+    page_view:         { label: "Store Visits",        color: "from-blue-600 to-blue-500" },
+    plan_view:         { label: "Plan Interactions",   color: "from-indigo-600 to-indigo-500" },
+    checkout_start:    { label: "Checkout Started",    color: "from-violet-600 to-violet-500" },
+    checkout_complete: { label: "Paid Orders",         color: "from-emerald-600 to-emerald-500" },
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-white">Conversion Funnel</h2>
+          <p className="text-xs text-white/40 mt-0.5">Track how visitors move from browsing to paying</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {[7, 30, 90].map(d => (
+            <button key={d} onClick={() => setDays(d)}
+              className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border ${days === d ? "bg-indigo-600 border-indigo-500 text-white" : "bg-white/5 border-white/10 text-white/50 hover:text-white"}`}>
+              {d}d
+            </button>
+          ))}
+          <button onClick={() => refetch()} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white transition-colors">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl p-4 flex items-center gap-4" style={{ background: "linear-gradient(135deg,rgba(99,102,241,.12),rgba(139,92,246,.08))", border: "1px solid rgba(99,102,241,.2)" }}>
+        <div className="w-12 h-12 rounded-xl bg-indigo-600/20 flex items-center justify-center shrink-0">
+          <TrendingUp className="w-6 h-6 text-indigo-400" />
+        </div>
+        <div>
+          <p className="text-white/50 text-xs">Overall conversion rate (visits → paid)</p>
+          <p className="text-3xl font-bold text-white mt-0.5">{data?.conversionRate ?? 0}%</p>
+        </div>
+        <div className="ml-auto text-right">
+          <p className="text-white/30 text-xs">Period</p>
+          <p className="text-white font-semibold text-sm">Last {days} days</p>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+      ) : (
+        <div className="space-y-3">
+          {funnel.map((step: any, i: number) => {
+            const meta = STEP_META[step.step] || { label: step.step, color: "from-gray-600 to-gray-500" };
+            const widthPct = maxCount > 0 ? Math.max((step.count / maxCount) * 100, 4) : 4;
+            const dropoff = i > 0 && funnel[i - 1].count > 0
+              ? Math.round(((funnel[i - 1].count - step.count) / funnel[i - 1].count) * 100) : null;
+            return (
+              <div key={step.step}>
+                {dropoff !== null && (
+                  <div className="flex items-center gap-2 py-1 px-2">
+                    <div className="w-px h-4 bg-white/10 mx-4" />
+                    <span className="text-[11px] text-red-400/70">▼ {dropoff}% dropped off</span>
+                  </div>
+                )}
+                <div className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex-1">
+                      <div className="flex items-baseline justify-between">
+                        <p className="text-sm font-semibold text-white">{meta.label}</p>
+                        <p className="text-xl font-bold text-white">{step.count.toLocaleString()}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+                    <div className={`h-full rounded-full bg-gradient-to-r ${meta.color} transition-all duration-700`}
+                      style={{ width: `${widthPct}%` }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+          <p className="text-sm font-semibold text-white mb-3">🔥 Most Viewed Plans</p>
+          {(data?.topPlans ?? []).length === 0 ? (
+            <p className="text-white/25 text-xs">No plan views recorded yet</p>
+          ) : (
+            <div className="space-y-2">
+              {(data.topPlans as any[]).map((p: any, i: number) => (
+                <div key={i} className="flex items-center justify-between">
+                  <p className="text-xs text-white/70 truncate max-w-[180px]">{p.plan_name}</p>
+                  <span className="text-xs font-bold text-indigo-400 ml-2">{p.cnt}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+          <p className="text-sm font-semibold text-white mb-3">⚡ Live Activity</p>
+          {(data?.recentEvents ?? []).length === 0 ? (
+            <p className="text-white/25 text-xs">No events recorded yet</p>
+          ) : (
+            <div className="space-y-1.5 max-h-52 overflow-y-auto">
+              {(data.recentEvents as any[]).map((e: any, i: number) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    e.event_type === "page_view" ? "bg-blue-500/20 text-blue-400" :
+                    e.event_type === "plan_view" ? "bg-indigo-500/20 text-indigo-400" :
+                    e.event_type === "checkout_start" ? "bg-violet-500/20 text-violet-400" :
+                    "bg-emerald-500/20 text-emerald-400"
+                  }`}>{e.event_type.replace("_"," ")}</span>
+                  {e.plan_name && <span className="text-[10px] text-white/50 truncate">{e.plan_name}</span>}
+                  <span className="text-[10px] text-white/20 ml-auto">{e.created_at?.slice(11,16)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CUSTOMER GROUPS TAB
+// ═══════════════════════════════════════════════════════════════
+function CustomerGroupsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const authFetch = (url: string, opts: any = {}) => fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${localStorage.getItem("admin_token")}`, "Content-Type": "application/json" } });
+
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/customer-groups"],
+    queryFn: () => authFetch("/api/admin/customer-groups").then(r => r.json()),
+  });
+
+  const groups: any[] = data?.groups ?? [];
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState("#6366f1");
+  const [discountPct, setDiscountPct] = useState(0);
+  const [isBanned, setIsBanned] = useState(false);
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<any>(null);
+  const [members, setMembers] = useState<any[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [assignEmail, setAssignEmail] = useState("");
+  const [assignLoading, setAssignLoading] = useState(false);
+
+  const GROUP_COLORS = ["#6366f1","#8b5cf6","#ec4899","#f59e0b","#10b981","#ef4444","#3b82f6","#14b8a6","#f97316","#64748b"];
+
+  function openCreate() { setEditing(null); setName(""); setColor("#6366f1"); setDiscountPct(0); setIsBanned(false); setDescription(""); setShowForm(true); }
+  function openEdit(g: any) { setEditing(g); setName(g.name); setColor(g.color||"#6366f1"); setDiscountPct(g.discount_percent||0); setIsBanned(!!g.is_banned); setDescription(g.description||""); setShowForm(true); }
+
+  async function saveGroup() {
+    if (!name.trim()) { toast({ title: "Name required", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const body = JSON.stringify({ name, color, discount_percent: discountPct, is_banned: isBanned, description });
+      const url = editing ? `/api/admin/customer-groups/${editing.id}` : "/api/admin/customer-groups";
+      const d = await authFetch(url, { method: editing ? "PUT" : "POST", body }).then(r => r.json());
+      if (d.success) { toast({ title: editing ? "Group updated" : "Group created ✅" }); qc.invalidateQueries({ queryKey: ["/api/admin/customer-groups"] }); setShowForm(false); }
+      else toast({ title: d.error || "Failed", variant: "destructive" });
+    } catch { toast({ title: "Failed", variant: "destructive" }); }
+    setSaving(false);
+  }
+
+  async function deleteGroup(id: number) {
+    if (!confirm("Delete this group? Members will be unassigned.")) return;
+    await authFetch(`/api/admin/customer-groups/${id}`, { method: "DELETE" });
+    qc.invalidateQueries({ queryKey: ["/api/admin/customer-groups"] });
+    toast({ title: "Group deleted" });
+    if (selectedGroup?.id === id) setSelectedGroup(null);
+  }
+
+  async function loadMembers(g: any) {
+    setSelectedGroup(g); setMembersLoading(true); setMembers([]);
+    const d = await authFetch(`/api/admin/customer-groups/${g.id}/members`).then(r => r.json());
+    setMembers(d.members || []); setMembersLoading(false);
+  }
+
+  async function assignCustomer() {
+    if (!assignEmail.trim() || !selectedGroup) return;
+    setAssignLoading(true);
+    try {
+      const custsR = await authFetch("/api/admin/customers").then(r => r.json());
+      const cust = (custsR.customers || []).find((c: any) => c.email.toLowerCase() === assignEmail.trim().toLowerCase());
+      if (!cust) { toast({ title: "Customer not found", variant: "destructive" }); setAssignLoading(false); return; }
+      const d = await authFetch(`/api/admin/customers/${cust.id}/group`, { method: "PATCH", body: JSON.stringify({ group_id: selectedGroup.id }) }).then(r => r.json());
+      if (d.success) { toast({ title: `${cust.email} assigned to ${selectedGroup.name}` }); setAssignEmail(""); loadMembers(selectedGroup); qc.invalidateQueries({ queryKey: ["/api/admin/customer-groups"] }); }
+      else toast({ title: d.error || "Failed", variant: "destructive" });
+    } catch { toast({ title: "Failed", variant: "destructive" }); }
+    setAssignLoading(false);
+  }
+
+  async function removeFromGroup(custId: number) {
+    await authFetch(`/api/admin/customers/${custId}/group`, { method: "PATCH", body: JSON.stringify({ group_id: null }) });
+    loadMembers(selectedGroup); qc.invalidateQueries({ queryKey: ["/api/admin/customer-groups"] });
+    toast({ title: "Removed from group" });
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-bold text-white">Customer Groups</h2>
+          <p className="text-xs text-white/40 mt-0.5">Tag customers as VIP, Reseller, Banned etc. and apply group discounts</p>
+        </div>
+        <Button onClick={openCreate} className="bg-gradient-to-r from-indigo-600 to-violet-600 border-0 text-white font-bold hover:opacity-90 gap-2 h-9">
+          <Plus className="w-4 h-4" /> New Group
+        </Button>
+      </div>
+
+      {showForm && (
+        <div className="rounded-2xl border border-indigo-500/25 p-5 space-y-4" style={{ background: "rgba(99,102,241,.07)" }}>
+          <p className="text-sm font-semibold text-indigo-300">{editing ? "Edit Group" : "Create New Group"}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-white/50 mb-1 block">Group Name *</label>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. VIP Customers"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-indigo-500/60" />
+            </div>
+            <div>
+              <label className="text-xs text-white/50 mb-1 block">Discount % (0 = none)</label>
+              <input type="number" min="0" max="100" value={discountPct} onChange={e => setDiscountPct(parseInt(e.target.value)||0)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500/60" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-white/50 mb-1.5 block">Group Color</label>
+            <div className="flex gap-2 flex-wrap">
+              {GROUP_COLORS.map(c => (
+                <button key={c} onClick={() => setColor(c)}
+                  className={`w-7 h-7 rounded-full border-2 transition-all ${color===c?"border-white scale-110":"border-transparent hover:scale-105"}`}
+                  style={{ background: c }} />
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-white/50 mb-1 block">Description (optional)</label>
+            <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Internal note about this group"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-indigo-500/60" />
+          </div>
+          <div className="flex items-center gap-3">
+            <Switch checked={isBanned} onCheckedChange={setIsBanned} />
+            <span className="text-sm text-white/70">Banned group — suspend all members automatically</span>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={saveGroup} disabled={saving} className="bg-indigo-600 hover:bg-indigo-500 border-0 text-white font-bold gap-2">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? "Saving…" : editing ? "Save Changes" : "Create Group"}
+            </Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} className="text-white/50 hover:text-white">Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+      ) : groups.length === 0 ? (
+        <div className="text-center py-14 rounded-xl border border-white/8" style={{ background: "rgba(255,255,255,.02)" }}>
+          <Users className="w-8 h-8 text-white/10 mx-auto mb-2" />
+          <p className="text-white/30 text-sm">No groups yet — create your first one</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {groups.map((g: any) => (
+            <div key={g.id}
+              className={`rounded-xl border p-4 cursor-pointer transition-all ${selectedGroup?.id===g.id?"border-indigo-500/50 bg-indigo-600/10":"border-white/8 hover:border-white/15"}`}
+              style={selectedGroup?.id!==g.id?{background:"rgba(255,255,255,.03)"}:{}}
+              onClick={() => loadMembers(g)}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: (g.color||"#6366f1")+"22" }}>
+                  <div className="w-4 h-4 rounded-full" style={{ background: g.color||"#6366f1" }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{g.name}</p>
+                  {g.is_banned ? <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded">Banned</span>
+                    : g.discount_percent>0 ? <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">{g.discount_percent}% off</span> : null}
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-white/40">{g.member_count||0} member{g.member_count!==1?"s":""}</span>
+                <div className="flex gap-1">
+                  <button onClick={e => { e.stopPropagation(); openEdit(g); }} className="p-1 rounded hover:bg-white/10 text-white/30 hover:text-white transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={e => { e.stopPropagation(); deleteGroup(g.id); }} className="p-1 rounded hover:bg-red-500/10 text-white/30 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {selectedGroup && (
+        <div className="rounded-2xl border border-white/10 p-5 space-y-4" style={{ background: "rgba(255,255,255,.03)" }}>
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 rounded-full" style={{ background: selectedGroup.color||"#6366f1" }} />
+            <h3 className="text-sm font-bold text-white">{selectedGroup.name} — Members</h3>
+            <span className="ml-auto text-xs text-white/30">{members.length} member{members.length!==1?"s":""}</span>
+          </div>
+          <div className="flex gap-2">
+            <input value={assignEmail} onChange={e => setAssignEmail(e.target.value)} placeholder="customer@email.com"
+              onKeyDown={e => e.key==="Enter" && assignCustomer()}
+              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-indigo-500/60" />
+            <Button onClick={assignCustomer} disabled={assignLoading||!assignEmail.trim()}
+              className="bg-indigo-600 hover:bg-indigo-500 border-0 text-white font-bold gap-1.5 shrink-0">
+              {assignLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+              Assign
+            </Button>
+          </div>
+          {membersLoading ? (
+            <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /></div>
+          ) : members.length===0 ? (
+            <p className="text-white/25 text-sm text-center py-4">No members yet — assign a customer above</p>
+          ) : (
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {members.map((m: any) => (
+                <div key={m.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-white/5" style={{ background: "rgba(255,255,255,.03)" }}>
+                  <div className="w-7 h-7 rounded-full bg-indigo-600/30 flex items-center justify-center shrink-0">
+                    <span className="text-xs font-bold text-indigo-400">{(m.name||m.email)[0].toUpperCase()}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white truncate">{m.name||"—"}</p>
+                    <p className="text-[11px] text-white/40 truncate">{m.email}</p>
+                  </div>
+                  {m.suspended?<span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 rounded">Suspended</span>:null}
+                  <button onClick={() => removeFromGroup(m.id)} className="p-1 rounded hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-colors shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

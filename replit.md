@@ -23,7 +23,7 @@ Standalone Express + React subscription store app (NOT in pnpm workspace). Runs 
 
 **Dashboard tabs:** Wallet, Referral (with tier badge), Payments, My Products, API Keys, Security, Profile
 
-**Admin tabs:** Dashboard, Plans, Accounts, Promos, Transactions, API Keys, Customers, Email Blast, Campaigns, Support, Logs, Settings, Sub-Admins, Geo Restrict, VPS Manager, Domains
+**Admin tabs:** Dashboard, Plans, Accounts (with subscriber expiry display), Promos, Transactions, API Keys (with reseller docs), Customers, Customer Groups, Conversion Funnel, Ratings, Feature Requests, Email Blast, Campaigns, Support, Logs, Settings, Sub-Admins, Geo Restrict, VPS Manager, Domains
 
 **New API endpoints (server):**
 - `POST /api/customer/wallet/topup/initiate` + `/verify` — Paystack wallet top-up
@@ -33,7 +33,18 @@ Standalone Express + React subscription store app (NOT in pnpm workspace). Runs 
 - `GET/POST/DELETE /api/admin/campaigns` + `/:id/send` — campaign management
 - `GET /api/v1/plans`, `POST /api/v1/orders` — public reseller API
 
-**New DB tables:** `wallets`, `wallet_transactions`, `referrals` (both SQLite and PG); `transactions.expires_at` column added
+**New API endpoints added this session:**
+- `POST /api/track` — funnel event tracking (page_view, plan_view, checkout_start, checkout_complete)
+- `GET /api/admin/funnel` — conversion funnel analytics with dropoff rates, top plans, live activity
+- `GET/POST/PUT/DELETE /api/admin/customer-groups` — group management
+- `PATCH /api/admin/customers/:id/group` — assign customer to group
+- `GET /api/admin/customer-groups/:id/members` — list group members
+- Group discount applied at checkout (both standard and hybrid wallet+Paystack routes)
+- `GET /api/v1/plans` + `POST /api/v1/orders` — reseller public API (documented in API Keys tab)
+
+**New DB tables:** `wallets`, `wallet_transactions`, `referrals` (both SQLite and PG); `transactions.expires_at` column added; `funnel_events`, `customer_groups`, `customers.group_id` added
+
+**Subscriber expiry display:** `accounts.ts` now stores `expiresAt` in `usedBy` records; Admin Accounts tab shows per-subscriber expiry with color coding (expired=red, expiring soon=amber)
 
 ## Stack
 

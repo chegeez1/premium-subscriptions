@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from "uuid";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { storage, dbSettingsGet, dbSettingsSet } from "./storage";
+import { storage, dbSettingsGet, dbSettingsSet, getDb, dbType } from "./storage";
 import { accountManager } from "./accounts";
 import { sendAccountEmail, sendPasswordResetEmail, sendSuspensionEmail, sendUnsuspensionEmail, sendBulkEmail } from "./email";
 import { sendTelegramMessage, notifyNewOrder, notifyNewCustomer, notifyPaymentFailed, isTelegramConfigured, notifySupportEscalation } from "./telegram";
@@ -250,10 +250,24 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
     planId: transaction.planId,
   };
 
+  // ─── Compute expiry date from plan duration ───────────────────────
+  let expiresAt: string | null = null;
+  try {
+    const cats = buildPlansResponse();
+    for (const cat of Object.values(cats) as any[]) {
+      if (cat.plans[transaction.planId]) {
+        const dur = cat.plans[transaction.planId].duration || "1 Month";
+        expiresAt = new Date(Date.now() + parseDurationMs(dur)).toISOString();
+        break;
+      }
+    }
+  } catch (_) {}
+
   const account = accountManager.assignAccount(
     transaction.planId,
     transaction.customerEmail,
-    transaction.customerName || "Customer"
+    transaction.customerName || "Customer",
+    expiresAt
   );
   if (!account) {
     logDelivery({ ...logBase, method: "account_assignment", status: "failed", details: "No account available in stock" });
@@ -297,19 +311,6 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
       : `Email delivery failed: ${emailResult.error || "unknown error"}`,
     metadata: { recipientEmail: transaction.customerEmail },
   });
-
-  // ─── Compute expiry date from plan duration ───────────────────────
-  let expiresAt: string | null = null;
-  try {
-    const cats = buildPlansResponse();
-    for (const cat of Object.values(cats) as any[]) {
-      if (cat.plans[transaction.planId]) {
-        const dur = cat.plans[transaction.planId].duration || "1 Month";
-        expiresAt = new Date(Date.now() + parseDurationMs(dur)).toISOString();
-        break;
-      }
-    }
-  } catch (_) {}
 
   await storage.updateTransaction(transaction.reference, {
     status: "success",
@@ -548,6 +549,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
 
+      // ─── Apply customer group discount ────────────────────────────────────
+      try {
+        if (dbType === "sqlite") {
+          const rawDb = getDb();
+          const custRow: any = rawDb.prepare("SELECT group_id FROM customers WHERE email=?").get(email);
+          if (custRow?.group_id) {
+            const grpRow: any = rawDb.prepare("SELECT discount_percent FROM customer_groups WHERE id=?").get(custRow.group_id);
+            if (grpRow?.discount_percent > 0) {
+              finalAmount = Math.max(0, finalAmount - Math.round((finalAmount * grpRow.discount_percent) / 100));
+            }
+          }
+        }
+      } catch (_) {}
+
       const reference = `SUB-${planId.toUpperCase()}-${Date.now()}`;
       await storage.createTransaction({
         reference,
@@ -673,6 +688,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             : Math.max(0, finalAmount - p.discountValue);
         }
       }
+
+      // Apply group discount
+      try {
+        if (dbType === "sqlite") {
+          const rawDb = getDb();
+          const custGrpRow: any = rawDb.prepare(
+            "SELECT cg.discount_percent FROM customers c LEFT JOIN customer_groups cg ON c.group_id=cg.id WHERE c.id=?"
+          ).get(customerId);
+          if (custGrpRow?.discount_percent > 0) {
+            finalAmount = Math.max(0, finalAmount - Math.round((finalAmount * custGrpRow.discount_percent) / 100));
+          }
+        }
+      } catch (_) {}
 
       const walletUse = Math.min(Math.max(0, walletAmountToUse || 0), finalAmount);
       const paystackAmount = finalAmount - walletUse;
@@ -3641,6 +3669,147 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
+  });
+
+  // ─── Funnel Tracking (public — no auth) ────────────────────────────────────
+  app.post("/api/track", async (req, res) => {
+    try {
+      const { event_type, session_id, plan_id, plan_name, customer_email } = req.body;
+      if (!event_type) return res.json({ success: true });
+      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
+      if (dbType === "sqlite") {
+        getDb().prepare(
+          `INSERT INTO funnel_events (event_type, session_id, plan_id, plan_name, customer_email, ip) VALUES (?,?,?,?,?,?)`
+        ).run(event_type, session_id || null, plan_id || null, plan_name || null, customer_email || null, ip);
+      }
+      res.json({ success: true });
+    } catch { res.json({ success: true }); }
+  });
+
+  // ─── Admin: Funnel Analytics ────────────────────────────────────────────────
+  app.get("/api/admin/funnel", adminAuthMiddleware, (req, res) => {
+    try {
+      const days = parseInt((req.query.days as string) || "30");
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+      if (dbType !== "sqlite") {
+        return res.json({ success: true, funnel: [], conversionRate: 0, topPlans: [], dailyPaid: [], days });
+      }
+      const db = getDb();
+
+      const steps = ["page_view", "plan_view", "checkout_start"] as const;
+      const funnel: { step: string; count: number }[] = steps.map(step => {
+        const row = db.prepare(
+          `SELECT COUNT(DISTINCT COALESCE(session_id, ip, 'anon')) as cnt FROM funnel_events WHERE event_type=? AND created_at >= ?`
+        ).get(step, since) as any;
+        return { step, count: row?.cnt || 0 };
+      });
+
+      const paidRow = db.prepare(
+        `SELECT COUNT(*) as cnt FROM transactions WHERE status='paid' AND created_at >= ?`
+      ).get(since) as any;
+      funnel.push({ step: "checkout_complete", count: paidRow?.cnt || 0 });
+
+      const conversionRate = funnel[0].count > 0
+        ? Math.round((funnel[funnel.length - 1].count / funnel[0].count) * 100) : 0;
+
+      const topPlans = db.prepare(
+        `SELECT plan_name, COUNT(*) as cnt FROM funnel_events WHERE event_type='plan_view' AND plan_name IS NOT NULL AND created_at >= ? GROUP BY plan_name ORDER BY cnt DESC LIMIT 6`
+      ).all(since) as any[];
+
+      const dailyPaid = db.prepare(
+        `SELECT date(created_at) as day, COUNT(*) as cnt FROM transactions WHERE status='paid' AND created_at >= ? GROUP BY day ORDER BY day`
+      ).all(since) as any[];
+
+      const recentEvents = db.prepare(
+        `SELECT event_type, plan_name, ip, created_at FROM funnel_events ORDER BY id DESC LIMIT 30`
+      ).all() as any[];
+
+      res.json({ success: true, funnel, conversionRate, topPlans, dailyPaid, recentEvents, days });
+    } catch {
+      res.json({ success: true, funnel: [], conversionRate: 0, topPlans: [], dailyPaid: [], recentEvents: [], days: 30 });
+    }
+  });
+
+  // ─── Admin: Customer Groups CRUD ───────────────────────────────────────────
+  app.get("/api/admin/customer-groups", adminAuthMiddleware, (_req, res) => {
+    try {
+      if (dbType !== "sqlite") return res.json({ success: true, groups: [] });
+      const db = getDb();
+      const groups = db.prepare(`SELECT * FROM customer_groups ORDER BY created_at DESC`).all() as any[];
+      const withCounts = groups.map((g: any) => {
+        const row = db.prepare(`SELECT COUNT(*) as cnt FROM customers WHERE group_id=?`).get(g.id) as any;
+        return { ...g, member_count: row?.cnt || 0 };
+      });
+      res.json({ success: true, groups: withCounts });
+    } catch { res.json({ success: true, groups: [] }); }
+  });
+
+  app.post("/api/admin/customer-groups", adminAuthMiddleware, (req, res) => {
+    try {
+      if (dbType !== "sqlite") return res.status(400).json({ success: false, error: "Not supported" });
+      const { name, color, discount_percent, is_banned, description } = req.body;
+      if (!name?.trim()) return res.status(400).json({ success: false, error: "Name required" });
+      const result = getDb().prepare(
+        `INSERT INTO customer_groups (name, color, discount_percent, is_banned, description) VALUES (?,?,?,?,?)`
+      ).run(name.trim(), color || "#6366f1", discount_percent || 0, is_banned ? 1 : 0, description || null);
+      res.json({ success: true, id: result.lastInsertRowid });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.put("/api/admin/customer-groups/:id", adminAuthMiddleware, (req, res) => {
+    try {
+      if (dbType !== "sqlite") return res.json({ success: false });
+      const { name, color, discount_percent, is_banned, description } = req.body;
+      const db = getDb();
+      db.prepare(
+        `UPDATE customer_groups SET name=?, color=?, discount_percent=?, is_banned=?, description=? WHERE id=?`
+      ).run(name, color || "#6366f1", discount_percent || 0, is_banned ? 1 : 0, description || null, req.params.id);
+      // Sync banned status: if marked is_banned, suspend all members
+      if (is_banned) {
+        db.prepare(`UPDATE customers SET suspended=1 WHERE group_id=?`).run(req.params.id);
+      } else {
+        db.prepare(`UPDATE customers SET suspended=0 WHERE group_id=?`).run(req.params.id);
+      }
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.delete("/api/admin/customer-groups/:id", adminAuthMiddleware, (req, res) => {
+    try {
+      if (dbType !== "sqlite") return res.json({ success: false });
+      const db = getDb();
+      db.prepare(`UPDATE customers SET group_id=NULL WHERE group_id=?`).run(req.params.id);
+      db.prepare(`DELETE FROM customer_groups WHERE id=?`).run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.patch("/api/admin/customers/:id/group", adminAuthMiddleware, (req, res) => {
+    try {
+      if (dbType !== "sqlite") return res.json({ success: false });
+      const { group_id } = req.body;
+      const db = getDb();
+      db.prepare(`UPDATE customers SET group_id=? WHERE id=?`).run(group_id || null, req.params.id);
+      if (group_id) {
+        const grp = db.prepare(`SELECT is_banned FROM customer_groups WHERE id=?`).get(group_id) as any;
+        if (grp?.is_banned) db.prepare(`UPDATE customers SET suspended=1 WHERE id=?`).run(req.params.id);
+        else db.prepare(`UPDATE customers SET suspended=0 WHERE id=?`).run(req.params.id);
+      } else {
+        db.prepare(`UPDATE customers SET suspended=0 WHERE id=?`).run(req.params.id);
+      }
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.get("/api/admin/customer-groups/:id/members", adminAuthMiddleware, (req, res) => {
+    try {
+      if (dbType !== "sqlite") return res.json({ success: true, members: [] });
+      const members = getDb().prepare(
+        `SELECT id, email, name, suspended, created_at FROM customers WHERE group_id=? ORDER BY created_at DESC`
+      ).all(req.params.id) as any[];
+      res.json({ success: true, members });
+    } catch { res.json({ success: true, members: [] }); }
   });
 
   return httpServer;

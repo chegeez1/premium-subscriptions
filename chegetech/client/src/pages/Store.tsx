@@ -78,6 +78,20 @@ function getStoredTheme(): "dark" | "light" {
 function getCustomerToken() { try { return localStorage.getItem("customer_token") || ""; } catch { return ""; } }
 function getWalletHidden() { try { return localStorage.getItem("ct_wallet_hidden") === "1"; } catch { return false; } }
 
+function getSessionId(): string {
+  let sid = sessionStorage.getItem("ct_sid");
+  if (!sid) { sid = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem("ct_sid", sid); }
+  return sid;
+}
+
+function track(event_type: string, extra?: Record<string, string>) {
+  fetch("/api/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event_type, session_id: getSessionId(), ...extra }),
+  }).catch(() => {});
+}
+
 export default function Store() {
   const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
@@ -86,6 +100,8 @@ export default function Store() {
   const [cartOpen, setCartOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">(getStoredTheme);
   const [walletHidden, setWalletHidden] = useState(getWalletHidden);
+
+  useEffect(() => { track("page_view"); }, []);
 
   const customerToken = getCustomerToken();
 
@@ -157,6 +173,7 @@ export default function Store() {
   const cartTotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
   function addToCart(plan: Plan) {
+    track("plan_view", { plan_id: plan.planId, plan_name: plan.name });
     setCart((prev) => {
       const existing = prev.find((i) => i.planId === plan.planId);
       if (existing) {
@@ -180,6 +197,7 @@ export default function Store() {
   }
 
   function checkoutItem(planId: string) {
+    track("checkout_start", { plan_id: planId });
     setCartOpen(false);
     setLocation(`/checkout?planId=${planId}`);
   }
