@@ -241,10 +241,11 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
       // so they cannot interfere with the next scheduled cron run.
       if (mode === "previous_month" && !targetEmail && dbSettingsGet(dedup)) continue;
 
-      // Filter this customer's successful orders in the period
+      // Filter this customer's successful orders in the period (case-insensitive email match)
+      const customerEmailLower = customer.email.toLowerCase();
       const orders = txs.filter((t: any) =>
         t.status === "success" &&
-        t.customerEmail === customer.email &&
+        (t.customerEmail || "").toLowerCase() === customerEmailLower &&
         new Date(t.createdAt || 0).getTime() >= periodStart &&
         new Date(t.createdAt || 0).getTime() < periodEnd
       );

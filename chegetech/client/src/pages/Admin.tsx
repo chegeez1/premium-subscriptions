@@ -1291,7 +1291,7 @@ function MonthlySummarySection({ inputCls }: { inputCls: string }) {
         <div className="space-y-3">
           <p className="text-xs text-white/50 uppercase tracking-wider font-semibold">Manual Trigger</p>
           <p className="text-xs text-white/35">
-            Trigger the summary right now — useful for testing. Uses <strong className="text-white/50">current month so far</strong> as the order window (cron uses previous month). Leave the email field blank to send to all eligible customers, or enter a specific email to test with one recipient (dedup is bypassed for single-email triggers).
+            Trigger the summary right now — useful for testing. Uses <strong className="text-white/50">current month so far</strong> as the order window (cron uses previous month). Deduplication is bypassed for all manual triggers, so you can safely re-send without affecting the scheduled cron run. Leave the email field blank to send to all eligible customers, or enter a specific email to test with one recipient.
           </p>
           <div className="flex gap-2">
             <input
