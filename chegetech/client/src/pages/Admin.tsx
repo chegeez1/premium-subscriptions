@@ -24,7 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups" | "flash-sales";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -134,7 +134,7 @@ export default function Admin() {
 
   if (!token) return <LoginFlow onLogin={login} />;
 
-  const allTabs: { id: Tab; label: string; icon: any; superOnly?: boolean }[] = [
+  const allTabs: { id: Tab; label: string; icon: any; superOnly?: boolean; alwaysVisible?: boolean }[] = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "plans", label: "Plans & Offers", icon: Tags },
     { id: "accounts", label: "Accounts", icon: Package },
@@ -150,6 +150,7 @@ export default function Admin() {
     { id: "emailblast", label: "Email Blast", icon: Send },
     { id: "campaigns", label: "Campaigns", icon: Send },
     { id: "support", label: "Support", icon: MessageCircle },
+    { id: "whatsapp", label: "WhatsApp Bot", icon: MessageCircle, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "geo-restrict", label: "Geo Restrict", icon: Globe, superOnly: true },
@@ -159,6 +160,7 @@ export default function Admin() {
   ];
 
   const visibleTabs = allTabs.filter(tab => {
+    if (tab.alwaysVisible) return true;
     if (adminRole === "super") return true;
     if (tab.superOnly) return false;
     if (adminPermissions.length === 0) return false;
@@ -203,22 +205,41 @@ export default function Admin() {
         </button>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {visibleTabs.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              data-testid={`nav-${id}`}
-              onClick={() => setActiveTab(id)}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                activeTab === id
-                  ? "bg-gradient-to-r from-indigo-600/80 to-violet-600/80 text-white shadow-lg border border-white/10"
-                  : "text-white/50 hover:text-white hover:bg-white/5"
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-              {id === "support" && <SupportBadgeCount />}
-            </button>
-          ))}
+          {visibleTabs.map(({ id, label, icon: Icon }) => {
+            const isWA = id === "whatsapp";
+            const isActive = activeTab === id;
+            return (
+              <button
+                key={id}
+                data-testid={`nav-${id}`}
+                onClick={() => setActiveTab(id as Tab)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  isActive && isWA
+                    ? "text-white shadow-lg border"
+                    : isActive
+                    ? "bg-gradient-to-r from-indigo-600/80 to-violet-600/80 text-white shadow-lg border border-white/10"
+                    : isWA
+                    ? "hover:bg-white/5"
+                    : "text-white/50 hover:text-white hover:bg-white/5"
+                }`}
+                style={isWA && isActive
+                  ? { background: "linear-gradient(135deg,rgba(18,140,126,.7),rgba(37,211,102,.5))", borderColor: "rgba(37,211,102,.3)" }
+                  : isWA && !isActive
+                  ? { color: "#25D366" }
+                  : {}}
+              >
+                {isWA ? (
+                  <svg viewBox="0 0 24 24" className="w-4 h-4 shrink-0" fill="currentColor">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/>
+                  </svg>
+                ) : (
+                  <Icon className="w-4 h-4" />
+                )}
+                {label}
+                {id === "support" && <SupportBadgeCount />}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="p-3 border-t border-white/8 space-y-1">
@@ -258,6 +279,7 @@ export default function Admin() {
           {activeTab === "campaigns" && <CampaignsTab />}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "logs" && <LogsTab />}
+          {activeTab === "whatsapp" && <WhatsAppTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
           {activeTab === "vps" && adminRole === "super" && <VpsTab />}
@@ -4395,6 +4417,104 @@ function CustomersTab() {
         </div>
       )}
     </>
+  );
+}
+
+// ─── WhatsApp Tab (dedicated page for all admin roles) ───────────────────────
+function WhatsAppTab() {
+  const inputCls = "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-indigo-500/50";
+
+  const { data } = useQuery<any>({
+    queryKey: ["/api/admin/whatsapp/status"],
+    queryFn: () => fetch("/api/admin/whatsapp/status", {
+      headers: { Authorization: `Bearer ${localStorage.getItem("admin_token") || ""}` }
+    }).then(r => r.json()),
+    refetchInterval: (d) => {
+      const s = d?.state?.data?.status;
+      return (s === "connecting" || s === "qr_ready") ? 2000 : 5000;
+    },
+  });
+  const status = data?.status ?? "disconnected";
+  const isConnected = status === "connected";
+
+  const COMMANDS = [
+    { cmd: "stats", desc: "Today's revenue, weekly & all-time totals" },
+    { cmd: "orders 10", desc: "Last N completed orders with customer details" },
+    { cmd: "pending", desc: "All unprocessed/pending orders" },
+    { cmd: "customers", desc: "Total, verified, suspended, new in 24h" },
+    { cmd: "stock", desc: "Every plan — in stock or out of stock" },
+    { cmd: "tickets", desc: "Open & escalated support tickets" },
+    { cmd: "find email@x.com", desc: "Full customer profile with orders & wallet" },
+    { cmd: "wallet email@x.com", desc: "Check a customer's wallet balance" },
+    { cmd: "suspend email@x.com", desc: "Suspend a customer account instantly" },
+    { cmd: "unsuspend email@x.com", desc: "Restore a suspended account" },
+  ];
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      {/* Hero header */}
+      <div className="glass rounded-2xl overflow-hidden">
+        <div className="relative px-6 py-8 flex items-center gap-5"
+          style={{ background: "linear-gradient(135deg, rgba(37,211,102,.12) 0%, rgba(37,211,102,.04) 100%)", borderBottom: "1px solid rgba(37,211,102,.15)" }}>
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-xl"
+            style={{ background: "linear-gradient(135deg,#128C7E,#25D366)", boxShadow: "0 0 30px rgba(37,211,102,.35)" }}>
+            <svg viewBox="0 0 24 24" className="w-8 h-8" fill="white">
+              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/>
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h1 className="text-xl font-bold text-white mb-1">WhatsApp Admin Bot</h1>
+            <p className="text-sm text-white/50 leading-relaxed">
+              Link your WhatsApp to command the store directly — check stats, manage customers, and monitor orders from your phone.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {isConnected ? (
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 px-3 py-1.5 rounded-full"
+                style={{ background: "rgba(37,211,102,.15)", border: "1px solid rgba(37,211,102,.3)" }}>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                Linked
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-white/40 px-3 py-1.5 rounded-full"
+                style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)" }}>
+                <span className="w-1.5 h-1.5 rounded-full bg-white/20" />
+                Not linked
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Connection panel */}
+        <div className="p-6">
+          <WhatsAppWebPanel inputCls={inputCls} />
+        </div>
+      </div>
+
+      {/* Admin command reference */}
+      <div className="glass rounded-2xl p-6 space-y-4">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-5 h-5 rounded flex items-center justify-center" style={{ background: "rgba(99,102,241,.2)" }}>
+            <svg className="w-3 h-3 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <p className="text-[10px] font-semibold text-white/40 uppercase tracking-widest">Available Admin Commands</p>
+          <span className="text-[10px] text-white/20 ml-auto">Only works from your linked admin number</span>
+        </div>
+        <div className="space-y-1.5">
+          {COMMANDS.map(({ cmd, desc }) => (
+            <div key={cmd} className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,.03)" }}>
+              <code className="text-xs font-mono font-bold text-emerald-400 shrink-0 min-w-[140px]">{cmd}</code>
+              <span className="text-xs text-white/40">{desc}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-white/20 pt-1">
+          Commands work with or without a leading slash. Just type <code className="text-white/35">help</code> in WhatsApp after linking to see the full list.
+        </p>
+      </div>
+    </div>
   );
 }
 
