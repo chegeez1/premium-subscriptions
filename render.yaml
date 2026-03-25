@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: premium-subscriptions
+    runtime: node
+    rootDir: chegetech
+    buildCommand: npm install && npm rebuild better-sqlite3 && npm run build
+    startCommand: NODE_ENV=production node dist/index.cjs
+    envVars:
+      - key: NODE_ENV
+        value: production
