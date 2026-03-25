@@ -247,16 +247,25 @@ export default function Dashboard() {
     finally { setTopupLoading(false); }
   }
 
+  // Determine if input is email or numeric ID
+  const sendRecipientIsEmail = sendEmail.includes("@");
+  const sendRecipientIsId = !sendRecipientIsEmail && /^\d+$/.test(sendEmail.trim());
+
   async function sendWalletBalance() {
     const amount = parseFloat(sendAmount);
-    if (!sendEmail.trim() || !sendEmail.includes("@")) { toast({ title: "Enter a valid recipient email", variant: "destructive" }); return; }
+    const recipient = sendEmail.trim();
+    if (!recipient) { toast({ title: "Enter recipient's email or customer ID", variant: "destructive" }); return; }
+    if (!sendRecipientIsEmail && !sendRecipientIsId) { toast({ title: "Enter a valid email address or numeric customer ID", variant: "destructive" }); return; }
     if (!amount || amount < 10) { toast({ title: "Minimum transfer is KES 10", variant: "destructive" }); return; }
     if (!sendConfirm) { setSendConfirm(true); return; }
     setSendLoading(true);
+    const body: Record<string, any> = { amount, note: sendNote.trim() || undefined };
+    if (sendRecipientIsEmail) body.recipientEmail = recipient;
+    else body.recipientId = parseInt(recipient, 10);
     try {
       const data = await customerFetch("/api/customer/wallet/send", {
         method: "POST",
-        body: JSON.stringify({ recipientEmail: sendEmail.trim(), amount, note: sendNote.trim() || undefined }),
+        body: JSON.stringify(body),
       });
       if (!data.success) { toast({ title: data.error || "Transfer failed", variant: "destructive" }); setSendConfirm(false); return; }
       setSendSuccess({ recipient: data.recipientName || sendEmail, amount });
@@ -915,13 +924,20 @@ export default function Dashboard() {
                   ) : (
                     <>
                       <div className="space-y-2">
-                        <Input
-                          type="email"
-                          placeholder="Recipient's email address"
-                          value={sendEmail}
-                          onChange={e => { setSendEmail(e.target.value); setSendConfirm(false); }}
-                          className="bg-white/5 border-white/10 text-white placeholder:text-white/25"
-                        />
+                        <div className="relative">
+                          <Input
+                            type="text"
+                            placeholder="Email address or Customer ID (e.g. 42)"
+                            value={sendEmail}
+                            onChange={e => { setSendEmail(e.target.value); setSendConfirm(false); }}
+                            className="bg-white/5 border-white/10 text-white placeholder:text-white/25"
+                          />
+                          {sendEmail.trim() && (
+                            <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold px-1.5 py-0.5 rounded ${sendRecipientIsEmail ? "bg-emerald-500/20 text-emerald-400" : sendRecipientIsId ? "bg-indigo-500/20 text-indigo-400" : "bg-red-500/20 text-red-400"}`}>
+                              {sendRecipientIsEmail ? "Email" : sendRecipientIsId ? "ID" : "Invalid"}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex gap-2">
                           <Input
                             type="number"
@@ -932,7 +948,7 @@ export default function Dashboard() {
                           />
                           <Button
                             onClick={sendWalletBalance}
-                            disabled={sendLoading || !sendEmail || !sendAmount}
+                            disabled={sendLoading || !sendEmail.trim() || !sendAmount || (!sendRecipientIsEmail && !sendRecipientIsId)}
                             className={`shrink-0 font-semibold px-4 ${sendConfirm ? "bg-amber-600 hover:bg-amber-500 animate-pulse" : "bg-indigo-600 hover:bg-indigo-500"} text-white`}
                           >
                             {sendLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : sendConfirm ? "Confirm Send" : "Send"}
@@ -947,7 +963,10 @@ export default function Dashboard() {
                       </div>
                       {sendConfirm && (
                         <div className="mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-2">
-                          <p className="text-xs text-amber-300">Send <strong>KES {parseFloat(sendAmount).toLocaleString()}</strong> to <strong>{sendEmail}</strong>?</p>
+                          <p className="text-xs text-amber-300">
+                            Send <strong>KES {parseFloat(sendAmount).toLocaleString()}</strong> to{" "}
+                            <strong>{sendRecipientIsId ? `Customer #${sendEmail}` : sendEmail}</strong>?
+                          </p>
                           <button onClick={() => setSendConfirm(false)} className="text-white/30 hover:text-white/60 text-xs">Cancel</button>
                         </div>
                       )}

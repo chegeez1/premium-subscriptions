@@ -2163,17 +2163,47 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const senderId = req.customer.id;
       const senderEmail = req.customer.email;
-      const { recipientEmail, amount, note } = req.body;
+      const { recipientEmail, recipientId, amount, note } = req.body;
 
-      if (!recipientEmail || !amount) {
-        return res.status(400).json({ success: false, error: "Recipient email and amount are required." });
+      // Accept either recipientEmail or recipientId
+      const recipientKey = recipientEmail?.trim() || recipientId?.toString().trim();
+      if (!recipientKey || !amount) {
+        return res.status(400).json({ success: false, error: "Recipient (email or customer ID) and amount are required." });
       }
-      if (recipientEmail.toLowerCase() === senderEmail.toLowerCase()) {
-        return res.status(400).json({ success: false, error: "You cannot send money to yourself." });
-      }
+
       const amountNum = parseFloat(amount);
       if (isNaN(amountNum) || amountNum < 10) {
         return res.status(400).json({ success: false, error: "Minimum transfer amount is KES 10." });
+      }
+
+      // Resolve recipient — match by email OR numeric ID
+      let recipient: any = null;
+      const lookupById = !recipientEmail?.trim() && recipientId;
+      const numericId = parseInt(recipientKey, 10);
+      const isId = !isNaN(numericId) && numericId > 0 && !recipientKey.includes("@");
+
+      if (dbType === "sqlite") {
+        if (isId) {
+          recipient = getDb().prepare("SELECT id, email, name FROM customers WHERE id=? AND suspended=0").get(numericId) as any;
+        } else {
+          recipient = getDb().prepare("SELECT id, email, name FROM customers WHERE email=? AND suspended=0").get(recipientKey.toLowerCase()) as any;
+        }
+      } else {
+        const customers = await storage.getAllCustomers();
+        if (isId) {
+          recipient = customers.find((c: any) => c.id === numericId && !c.suspended);
+        } else {
+          recipient = customers.find((c: any) => c.email.toLowerCase() === recipientKey.toLowerCase() && !c.suspended);
+        }
+      }
+
+      if (!recipient) {
+        return res.status(404).json({ success: false, error: "Recipient not found or account is suspended." });
+      }
+
+      // Self-send check (after resolving)
+      if (recipient.id === senderId) {
+        return res.status(400).json({ success: false, error: "You cannot send money to yourself." });
       }
 
       // Check sender balance
@@ -2182,36 +2212,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ success: false, error: `Insufficient balance. Your wallet has KES ${senderWallet?.balance ?? 0}.` });
       }
 
-      // Find recipient
-      let recipient: any = null;
-      if (dbType === "sqlite") {
-        recipient = getDb().prepare("SELECT id, email, name FROM customers WHERE email=? AND suspended=0").get(recipientEmail.toLowerCase()) as any;
-      } else {
-        const customers = await storage.getAllCustomers();
-        recipient = customers.find((c: any) => c.email.toLowerCase() === recipientEmail.toLowerCase() && !c.suspended);
-      }
-      if (!recipient) {
-        return res.status(404).json({ success: false, error: "Recipient not found or account is suspended." });
-      }
-
       const ref = `TRANSFER-${senderId}-${recipient.id}-${Date.now()}`;
       const msgLabel = note?.trim() ? ` · "${note.trim()}"` : "";
       const senderName = req.customer.name || senderEmail;
-      const recipientName = recipient.name || recipientEmail;
+      const recipientName = recipient.name || recipient.email;
+      const recipientLabel = recipient.email;
 
       // Debit sender
-      const ok = await storage.debitWallet(senderId, amountNum, `Sent to ${recipientEmail}${msgLabel}`, ref);
+      const ok = await storage.debitWallet(senderId, amountNum, `Sent to ${recipientLabel} (ID #${recipient.id})${msgLabel}`, ref);
       if (!ok) return res.status(400).json({ success: false, error: "Transfer failed — insufficient balance." });
 
       // Credit recipient
-      await storage.creditWallet(recipient.id, amountNum, `Received from ${senderEmail}${msgLabel}`, ref);
+      await storage.creditWallet(recipient.id, amountNum, `Received from ${senderEmail} (ID #${senderId})${msgLabel}`, ref);
 
       // Notifications
-      await storage.createNotification(senderId, "wallet", "Transfer Sent 💸", `KES ${amountNum.toLocaleString()} sent to ${recipientEmail}.`);
+      await storage.createNotification(senderId, "wallet", "Transfer Sent 💸", `KES ${amountNum.toLocaleString()} sent to ${recipientLabel} (ID #${recipient.id}).`);
       await storage.createNotification(recipient.id, "wallet", "Wallet Transfer Received 💰", `${senderName} sent you KES ${amountNum.toLocaleString()}${msgLabel}.`);
 
       const updatedWallet = await storage.getWallet(senderId);
-      res.json({ success: true, newBalance: updatedWallet?.balance ?? 0, recipientName });
+      res.json({ success: true, newBalance: updatedWallet?.balance ?? 0, recipientName, recipientId: recipient.id, recipientEmail: recipient.email });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
