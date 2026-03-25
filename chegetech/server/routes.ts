@@ -126,20 +126,11 @@ async function sendWalletTransferEmail(opts: {
   note?: string;
   newBalance: number;
 }): Promise<void> {
-  const { Resend } = await import("resend");
-  const key = getResendApiKey();
-  if (!key || key.startsWith("re_xxx") || key === "re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") {
-    console.warn("[email][wallet-transfer] RESEND_API_KEY not set — skipping transfer email.");
-    return;
-  }
-  const resend = new Resend(key);
-  const fromAddr = getResendFrom() || "onboarding@resend.dev";
-  const from = `Chege Tech <${fromAddr}>`;
-
   const isSent = opts.type === "sent";
+  const label = isSent ? "sender" : "receiver";
   const subject = isSent
     ? `Transfer Sent: KES ${opts.amount.toLocaleString()} to ${opts.counterpartyName}`
-    : `You Received KES ${opts.amount.toLocaleString()} from ${opts.counterpartyName}`;
+    : `💰 You Received KES ${opts.amount.toLocaleString()} from ${opts.counterpartyName}`;
 
   const accentColor = isSent ? "#EF4444" : "#10B981";
   const accentBg = isSent ? "#FEF2F2" : "#ECFDF5";
@@ -182,7 +173,10 @@ async function sendWalletTransferEmail(opts: {
         <tr><td style="padding:8px 0;color:#6B7280;font-size:14px;border-top:1px solid #F3F4F6;">Date</td>
             <td style="padding:8px 0;color:#111;font-size:14px;text-align:right;border-top:1px solid #F3F4F6;">${new Date().toLocaleString("en-KE", { timeZone: "Africa/Nairobi" })}</td></tr>
       </table>
-      <p style="font-size:12px;color:#9CA3AF;margin:24px 0 0;">If you did not initiate this transfer, please contact support immediately.</p>
+      ${!isSent ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 18px;margin-top:20px;">
+        <p style="color:#166534;font-size:13px;margin:0;">✅ The funds are now in your Chege Tech wallet. Log in to spend or withdraw them.</p>
+      </div>` : ""}
+      <p style="font-size:12px;color:#9CA3AF;margin:24px 0 0;">${isSent ? "If you did not initiate this transfer, please contact support immediately." : "Questions? Contact our support team anytime."}</p>
     </div>
     <div style="background:#F9FAFB;padding:16px;text-align:center;border-top:1px solid #F3F4F6;">
       <p style="font-size:12px;color:#aaa;margin:0;">&copy; ${new Date().getFullYear()} Chege Tech. All rights reserved.</p>
@@ -191,8 +185,46 @@ async function sendWalletTransferEmail(opts: {
 </body>
 </html>`;
 
-  const { error } = await resend.emails.send({ from, to: opts.toEmail, subject, html });
-  if (error) console.warn("[email][wallet-transfer] Resend error:", error.message);
+  // ── Try Resend first ──────────────────────────────────────────────────────
+  const resendKey = getResendApiKey();
+  const resendOk = resendKey && !resendKey.startsWith("re_xxx") && resendKey !== "re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+  if (resendOk) {
+    try {
+      const { Resend } = await import("resend");
+      const resend = new Resend(resendKey);
+      const fromAddr = getResendFrom() || "onboarding@resend.dev";
+      const { error } = await resend.emails.send({ from: `Chege Tech <${fromAddr}>`, to: opts.toEmail, subject, html });
+      if (error) {
+        console.warn(`[email][wallet-transfer][${label}] Resend error for ${opts.toEmail}:`, error.message);
+      } else {
+        console.log(`[email][wallet-transfer][${label}] ✓ Resend → ${opts.toEmail}`);
+        return;
+      }
+    } catch (err: any) {
+      console.warn(`[email][wallet-transfer][${label}] Resend threw:`, err.message);
+    }
+  }
+
+  // ── Fall back to SMTP / nodemailer ────────────────────────────────────────
+  const emailUser = getEmailUser();
+  const emailPass = getEmailPass();
+  if (!emailUser || !emailPass) {
+    console.warn(`[email][wallet-transfer][${label}] No email service configured — skipping email to ${opts.toEmail}`);
+    return;
+  }
+  try {
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: parseInt(process.env.SMTP_PORT || "587"),
+      secure: process.env.SMTP_PORT === "465",
+      auth: { user: emailUser, pass: emailPass },
+    });
+    await transporter.sendMail({ from: `Chege Tech <${emailUser}>`, to: opts.toEmail, subject, html });
+    console.log(`[email][wallet-transfer][${label}] ✓ SMTP → ${opts.toEmail}`);
+  } catch (err: any) {
+    console.warn(`[email][wallet-transfer][${label}] SMTP error for ${opts.toEmail}:`, err.message);
+  }
 }
 
 async function customerAuthMiddleware(req: any, res: any, next: any) {
