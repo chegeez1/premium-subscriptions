@@ -11,6 +11,8 @@ import QRCode from "qrcode";
 import { storage } from "./storage";
 import { subscriptionPlans } from "./plans";
 import { sendTelegramMessage } from "./telegram";
+import { getCredentialsOverride } from "./credentials-store";
+import { accountManager } from "./accounts";
 
 const AUTH_DIR = path.join(process.cwd(), "whatsapp-auth");
 
@@ -198,7 +200,258 @@ Reply with a number:
 
 Type *menu* anytime to see options again.`;
 
+// ── Admin phone detection ────────────────────────────────────────────────────
+
+function isAdminSender(from: string): boolean {
+  const override = getCredentialsOverride();
+  const adminPhone = (override.whatsappAdminPhone || "").replace(/\D/g, "");
+  if (!adminPhone) return false;
+  const fromPhone = from.replace("@s.whatsapp.net", "").replace(/\D/g, "");
+  return fromPhone === adminPhone;
+}
+
+// ── Admin command handler ────────────────────────────────────────────────────
+
+const ADMIN_HELP = `🔧 *Admin Commands*
+
+📊 *Stats & Reports*
+• stats — revenue & order summary
+• orders [N] — last N orders (default 5)
+• pending — unprocessed orders
+• customers — customer summary
+• tickets — open support tickets
+
+📦 *Inventory*
+• stock — out-of-stock plans
+
+👤 *Customer Actions*
+• find <email> — look up customer
+• wallet <email> — check wallet balance
+• suspend <email> — suspend account
+• unsuspend <email> — restore account
+
+Type any command to get started.`;
+
+async function handleAdminMessage(from: string, text: string) {
+  const parts = text.trim().split(/\s+/);
+  const cmd = parts[0].toLowerCase().replace(/^\//, "");
+  const arg = parts.slice(1).join(" ").trim();
+
+  if (cmd === "help" || cmd === "?" || cmd === "menu" || cmd === "hi" || cmd === "hello" || cmd === "start") {
+    await sendMessage(from, ADMIN_HELP);
+    return;
+  }
+
+  if (cmd === "stats") {
+    try {
+      const txs = await storage.getAllTransactions();
+      const customers = await storage.getAllCustomers();
+      const success = txs.filter((t: any) => t.status === "success");
+      const pending = txs.filter((t: any) => t.status === "pending");
+      const rev = success.reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      const now = Date.now();
+      const todayRev = success
+        .filter((t: any) => now - new Date(t.createdAt || 0).getTime() < 86400000)
+        .reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      const weekRev = success
+        .filter((t: any) => now - new Date(t.createdAt || 0).getTime() < 7 * 86400000)
+        .reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      await sendMessage(from,
+        `📊 *Revenue Summary*\n\n` +
+        `• Today: KES ${todayRev.toLocaleString()}\n` +
+        `• This week: KES ${weekRev.toLocaleString()}\n` +
+        `• All time: KES ${rev.toLocaleString()}\n\n` +
+        `📦 Orders: ${success.length} completed, ${pending.length} pending\n` +
+        `👥 Customers: ${customers.length} total`
+      );
+    } catch {
+      await sendMessage(from, "❌ Could not fetch stats.");
+    }
+    return;
+  }
+
+  if (cmd === "orders") {
+    try {
+      const n = Math.min(parseInt(arg) || 5, 10);
+      const txs = await storage.getAllTransactions();
+      const recent = txs
+        .filter((t: any) => t.status === "success")
+        .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+        .slice(0, n);
+      if (!recent.length) { await sendMessage(from, "No completed orders yet."); return; }
+      const lines = [`📦 *Last ${recent.length} Orders:*`, ""];
+      for (const o of recent) {
+        const date = o.createdAt ? new Date(o.createdAt).toLocaleDateString("en-KE") : "";
+        lines.push(`• ${o.planName} — KES ${o.amount} — ${o.customerEmail} (${date})`);
+      }
+      await sendMessage(from, lines.join("\n"));
+    } catch {
+      await sendMessage(from, "❌ Could not fetch orders.");
+    }
+    return;
+  }
+
+  if (cmd === "pending") {
+    try {
+      const txs = await storage.getAllTransactions();
+      const pending = txs
+        .filter((t: any) => t.status === "pending")
+        .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+        .slice(0, 10);
+      if (!pending.length) { await sendMessage(from, "✅ No pending orders."); return; }
+      const lines = [`⏳ *${pending.length} Pending Order(s):*`, ""];
+      for (const o of pending) {
+        const date = o.createdAt ? new Date(o.createdAt).toLocaleDateString("en-KE") : "";
+        lines.push(`• #${o.id} ${o.planName} — KES ${o.amount} — ${o.customerEmail} (${date})`);
+      }
+      await sendMessage(from, lines.join("\n"));
+    } catch {
+      await sendMessage(from, "❌ Could not fetch pending orders.");
+    }
+    return;
+  }
+
+  if (cmd === "customers") {
+    try {
+      const all = await storage.getAllCustomers();
+      const suspended = all.filter((c: any) => c.suspended);
+      const verified = all.filter((c: any) => c.emailVerified);
+      const since24h = all.filter((c: any) => Date.now() - new Date(c.createdAt || 0).getTime() < 86400000);
+      await sendMessage(from,
+        `👥 *Customer Summary*\n\n` +
+        `• Total: ${all.length}\n` +
+        `• Email verified: ${verified.length}\n` +
+        `• Suspended: ${suspended.length}\n` +
+        `• New (24h): ${since24h.length}`
+      );
+    } catch {
+      await sendMessage(from, "❌ Could not fetch customer data.");
+    }
+    return;
+  }
+
+  if (cmd === "stock") {
+    const lines: string[] = ["📦 *Stock Status:*", ""];
+    let hasPlans = false;
+    for (const cat of Object.values(subscriptionPlans)) {
+      for (const plan of Object.values((cat as any).plans || {})) {
+        const p = plan as any;
+        hasPlans = true;
+        const emoji = p.inStock ? "🟢" : "🔴";
+        try {
+          const info = accountManager.getStockInfo(p.id);
+          lines.push(`${emoji} ${p.name} — ${p.inStock ? `${info.available} slots free` : "OUT OF STOCK"}`);
+        } catch {
+          lines.push(`${emoji} ${p.name} — ${p.inStock ? "in stock" : "OUT OF STOCK"}`);
+        }
+      }
+    }
+    if (!hasPlans) lines.push("No plans configured.");
+    await sendMessage(from, lines.join("\n"));
+    return;
+  }
+
+  if (cmd === "tickets") {
+    try {
+      const tickets = await storage.getAllTickets();
+      const open = tickets.filter((t: any) => t.status === "open" || t.status === "escalated").slice(0, 8);
+      if (!open.length) { await sendMessage(from, "✅ No open support tickets."); return; }
+      const lines = [`💬 *${open.length} Open Ticket(s):*`, ""];
+      for (const t of open) {
+        const statusEmoji = t.status === "escalated" ? "🔴" : "🟡";
+        lines.push(`${statusEmoji} *#${t.id}* — ${t.customerEmail}`);
+        lines.push(`  ${t.subject || "Support Request"} (${t.status})`);
+      }
+      await sendMessage(from, lines.join("\n"));
+    } catch {
+      await sendMessage(from, "❌ Could not fetch tickets.");
+    }
+    return;
+  }
+
+  if (cmd === "find") {
+    if (!arg) { await sendMessage(from, "Usage: find <email>"); return; }
+    try {
+      const customers = await storage.getAllCustomers();
+      const c = customers.find((x: any) => x.email.toLowerCase() === arg.toLowerCase());
+      if (!c) { await sendMessage(from, `❌ No customer found for *${arg}*`); return; }
+      const txs = await storage.getTransactionsByEmail(c.email);
+      const orders = txs.filter((t: any) => t.status === "success");
+      const rev = orders.reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      const wallet = await storage.getWallet(c.id);
+      await sendMessage(from,
+        `👤 *Customer Info*\n\n` +
+        `• Name: ${c.name || "—"}\n` +
+        `• Email: ${c.email}\n` +
+        `• Verified: ${c.emailVerified ? "✅ Yes" : "❌ No"}\n` +
+        `• Suspended: ${c.suspended ? "🔴 Yes" : "🟢 No"}\n` +
+        `• Orders: ${orders.length} (KES ${rev.toLocaleString()} total)\n` +
+        `• Wallet: KES ${(wallet?.balance || 0).toLocaleString()}\n` +
+        `• Joined: ${c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-KE") : "—"}`
+      );
+    } catch {
+      await sendMessage(from, "❌ Could not fetch customer.");
+    }
+    return;
+  }
+
+  if (cmd === "wallet") {
+    if (!arg) { await sendMessage(from, "Usage: wallet <email>"); return; }
+    try {
+      const customers = await storage.getAllCustomers();
+      const c = customers.find((x: any) => x.email.toLowerCase() === arg.toLowerCase());
+      if (!c) { await sendMessage(from, `❌ No customer found for *${arg}*`); return; }
+      const wallet = await storage.getWallet(c.id);
+      const balance = wallet?.balance || 0;
+      await sendMessage(from, `💰 *Wallet: ${c.email}*\n\nBalance: KES ${balance.toLocaleString()}`);
+    } catch {
+      await sendMessage(from, "❌ Could not fetch wallet.");
+    }
+    return;
+  }
+
+  if (cmd === "suspend") {
+    if (!arg) { await sendMessage(from, "Usage: suspend <email>"); return; }
+    try {
+      const customers = await storage.getAllCustomers();
+      const c = customers.find((x: any) => x.email.toLowerCase() === arg.toLowerCase());
+      if (!c) { await sendMessage(from, `❌ No customer found for *${arg}*`); return; }
+      if (c.suspended) { await sendMessage(from, `⚠️ *${arg}* is already suspended.`); return; }
+      await storage.updateCustomer(c.id, { suspended: true });
+      await sendMessage(from, `✅ *${c.email}* has been suspended.`);
+    } catch {
+      await sendMessage(from, "❌ Could not suspend customer.");
+    }
+    return;
+  }
+
+  if (cmd === "unsuspend") {
+    if (!arg) { await sendMessage(from, "Usage: unsuspend <email>"); return; }
+    try {
+      const customers = await storage.getAllCustomers();
+      const c = customers.find((x: any) => x.email.toLowerCase() === arg.toLowerCase());
+      if (!c) { await sendMessage(from, `❌ No customer found for *${arg}*`); return; }
+      if (!c.suspended) { await sendMessage(from, `⚠️ *${arg}* is not suspended.`); return; }
+      await storage.updateCustomer(c.id, { suspended: false });
+      await sendMessage(from, `✅ *${c.email}* has been unsuspended.`);
+    } catch {
+      await sendMessage(from, "❌ Could not unsuspend customer.");
+    }
+    return;
+  }
+
+  await sendMessage(from, `❓ Unknown command: *${cmd}*\n\nType *help* to see all available commands.`);
+}
+
+// ── Customer message handler ──────────────────────────────────────────────────
+
 async function handleMessage(from: string, text: string) {
+  // Route admin phone to admin commands
+  if (isAdminSender(from)) {
+    await handleAdminMessage(from, text);
+    return;
+  }
+
   const msg = text.toLowerCase().trim();
   const state = sessionState[from] || { step: "idle" };
 
