@@ -190,6 +190,162 @@ async function sendScheduledCampaign(campaign: any) {
   }
 }
 
+// ─── Monthly: spending summary per customer ────────────────────────────────
+
+export async function sendMonthlySummaries(targetEmail?: string) {
+  try {
+    const { siteName } = getAppConfig();
+    const storeUrl = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "";
+
+    const now = new Date();
+    // Previous calendar month
+    const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    const prevMonthEnd   = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const monthName = prevMonthDate.toLocaleDateString("en-KE", { month: "long", year: "numeric" });
+    const dedupKey  = `${prevMonthDate.getFullYear()}_${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
+
+    const txs = await storage.getAllTransactions();
+    const customers = await storage.getAllCustomers();
+
+    let sent = 0;
+
+    for (const customer of customers as any[]) {
+      if (!customer.email) continue;
+      if (targetEmail && customer.email.toLowerCase() !== targetEmail.toLowerCase()) continue;
+
+      const dedup = `monthly_summary_${customer.id}_${dedupKey}`;
+      if (!targetEmail && dbSettingsGet(dedup)) continue; // already sent (skip dedup for manual trigger with specific email)
+
+      // Filter this customer's successful orders in the previous month
+      const orders = txs.filter((t: any) =>
+        t.status === "success" &&
+        t.customerEmail === customer.email &&
+        new Date(t.createdAt || 0).getTime() >= prevMonthStart &&
+        new Date(t.createdAt || 0).getTime() < prevMonthEnd
+      );
+
+      if (orders.length === 0) continue;
+
+      const totalSpent = orders.reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      // Estimate retail equivalent: shared plans are ~65% cheaper, so direct cost ≈ totalSpent ÷ 0.35
+      const estimatedRetail = Math.round(totalSpent * 2.86);
+      const estimatedSavings = estimatedRetail - totalSpent;
+
+      // Build order rows
+      const orderRows = orders.map((t: any) => {
+        const date = new Date(t.createdAt || 0).toLocaleDateString("en-KE", { day: "numeric", month: "short" });
+        return `<tr>
+          <td style="padding:10px 12px;font-size:13px;color:#374151;border-bottom:1px solid #F3F4F6;">${t.planName || "Subscription"}</td>
+          <td style="padding:10px 12px;font-size:13px;color:#6B7280;border-bottom:1px solid #F3F4F6;">${date}</td>
+          <td style="padding:10px 12px;font-size:13px;color:#111827;font-weight:600;text-align:right;border-bottom:1px solid #F3F4F6;">KES ${(t.amount || 0).toLocaleString()}</td>
+        </tr>`;
+      }).join("");
+
+      const firstName = (customer.name || "there").split(" ")[0];
+
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>${monthName} Spending Summary</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <div style="max-width:560px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 32px rgba(0,0,0,.12);">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);padding:36px 32px;text-align:center;">
+      <p style="color:rgba(255,255,255,.7);font-size:12px;letter-spacing:2px;text-transform:uppercase;margin:0 0 10px;">Monthly Summary</p>
+      <h1 style="color:#fff;margin:0 0 6px;font-size:26px;font-weight:800;">${monthName}</h1>
+      <p style="color:rgba(255,255,255,.75);margin:0;font-size:14px;">${siteName}</p>
+    </div>
+
+    <!-- Greeting -->
+    <div style="padding:28px 32px 0;">
+      <p style="color:#374151;font-size:16px;margin:0 0 6px;">Hi <strong>${firstName}</strong> 👋</p>
+      <p style="color:#6B7280;font-size:14px;margin:0 0 24px;line-height:1.6;">
+        Here's a look at what you unlocked in <strong>${monthName}</strong> — ${orders.length} subscription${orders.length !== 1 ? "s" : ""} at a fraction of the direct price.
+      </p>
+    </div>
+
+    <!-- Orders table -->
+    <div style="padding:0 32px 20px;">
+      <table style="width:100%;border-collapse:collapse;border-radius:12px;overflow:hidden;border:1px solid #F3F4F6;">
+        <thead>
+          <tr style="background:#F9FAFB;">
+            <th style="padding:10px 12px;font-size:11px;color:#9CA3AF;font-weight:600;text-align:left;text-transform:uppercase;letter-spacing:.5px;">Plan</th>
+            <th style="padding:10px 12px;font-size:11px;color:#9CA3AF;font-weight:600;text-align:left;text-transform:uppercase;letter-spacing:.5px;">Date</th>
+            <th style="padding:10px 12px;font-size:11px;color:#9CA3AF;font-weight:600;text-align:right;text-transform:uppercase;letter-spacing:.5px;">Paid</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${orderRows}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Totals card -->
+    <div style="padding:0 32px 28px;">
+      <div style="background:linear-gradient(135deg,rgba(79,70,229,.07) 0%,rgba(124,58,237,.07) 100%);border:1px solid rgba(99,102,241,.2);border-radius:14px;padding:22px 24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <span style="color:#6B7280;font-size:14px;">Total spent in ${monthName}</span>
+          <span style="color:#111827;font-size:20px;font-weight:800;">KES ${totalSpent.toLocaleString()}</span>
+        </div>
+        <div style="height:1px;background:rgba(99,102,241,.15);margin-bottom:12px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#6B7280;font-size:13px;">Estimated retail value</span>
+          <span style="color:#9CA3AF;font-size:14px;text-decoration:line-through;">KES ${estimatedRetail.toLocaleString()}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+          <span style="color:#10B981;font-size:13px;font-weight:600;">You saved approximately</span>
+          <span style="color:#10B981;font-size:16px;font-weight:800;">KES ${estimatedSavings.toLocaleString()}</span>
+        </div>
+        <p style="color:#9CA3AF;font-size:11px;margin:10px 0 0;line-height:1.5;">
+          *Savings estimated vs buying subscriptions individually at full retail price.
+        </p>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div style="padding:0 32px 32px;text-align:center;">
+      <a href="${storeUrl}" style="display:inline-block;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:.3px;">
+        Shop Again →
+      </a>
+      <p style="color:#9CA3AF;font-size:12px;margin:16px 0 0;">
+        Keep saving every month with ${siteName}.
+      </p>
+    </div>
+
+    <!-- Footer -->
+    <div style="background:#F9FAFB;padding:16px 32px;border-top:1px solid #F3F4F6;text-align:center;">
+      <p style="font-size:11px;color:#D1D5DB;margin:0;">
+        &copy; ${now.getFullYear()} ${siteName}. All rights reserved.<br>
+        <span style="color:#E5E7EB;">To unsubscribe from summary emails, contact support.</span>
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      await sendRawEmail(
+        customer.email,
+        `Your ${monthName} Spending Summary — ${siteName}`,
+        html
+      ).catch((e: any) => console.warn(`[cron][monthly-summary] Failed to send to ${customer.email}:`, e.message));
+
+      if (!targetEmail) dbSettingsSet(dedup, new Date().toISOString());
+      sent++;
+    }
+
+    console.log(`[cron][monthly-summary] Sent ${sent} summary emails for ${monthName}`);
+    return sent;
+  } catch (err: any) {
+    console.error("[cron] Monthly summary error:", err.message);
+    return 0;
+  }
+}
+
 // ─── Start all crons ────────────────────────────────────────────────────────
 
 export function startCronJobs() {
@@ -202,5 +358,8 @@ export function startCronJobs() {
   // Every 5 minutes: check scheduled campaigns
   cron.schedule("*/5 * * * *", checkScheduledCampaigns);
 
-  console.log("[cron] Jobs scheduled: expiry check (daily 9am), weekly report (Sunday 8am), campaigns (every 5min)");
+  // 1st of every month at 9am: monthly spending summary emails
+  cron.schedule("0 9 1 * *", () => sendMonthlySummaries());
+
+  console.log("[cron] Jobs scheduled: expiry check (daily 9am), weekly report (Sunday 8am), campaigns (every 5min), monthly summary (1st of month 9am)");
 }

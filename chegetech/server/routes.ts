@@ -4740,6 +4740,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // WALLET TOPUP WITH LABEL
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // ─── Admin: manually trigger monthly summary emails ────────────────────────
+  app.post("/api/admin/cron/monthly-summary", adminAuthMiddleware, async (req, res) => {
+    try {
+      const { email } = req.body;
+      const { sendMonthlySummaries } = await import("./cron");
+      const sent = await sendMonthlySummaries(email?.trim() || undefined);
+      res.json({ success: true, sent });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // Admin: credit wallet with label (label appears in wallet tx history)
   app.post("/api/admin/customers/:id/wallet/credit", adminAuthMiddleware, requirePermission("customers"), async (req, res) => {
     try {

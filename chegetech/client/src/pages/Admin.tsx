@@ -1234,6 +1234,97 @@ function AffiliateTiersSection({ inputCls }: { inputCls: string }) {
 }
 
 // ─── ANNOUNCEMENTS SECTION ───────────────────────────────────────────────────
+function MonthlySummarySection({ inputCls }: { inputCls: string }) {
+  const { toast } = useToast();
+  const [targetEmail, setTargetEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ sent: number } | null>(null);
+
+  async function handleSend() {
+    setLoading(true);
+    setResult(null);
+    try {
+      const r = await authFetch("/api/admin/cron/monthly-summary", {
+        method: "POST",
+        body: JSON.stringify({ email: targetEmail.trim() || undefined }),
+      });
+      if (r.success) {
+        setResult({ sent: r.sent });
+        if (r.sent === 0) toast({ title: "No emails sent", description: "No customers had orders in the previous month (or all already received this month's summary)" });
+        else toast({ title: `${r.sent} summary email${r.sent !== 1 ? "s" : ""} sent` });
+      } else {
+        toast({ title: r.error ?? "Failed", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Network error", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="glass-card rounded-2xl overflow-hidden">
+      <div className="p-5 border-b border-white/8 flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-indigo-600/20 flex items-center justify-center">
+          <Mail className="w-5 h-5 text-indigo-400" />
+        </div>
+        <div className="flex-1">
+          <p className="font-semibold text-white">Monthly Spending Summary Emails</p>
+          <p className="text-xs text-white/40">Automatically sent to all customers on the 1st of each month · Shows previous month's orders and estimated savings</p>
+        </div>
+        <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/20 shrink-0">
+          Cron: 1st of month
+        </span>
+      </div>
+      <div className="p-5 space-y-4">
+        <div className="rounded-xl p-3.5 text-xs space-y-1.5" style={{ background: "rgba(99,102,241,.07)", border: "1px solid rgba(99,102,241,.18)" }}>
+          <p className="text-indigo-300 font-semibold">How it works</p>
+          <ul className="text-indigo-200/60 space-y-1 list-disc list-inside">
+            <li>Runs automatically on the 1st of every month at 9am</li>
+            <li>Each customer with at least one successful order in the previous month gets a personalised email</li>
+            <li>Shows itemised order list, total spent, and estimated savings vs buying directly</li>
+            <li>Deduplication prevents re-sending — each customer gets at most one summary per month</li>
+            <li>Customers with zero orders are silently skipped</li>
+          </ul>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-xs text-white/50 uppercase tracking-wider font-semibold">Manual Trigger</p>
+          <p className="text-xs text-white/35">
+            Trigger the summary right now — useful for testing. Leave the email field blank to send to all eligible customers,
+            or enter a specific email to test with one recipient (dedup is bypassed for single-email triggers).
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              placeholder="customer@example.com (optional — blank = all customers)"
+              value={targetEmail}
+              onChange={e => setTargetEmail(e.target.value)}
+              className="flex-1 text-sm bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white placeholder:text-white/25 outline-none focus:border-indigo-500/50"
+            />
+            <button
+              disabled={loading}
+              onClick={handleSend}
+              className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {loading ? "Sending..." : "Send Now"}
+            </button>
+          </div>
+          {result !== null && (
+            <div className="flex items-center gap-2.5 rounded-xl p-3 text-sm" style={{ background: result.sent > 0 ? "rgba(16,185,129,.08)" : "rgba(156,163,175,.08)", border: result.sent > 0 ? "1px solid rgba(16,185,129,.2)" : "1px solid rgba(156,163,175,.15)" }}>
+              {result.sent > 0
+                ? <><CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" /><p className="text-emerald-300 font-semibold">{result.sent} summary email{result.sent !== 1 ? "s" : ""} sent successfully</p></>
+                : <><Info className="w-4 h-4 text-white/30 shrink-0" /><p className="text-white/40">No eligible customers found for the previous month</p></>
+              }
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AnnouncementsSection({ inputCls }: { inputCls: string }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -1697,6 +1788,9 @@ function SettingsTab() {
             )}
           </div>
         </div>
+
+        {/* ─── Monthly Summary Emails ──────────────────────── */}
+        <MonthlySummarySection inputCls={inputCls} />
 
         {/* ─── Affiliate Tiers ─────────────────────────────── */}
         <AffiliateTiersSection inputCls={inputCls} />
