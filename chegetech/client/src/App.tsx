@@ -13,14 +13,18 @@ import Auth from "@/pages/Auth";
 import Dashboard from "@/pages/Dashboard";
 import NotFound from "@/pages/not-found";
 import Docs from "@/pages/Docs";
+import Privacy from "@/pages/Privacy";
 import ChatWidget from "@/components/ChatWidget";
+import CookieConsent from "@/components/CookieConsent";
 
-const NO_CHAT_PATHS = ["/admin", "/docs"];
-const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs"];
+const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy"];
+const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy"];
+const NO_COOKIE_PATHS = ["/admin"];
 
 function Router() {
   const [location] = useLocation();
   const showChat = !NO_CHAT_PATHS.some((p) => location.startsWith(p));
+  const showCookies = !NO_COOKIE_PATHS.some((p) => location.startsWith(p));
 
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("customer_token"));
 
@@ -55,9 +59,11 @@ function Router() {
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/admin" component={Admin} />
         <Route path="/docs" component={Docs} />
+        <Route path="/privacy" component={Privacy} />
         <Route component={NotFound} />
       </Switch>
       {showChat && <ChatWidget />}
+      {showCookies && <CookieConsent />}
     </>
   );
 }
