@@ -4745,7 +4745,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const { email } = req.body;
       const { sendMonthlySummaries } = await import("./cron");
-      const sent = await sendMonthlySummaries(email?.trim() || undefined);
+      // Manual trigger uses current-month-to-date window so testing doesn't require waiting for month end
+      const sent = await sendMonthlySummaries(email?.trim() || undefined, "current_month");
       res.json({ success: true, sent });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });

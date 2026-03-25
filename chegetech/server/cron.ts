@@ -192,18 +192,34 @@ async function sendScheduledCampaign(campaign: any) {
 
 // ─── Monthly: spending summary per customer ────────────────────────────────
 
-export async function sendMonthlySummaries(targetEmail?: string) {
+// RETAIL_MULTIPLIER: shared plans are ~46% cheaper than retail, so retail ≈ totalSpent × 1.85
+const RETAIL_MULTIPLIER = 1.85;
+
+export async function sendMonthlySummaries(targetEmail?: string, mode: "previous_month" | "current_month" = "previous_month") {
   try {
     const { siteName } = getAppConfig();
     const storeUrl = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "";
 
     const now = new Date();
-    // Previous calendar month
-    const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
-    const prevMonthEnd   = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    const monthName = prevMonthDate.toLocaleDateString("en-KE", { month: "long", year: "numeric" });
-    const dedupKey  = `${prevMonthDate.getFullYear()}_${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
+
+    let periodStart: number;
+    let periodEnd: number;
+    let periodDate: Date;
+
+    if (mode === "current_month") {
+      // Current month, 1st to now (for manual trigger / testing)
+      periodDate  = new Date(now.getFullYear(), now.getMonth(), 1);
+      periodStart = periodDate.getTime();
+      periodEnd   = now.getTime();
+    } else {
+      // Previous full calendar month (default — used by cron)
+      periodDate  = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      periodStart = periodDate.getTime();
+      periodEnd   = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    }
+
+    const monthName = periodDate.toLocaleDateString("en-KE", { month: "long", year: "numeric" });
+    const dedupKey  = `${periodDate.getFullYear()}_${String(periodDate.getMonth() + 1).padStart(2, "0")}`;
 
     const txs = await storage.getAllTransactions();
     const customers = await storage.getAllCustomers();
@@ -215,21 +231,22 @@ export async function sendMonthlySummaries(targetEmail?: string) {
       if (targetEmail && customer.email.toLowerCase() !== targetEmail.toLowerCase()) continue;
 
       const dedup = `monthly_summary_${customer.id}_${dedupKey}`;
-      if (!targetEmail && dbSettingsGet(dedup)) continue; // already sent (skip dedup for manual trigger with specific email)
+      // Skip if already sent — but bypass dedup for single-email manual test
+      if (!targetEmail && dbSettingsGet(dedup)) continue;
 
-      // Filter this customer's successful orders in the previous month
+      // Filter this customer's successful orders in the period
       const orders = txs.filter((t: any) =>
         t.status === "success" &&
         t.customerEmail === customer.email &&
-        new Date(t.createdAt || 0).getTime() >= prevMonthStart &&
-        new Date(t.createdAt || 0).getTime() < prevMonthEnd
+        new Date(t.createdAt || 0).getTime() >= periodStart &&
+        new Date(t.createdAt || 0).getTime() < periodEnd
       );
 
       if (orders.length === 0) continue;
 
       const totalSpent = orders.reduce((s: number, t: any) => s + (t.amount || 0), 0);
-      // Estimate retail equivalent: shared plans are ~65% cheaper, so direct cost ≈ totalSpent ÷ 0.35
-      const estimatedRetail = Math.round(totalSpent * 2.86);
+      // Retail equivalent: shared plans are ~46% cheaper, so direct cost ≈ totalSpent × 1.85
+      const estimatedRetail = Math.round(totalSpent * RETAIL_MULTIPLIER);
       const estimatedSavings = estimatedRetail - totalSpent;
 
       // Build order rows
@@ -328,14 +345,20 @@ export async function sendMonthlySummaries(targetEmail?: string) {
 </body>
 </html>`;
 
-      await sendRawEmail(
+      const emailOk = await sendRawEmail(
         customer.email,
         `Your ${monthName} Spending Summary — ${siteName}`,
         html
-      ).catch((e: any) => console.warn(`[cron][monthly-summary] Failed to send to ${customer.email}:`, e.message));
+      ).then(() => true).catch((e: any) => {
+        console.warn(`[cron][monthly-summary] Failed to send to ${customer.email}:`, e.message);
+        return false;
+      });
 
-      if (!targetEmail) dbSettingsSet(dedup, new Date().toISOString());
-      sent++;
+      if (emailOk) {
+        // Only mark as sent and count on confirmed delivery
+        if (!targetEmail) dbSettingsSet(dedup, new Date().toISOString());
+        sent++;
+      }
     }
 
     console.log(`[cron][monthly-summary] Sent ${sent} summary emails for ${monthName}`);
