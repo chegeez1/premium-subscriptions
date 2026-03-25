@@ -4741,7 +4741,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ═══════════════════════════════════════════════════════════════════════════
 
   // ─── Admin: manually trigger monthly summary emails ────────────────────────
-  app.post("/api/admin/cron/monthly-summary", adminAuthMiddleware, async (req, res) => {
+  app.post("/api/admin/cron/monthly-summary", adminAuthMiddleware, superAdminOnly, async (req, res) => {
     try {
       const { email } = req.body;
       const { sendMonthlySummaries } = await import("./cron");

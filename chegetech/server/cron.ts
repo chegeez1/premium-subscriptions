@@ -231,8 +231,10 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
       if (targetEmail && customer.email.toLowerCase() !== targetEmail.toLowerCase()) continue;
 
       const dedup = `monthly_summary_${customer.id}_${dedupKey}`;
-      // Skip if already sent — but bypass dedup for single-email manual test
-      if (!targetEmail && dbSettingsGet(dedup)) continue;
+      // Dedup is only applied/written for the cron mode (previous_month).
+      // Manual current_month triggers never read or write the dedup key,
+      // so they cannot interfere with the next scheduled cron run.
+      if (mode === "previous_month" && !targetEmail && dbSettingsGet(dedup)) continue;
 
       // Filter this customer's successful orders in the period
       const orders = txs.filter((t: any) =>
@@ -355,8 +357,11 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
       });
 
       if (emailOk) {
-        // Only mark as sent and count on confirmed delivery
-        if (!targetEmail) dbSettingsSet(dedup, new Date().toISOString());
+        // Write dedup key ONLY for cron (previous_month) mode to avoid poisoning
+        // the cron dedup for a future scheduled run with a manual "send-all" test.
+        if (mode === "previous_month" && !targetEmail) {
+          dbSettingsSet(dedup, new Date().toISOString());
+        }
         sent++;
       }
     }
