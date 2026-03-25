@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import {
   Play, Music, Briefcase, Shield, Gamepad2, Search, Star,
   CheckCircle, Zap, ShoppingCart, X, ChevronRight, Package, Bell,
-  Sparkles, Plus, Minus, Trash2, User, LogIn, Sun, Moon,
+  Sparkles, Plus, Minus, Trash2, LogIn, Sun, Moon,
   Wallet, Eye, EyeOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -264,6 +264,29 @@ export default function Store() {
               Chege Tech
             </span>
             <span className={`font-bold text-lg sm:hidden ${isLight ? "text-slate-800" : "text-white"}`}>CT</span>
+            {/* Profile chip — left corner */}
+            {customer && (
+              <button
+                onClick={() => setLocation("/dashboard?tab=profile")}
+                title="My Profile"
+                className={`flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border transition-all hover:scale-105 active:scale-95 ${
+                  isLight
+                    ? "bg-white border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300"
+                    : "glass border-white/10 hover:border-white/25"
+                }`}
+              >
+                {customer.avatarUrl ? (
+                  <img src={customer.avatarUrl} alt={customer.name ?? "Profile"} className="w-6 h-6 rounded-full object-cover ring-1 ring-indigo-400/40" />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold ring-1 ring-indigo-400/40">
+                    {(customer.name ?? customer.email ?? "?").charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <span className={`text-xs font-medium max-w-[72px] truncate ${isLight ? "text-slate-700" : "text-white/80"}`}>
+                  {(customer.name ?? customer.email ?? "").split(" ")[0]}
+                </span>
+              </button>
+            )}
           </div>
           <div className="flex-1 max-w-sm relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -342,28 +365,16 @@ export default function Store() {
 
             {/* Auth / Dashboard */}
             {customer ? (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setLocation("/dashboard")}
-                  data-testid="link-my-products"
-                  className="glass border-white/10 text-white/80 hover:text-white hover:border-white/20"
-                >
-                  <Package className="w-3.5 h-3.5 mr-1" />
-                  <span className="hidden sm:inline">My Products</span>
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setLocation("/dashboard?tab=profile")}
-                  data-testid="link-account"
-                  className="glass border-white/10 text-white/80 hover:text-white hover:border-white/20"
-                >
-                  <User className="w-3.5 h-3.5 mr-1" />
-                  <span className="hidden sm:inline">Account</span>
-                </Button>
-              </>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setLocation("/dashboard")}
+                data-testid="link-my-products"
+                className={`${isLight ? "border-slate-200 text-slate-700 hover:bg-slate-100" : "glass border-white/10 text-white/80 hover:text-white hover:border-white/20"}`}
+              >
+                <Package className="w-3.5 h-3.5 mr-1" />
+                <span className="hidden sm:inline">My Products</span>
+              </Button>
             ) : (
               <Button
                 size="sm"
