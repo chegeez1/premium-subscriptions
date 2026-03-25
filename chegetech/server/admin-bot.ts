@@ -125,6 +125,8 @@ export function processAdminCommand(input: string): string {
       `🔁 \`resend email@example.com\` — show last orders for resend`,
       `💰 \`topup email@example.com 50\` — credit wallet`,
       `🎁 \`topup all 10\` — credit everyone's wallet`,
+      `📉 \`deduct email@example.com 50 reason\` — deduct from wallet`,
+      `📊 \`wallet email@example.com\` — view wallet history`,
       ``,
       `I auto-refresh every 30 seconds with live alerts.`,
     ].join("\n");
@@ -390,6 +392,43 @@ export function processAdminCommand(input: string): string {
     const lines = [`💳 **Wallet Balances** (platform float: ${fmt(total?.total ?? 0)}):\n`];
     top.forEach((r: any) => lines.push(`- **${r.email}** — ${fmt(r.wallet_balance)}`));
     return lines.join("\n");
+  }
+
+  // ── WALLET HISTORY for specific customer ───────────────────────────────────
+  const walletMatch = cmd.match(/^wallet\s+(.+@\S+)$/);
+  if (walletMatch) {
+    const email = walletMatch[1].trim();
+    const c = runSqlFirst("SELECT id, email, wallet_balance FROM customers WHERE email = ? COLLATE NOCASE", [email]);
+    if (!c) return `❌ No customer found with email **${email}**.`;
+    const txns = runSql(
+      "SELECT * FROM wallet_transactions WHERE customer_id = ? ORDER BY created_at DESC LIMIT 10",
+      [c.id]
+    );
+    const lines = [`💳 **Wallet: ${c.email}** — Balance: ${fmt(c.wallet_balance)}\n`];
+    if (txns.length === 0) { lines.push("No transactions yet."); }
+    else txns.forEach((t: any) => {
+      const sign = t.type === "credit" ? "+" : "-";
+      lines.push(`${t.type === "credit" ? "📈" : "📉"} ${sign}${fmt(t.amount)} — ${t.description || "-"} _(${new Date(t.created_at).toLocaleDateString()})_`);
+    });
+    return lines.join("\n");
+  }
+
+  // ── DEDUCT WALLET ──────────────────────────────────────────────────────────
+  const deductMatch = cmd.match(/^deduct\s+(\S+@\S+)\s+(\d+(?:\.\d+)?)\s*(.*)?$/);
+  if (deductMatch) {
+    const [, email, amtStr, reason] = deductMatch;
+    const amount = parseFloat(amtStr);
+    if (amount <= 0) return "❌ Amount must be greater than 0.";
+    const c = runSqlFirst("SELECT id, email, wallet_balance FROM customers WHERE email = ? COLLATE NOCASE", [email]);
+    if (!c) return `❌ No customer found with email **${email}**.`;
+    if (c.wallet_balance < amount) return `❌ Insufficient balance — **${c.email}** only has ${fmt(c.wallet_balance)}.`;
+    runSql("UPDATE customers SET wallet_balance = wallet_balance - ? WHERE id = ?", [amount, c.id]);
+    runSql(
+      "INSERT INTO wallet_transactions (customer_id, type, amount, description, reference, created_at) VALUES (?, 'debit', ?, ?, ?, ?)",
+      [c.id, amount, reason ? `Admin deduction: ${reason}` : "Admin deduction", `BOT-DEDUCT-${c.id}-${Date.now()}`, new Date().toISOString()]
+    );
+    const updated = runSqlFirst("SELECT wallet_balance FROM customers WHERE id = ?", [c.id]);
+    return `✅ Deducted **${fmt(amount)}** from **${c.email}**. New balance: **${fmt(updated?.wallet_balance ?? 0)}**.`;
   }
 
   // ── FALLBACK ───────────────────────────────────────────────────────────────

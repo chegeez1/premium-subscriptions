@@ -76,6 +76,14 @@ export default function Dashboard() {
   const [topupLabel, setTopupLabel] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
 
+  // Wallet send / P2P transfer state
+  const [sendEmail, setSendEmail] = useState("");
+  const [sendAmount, setSendAmount] = useState("");
+  const [sendNote, setSendNote] = useState("");
+  const [sendLoading, setSendLoading] = useState(false);
+  const [sendConfirm, setSendConfirm] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState<{ recipient: string; amount: number } | null>(null);
+
   // TOTP state
   const [totpStep, setTotpStep] = useState<"idle" | "qr" | "verify">("idle");
   const [totpSetupData, setTotpSetupData] = useState<{ secret: string; qrCodeDataUrl: string } | null>(null);
@@ -237,6 +245,26 @@ export default function Dashboard() {
       }
     } catch { toast({ title: "Failed to initiate top-up", variant: "destructive" }); }
     finally { setTopupLoading(false); }
+  }
+
+  async function sendWalletBalance() {
+    const amount = parseFloat(sendAmount);
+    if (!sendEmail.trim() || !sendEmail.includes("@")) { toast({ title: "Enter a valid recipient email", variant: "destructive" }); return; }
+    if (!amount || amount < 10) { toast({ title: "Minimum transfer is KES 10", variant: "destructive" }); return; }
+    if (!sendConfirm) { setSendConfirm(true); return; }
+    setSendLoading(true);
+    try {
+      const data = await customerFetch("/api/customer/wallet/send", {
+        method: "POST",
+        body: JSON.stringify({ recipientEmail: sendEmail.trim(), amount, note: sendNote.trim() || undefined }),
+      });
+      if (!data.success) { toast({ title: data.error || "Transfer failed", variant: "destructive" }); setSendConfirm(false); return; }
+      setSendSuccess({ recipient: data.recipientName || sendEmail, amount });
+      setSendEmail(""); setSendAmount(""); setSendNote(""); setSendConfirm(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/customer/wallet"] });
+      setTimeout(() => setSendSuccess(null), 5000);
+    } catch { toast({ title: "Transfer failed", variant: "destructive" }); setSendConfirm(false); }
+    finally { setSendLoading(false); }
   }
 
   const { data: loginHistoryData, isLoading: loginHistoryLoading } = useQuery<any>({
@@ -866,6 +894,64 @@ export default function Dashboard() {
                   />
                   {topupLabel && (
                     <p className="text-xs text-emerald-400/70 mt-1">This will appear as <strong>{topupLabel}</strong> in your wallet history</p>
+                  )}
+                </div>
+
+                {/* ── Send to Friend (P2P Transfer) ── */}
+                <div className="rounded-xl p-5 border border-indigo-500/20" style={{ background: "rgba(99,102,241,.06)" }}>
+                  <h3 className="text-sm font-semibold text-indigo-300 mb-3 flex items-center gap-2">
+                    <Send className="w-4 h-4" /> Send to Friend
+                    <span className="text-xs text-white/25 font-normal ml-1">· Min KES 10</span>
+                  </h3>
+
+                  {sendSuccess ? (
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                      <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                      <div>
+                        <p className="text-sm font-semibold text-emerald-300">Transfer sent!</p>
+                        <p className="text-xs text-white/50">KES {sendSuccess.amount.toLocaleString()} sent to {sendSuccess.recipient}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <Input
+                          type="email"
+                          placeholder="Recipient's email address"
+                          value={sendEmail}
+                          onChange={e => { setSendEmail(e.target.value); setSendConfirm(false); }}
+                          className="bg-white/5 border-white/10 text-white placeholder:text-white/25"
+                        />
+                        <div className="flex gap-2">
+                          <Input
+                            type="number"
+                            placeholder="Amount (min KES 10)"
+                            value={sendAmount}
+                            onChange={e => { setSendAmount(e.target.value); setSendConfirm(false); }}
+                            className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-white/25"
+                          />
+                          <Button
+                            onClick={sendWalletBalance}
+                            disabled={sendLoading || !sendEmail || !sendAmount}
+                            className={`shrink-0 font-semibold px-4 ${sendConfirm ? "bg-amber-600 hover:bg-amber-500 animate-pulse" : "bg-indigo-600 hover:bg-indigo-500"} text-white`}
+                          >
+                            {sendLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : sendConfirm ? "Confirm Send" : "Send"}
+                          </Button>
+                        </div>
+                        <Input
+                          placeholder="Note / message (optional)"
+                          value={sendNote}
+                          onChange={e => setSendNote(e.target.value)}
+                          className="bg-white/5 border-white/10 text-white placeholder:text-white/25 text-xs h-8"
+                        />
+                      </div>
+                      {sendConfirm && (
+                        <div className="mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-2">
+                          <p className="text-xs text-amber-300">Send <strong>KES {parseFloat(sendAmount).toLocaleString()}</strong> to <strong>{sendEmail}</strong>?</p>
+                          <button onClick={() => setSendConfirm(false)} className="text-white/30 hover:text-white/60 text-xs">Cancel</button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 

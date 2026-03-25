@@ -13,7 +13,8 @@ import {
   Search, BarChart2, Loader2, FileCheck, ClipboardCheck, Send,
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
   Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera,
-  Bot, Sparkles, Minimize2, Database, UserCircle, Wallet, Pencil
+  Bot, Sparkles, Minimize2, Database, UserCircle, Wallet, Pencil,
+  MinusCircle, History, ArrowUpCircle, ArrowDownCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -295,6 +296,8 @@ const QUICK_CMDS = [
   { label: "✅ Unban", cmd: "unban customer@email.com" },
   { label: "🔁 Resend", cmd: "resend customer@email.com" },
   { label: "💳 Wallets", cmd: "wallets" },
+  { label: "📉 Deduct", cmd: "deduct customer@email.com 50 reason" },
+  { label: "📊 Wallet", cmd: "wallet customer@email.com" },
   { label: "🎯 Referrals", cmd: "referrals" },
   { label: "❓ Help", cmd: "help" },
 ];
@@ -3556,8 +3559,12 @@ function CustomersTab() {
   const [loginHistoryCache, setLoginHistoryCache] = useState<Record<number, any[]>>({});
   const [loginHistoryLoading, setLoginHistoryLoading] = useState<number | null>(null);
   const [walletTopupId, setWalletTopupId] = useState<number | null>(null);
+  const [walletAction, setWalletAction] = useState<"credit" | "deduct" | "history">("credit");
   const [walletAmount, setWalletAmount] = useState("");
   const [walletNote, setWalletNote] = useState("");
+  const [walletHistoryId, setWalletHistoryId] = useState<number | null>(null);
+  const [walletHistoryData, setWalletHistoryData] = useState<any>(null);
+  const [walletHistoryLoading, setWalletHistoryLoading] = useState(false);
   const [profileId, setProfileId] = useState<number | null>(null);
   const [profileData, setProfileData] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -3660,16 +3667,36 @@ function CustomersTab() {
       }),
     onSuccess: (d) => {
       if (d.success) {
-        toast({ title: "Wallet topped up!", description: `New balance: KES ${d.newBalance.toLocaleString()}` });
-        setWalletTopupId(null);
-        setWalletAmount("");
-        setWalletNote("");
-        refetch();
-      } else {
-        toast({ title: "Top-up failed", description: d.error, variant: "destructive" });
-      }
+        toast({ title: "Wallet credited!", description: `New balance: KES ${d.newBalance.toLocaleString()}` });
+        setWalletTopupId(null); setWalletAmount(""); setWalletNote(""); refetch();
+      } else { toast({ title: "Credit failed", description: d.error, variant: "destructive" }); }
     },
   });
+
+  const walletDeductMutation = useMutation({
+    mutationFn: ({ id, amount, note }: { id: number; amount: string; note: string }) =>
+      authFetch(`/api/admin/customers/${id}/wallet/deduct`, {
+        method: "POST",
+        body: JSON.stringify({ amount: parseFloat(amount), note }),
+      }),
+    onSuccess: (d) => {
+      if (d.success) {
+        toast({ title: "Wallet deducted", description: `New balance: KES ${d.newBalance.toLocaleString()}` });
+        setWalletTopupId(null); setWalletAmount(""); setWalletNote(""); refetch();
+      } else { toast({ title: "Deduction failed", description: d.error, variant: "destructive" }); }
+    },
+  });
+
+  async function loadWalletHistory(customerId: number) {
+    if (walletHistoryId === customerId) { setWalletHistoryId(null); setWalletHistoryData(null); return; }
+    setWalletHistoryLoading(true);
+    setWalletTopupId(null);
+    try {
+      const d = await authFetch(`/api/admin/customers/${customerId}/wallet/history`);
+      setWalletHistoryId(customerId);
+      setWalletHistoryData(d);
+    } finally { setWalletHistoryLoading(false); }
+  }
 
   const customers = (data?.customers ?? []).filter((c: any) =>
     !search || c.email.toLowerCase().includes(search.toLowerCase()) || (c.name || "").toLowerCase().includes(search.toLowerCase())
@@ -3814,25 +3841,43 @@ function CustomersTab() {
                       )}
                       <button
                         onClick={() => {
-                          if (walletTopupId === c.id) {
-                            setWalletTopupId(null);
-                            setWalletAmount("");
-                            setWalletNote("");
+                          if (walletTopupId === c.id && walletAction === "credit") {
+                            setWalletTopupId(null); setWalletAmount(""); setWalletNote("");
                           } else {
-                            setWalletTopupId(c.id);
-                            setWalletAmount("");
-                            setWalletNote("");
+                            setWalletTopupId(c.id); setWalletAction("credit");
+                            setWalletAmount(""); setWalletNote("");
+                            setWalletHistoryId(null);
                           }
                         }}
-                        title="Top up wallet"
-                        className={`p-1.5 rounded-lg transition-all text-xs font-medium px-2.5 py-1 flex items-center gap-1 ${
-                          walletTopupId === c.id
-                            ? "bg-indigo-500/25 text-indigo-300"
-                            : "text-white/30 hover:text-indigo-400 hover:bg-indigo-500/10"
-                        }`}
+                        title="Credit wallet"
+                        className={`p-1.5 rounded-lg transition-all text-xs font-medium px-2.5 py-1 flex items-center gap-1 ${walletTopupId === c.id && walletAction === "credit" ? "bg-emerald-500/25 text-emerald-300" : "text-white/30 hover:text-emerald-400 hover:bg-emerald-500/10"}`}
                       >
                         <Wallet className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">Top Up</span>
+                        <span className="hidden sm:inline">Credit</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (walletTopupId === c.id && walletAction === "deduct") {
+                            setWalletTopupId(null); setWalletAmount(""); setWalletNote("");
+                          } else {
+                            setWalletTopupId(c.id); setWalletAction("deduct");
+                            setWalletAmount(""); setWalletNote("");
+                            setWalletHistoryId(null);
+                          }
+                        }}
+                        title="Deduct from wallet"
+                        className={`p-1.5 rounded-lg transition-all text-xs font-medium px-2.5 py-1 flex items-center gap-1 ${walletTopupId === c.id && walletAction === "deduct" ? "bg-red-500/25 text-red-300" : "text-white/30 hover:text-red-400 hover:bg-red-500/10"}`}
+                      >
+                        <MinusCircle className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Deduct</span>
+                      </button>
+                      <button
+                        onClick={() => loadWalletHistory(c.id)}
+                        title="View wallet history"
+                        className={`p-1.5 rounded-lg transition-all text-xs font-medium px-2.5 py-1 flex items-center gap-1 ${walletHistoryId === c.id ? "bg-indigo-500/25 text-indigo-300" : "text-white/30 hover:text-indigo-400 hover:bg-indigo-500/10"}`}
+                      >
+                        <History className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">{walletHistoryLoading ? "…" : "History"}</span>
                       </button>
                       <button
                         onClick={() => suspendMutation.mutate({ id: c.id, suspended: !c.suspended })}
@@ -3851,57 +3896,89 @@ function CustomersTab() {
                   </TableCell>
                 </TableRow>
 
-                {/* ── Wallet Top-Up Inline Panel ── */}
+                {/* ── Wallet Action Inline Panel ── */}
                 {walletTopupId === c.id && (
                   <TableRow className="border-0">
                     <TableCell colSpan={5} className="p-0">
-                      <div className="px-4 pb-4 pt-3 bg-indigo-950/40 border-b border-white/5">
+                      <div className={`px-4 pb-4 pt-3 border-b border-white/5 ${walletAction === "deduct" ? "bg-red-950/30" : "bg-emerald-950/30"}`}>
                         <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                          <Wallet className="w-3 h-3" />
-                          Manual Wallet Top-Up · {c.email}
+                          {walletAction === "credit" ? <Wallet className="w-3 h-3 text-emerald-400" /> : <MinusCircle className="w-3 h-3 text-red-400" />}
+                          {walletAction === "credit" ? "Credit Wallet" : "Deduct Wallet"} · {c.email}
                         </p>
                         <div className="flex items-end gap-3 flex-wrap">
                           <div className="flex flex-col gap-1">
                             <label className="text-[10px] text-white/40 uppercase tracking-wider">Amount (KES)</label>
-                            <Input
-                              type="number"
-                              min="1"
-                              value={walletAmount}
-                              onChange={(e) => setWalletAmount(e.target.value)}
+                            <Input type="number" min="1" value={walletAmount} onChange={(e) => setWalletAmount(e.target.value)}
                               placeholder="e.g. 500"
                               className="w-36 h-8 text-sm glass border-white/10 bg-white/5 text-white placeholder:text-white/25"
                             />
                           </div>
                           <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
-                            <label className="text-[10px] text-white/40 uppercase tracking-wider">Note (optional)</label>
-                            <Input
-                              type="text"
-                              value={walletNote}
-                              onChange={(e) => setWalletNote(e.target.value)}
-                              placeholder="e.g. Compensation, gift, correction…"
+                            <label className="text-[10px] text-white/40 uppercase tracking-wider">Note / Reason</label>
+                            <Input type="text" value={walletNote} onChange={(e) => setWalletNote(e.target.value)}
+                              placeholder={walletAction === "credit" ? "e.g. Compensation, gift…" : "e.g. Chargeback, fraud recovery…"}
                               className="h-8 text-sm glass border-white/10 bg-white/5 text-white placeholder:text-white/25"
                             />
                           </div>
                           <button
                             onClick={() => {
                               if (!walletAmount || parseFloat(walletAmount) <= 0) return;
-                              walletTopupMutation.mutate({ id: c.id, amount: walletAmount, note: walletNote });
+                              if (walletAction === "credit") walletTopupMutation.mutate({ id: c.id, amount: walletAmount, note: walletNote });
+                              else walletDeductMutation.mutate({ id: c.id, amount: walletAmount, note: walletNote });
                             }}
-                            disabled={walletTopupMutation.isPending || !walletAmount || parseFloat(walletAmount) <= 0}
-                            className="h-8 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                            disabled={(walletTopupMutation.isPending || walletDeductMutation.isPending) || !walletAmount || parseFloat(walletAmount) <= 0}
+                            className={`h-8 px-4 rounded-lg disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors ${walletAction === "credit" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-red-600 hover:bg-red-500"}`}
                           >
-                            {walletTopupMutation.isPending
+                            {(walletTopupMutation.isPending || walletDeductMutation.isPending)
                               ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <Wallet className="w-3.5 h-3.5" />}
-                            Credit Wallet
+                              : walletAction === "credit" ? <Wallet className="w-3.5 h-3.5" /> : <MinusCircle className="w-3.5 h-3.5" />}
+                            {walletAction === "credit" ? "Credit" : "Deduct"}
                           </button>
-                          <button
-                            onClick={() => { setWalletTopupId(null); setWalletAmount(""); setWalletNote(""); }}
-                            className="h-8 px-3 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 text-xs transition-colors"
-                          >
+                          <button onClick={() => { setWalletTopupId(null); setWalletAmount(""); setWalletNote(""); }}
+                            className="h-8 px-3 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 text-xs transition-colors">
                             Cancel
                           </button>
                         </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+
+                {/* ── Wallet History Inline Panel ── */}
+                {walletHistoryId === c.id && walletHistoryData && (
+                  <TableRow className="border-0">
+                    <TableCell colSpan={5} className="p-0">
+                      <div className="px-4 pb-4 pt-3 bg-indigo-950/30 border-b border-white/5">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest flex items-center gap-1.5">
+                            <History className="w-3 h-3 text-indigo-400" />
+                            Wallet History · {c.email} · Balance: <span className="text-indigo-300 font-bold">KES {(walletHistoryData.balance ?? 0).toLocaleString()}</span>
+                          </p>
+                          <button onClick={() => { setWalletHistoryId(null); setWalletHistoryData(null); }}
+                            className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                        {(walletHistoryData.transactions ?? []).length === 0 ? (
+                          <p className="text-white/30 text-xs text-center py-4">No wallet transactions yet</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                            {(walletHistoryData.transactions ?? []).slice(0, 30).map((t: any) => (
+                              <div key={t.id} className="flex items-center justify-between text-xs py-1.5 px-2 rounded-lg bg-white/3 hover:bg-white/5 transition-colors">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {t.type === "credit"
+                                    ? <ArrowUpCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                    : <ArrowDownCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
+                                  <span className="text-white/60 truncate">{t.description}</span>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0 ml-2">
+                                  <span className={`font-bold ${t.type === "credit" ? "text-emerald-400" : "text-red-400"}`}>
+                                    {t.type === "credit" ? "+" : "-"}KES {t.amount}
+                                  </span>
+                                  <span className="text-white/25">{new Date(t.createdAt || t.created_at).toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

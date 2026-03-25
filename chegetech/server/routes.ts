@@ -2121,6 +2121,102 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Admin: Deduct wallet balance ─────────────────────────────────────────
+  app.post("/api/admin/customers/:id/wallet/deduct", adminAuthMiddleware, requirePermission("customers"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { amount, note } = req.body;
+      const amountNum = parseFloat(amount);
+      if (!id || isNaN(amountNum) || amountNum <= 0) {
+        return res.status(400).json({ success: false, error: "Valid amount required." });
+      }
+      const customer = await storage.getCustomerById(id);
+      if (!customer) return res.status(404).json({ success: false, error: "Customer not found." });
+      const wallet = await storage.getWallet(id);
+      if ((wallet?.balance ?? 0) < amountNum) {
+        return res.status(400).json({ success: false, error: `Insufficient balance. Customer has KES ${wallet?.balance ?? 0}.` });
+      }
+      const description = note?.trim() ? `Admin deduction: ${note.trim()}` : "Admin wallet deduction";
+      const ok = await storage.debitWallet(id, amountNum, description, `admin-deduct-${id}-${Date.now()}`);
+      if (!ok) return res.status(400).json({ success: false, error: "Deduction failed — insufficient balance." });
+      const updated = await storage.getWallet(id);
+      res.json({ success: true, newBalance: updated?.balance ?? 0 });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Admin: Get customer wallet history ───────────────────────────────────
+  app.get("/api/admin/customers/:id/wallet/history", adminAuthMiddleware, requirePermission("customers"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const wallet = await storage.getWallet(id);
+      const transactions = await storage.getWalletTransactions(id);
+      res.json({ success: true, balance: wallet?.balance ?? 0, transactions });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Customer: Send wallet balance to another customer (P2P) ──────────────
+  app.post("/api/customer/wallet/send", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const senderId = req.customer.id;
+      const senderEmail = req.customer.email;
+      const { recipientEmail, amount, note } = req.body;
+
+      if (!recipientEmail || !amount) {
+        return res.status(400).json({ success: false, error: "Recipient email and amount are required." });
+      }
+      if (recipientEmail.toLowerCase() === senderEmail.toLowerCase()) {
+        return res.status(400).json({ success: false, error: "You cannot send money to yourself." });
+      }
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum < 10) {
+        return res.status(400).json({ success: false, error: "Minimum transfer amount is KES 10." });
+      }
+
+      // Check sender balance
+      const senderWallet = await storage.getWallet(senderId);
+      if ((senderWallet?.balance ?? 0) < amountNum) {
+        return res.status(400).json({ success: false, error: `Insufficient balance. Your wallet has KES ${senderWallet?.balance ?? 0}.` });
+      }
+
+      // Find recipient
+      let recipient: any = null;
+      if (dbType === "sqlite") {
+        recipient = getDb().prepare("SELECT id, email, name FROM customers WHERE email=? AND suspended=0").get(recipientEmail.toLowerCase()) as any;
+      } else {
+        const customers = await storage.getAllCustomers();
+        recipient = customers.find((c: any) => c.email.toLowerCase() === recipientEmail.toLowerCase() && !c.suspended);
+      }
+      if (!recipient) {
+        return res.status(404).json({ success: false, error: "Recipient not found or account is suspended." });
+      }
+
+      const ref = `TRANSFER-${senderId}-${recipient.id}-${Date.now()}`;
+      const msgLabel = note?.trim() ? ` · "${note.trim()}"` : "";
+      const senderName = req.customer.name || senderEmail;
+      const recipientName = recipient.name || recipientEmail;
+
+      // Debit sender
+      const ok = await storage.debitWallet(senderId, amountNum, `Sent to ${recipientEmail}${msgLabel}`, ref);
+      if (!ok) return res.status(400).json({ success: false, error: "Transfer failed — insufficient balance." });
+
+      // Credit recipient
+      await storage.creditWallet(recipient.id, amountNum, `Received from ${senderEmail}${msgLabel}`, ref);
+
+      // Notifications
+      await storage.createNotification(senderId, "wallet", "Transfer Sent 💸", `KES ${amountNum.toLocaleString()} sent to ${recipientEmail}.`);
+      await storage.createNotification(recipient.id, "wallet", "Wallet Transfer Received 💰", `${senderName} sent you KES ${amountNum.toLocaleString()}${msgLabel}.`);
+
+      const updatedWallet = await storage.getWallet(senderId);
+      res.json({ success: true, newBalance: updatedWallet?.balance ?? 0, recipientName });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // CREDENTIALS OVERRIDE ROUTES
   // ═══════════════════════════════════════════════════════════════════════════
