@@ -28,6 +28,7 @@ import {
   validateAdminToken,
   adminAuthMiddleware,
   superAdminOnly,
+  primarySuperAdminOnly,
   requirePermission,
   setStorageRef,
 } from "./auth";
@@ -1157,6 +1158,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true, token });
   });
 
+  // ─── Secondary Super Admin helpers ───────────────────────────────────────
+  function getSecondarySuperAdmins(): any[] {
+    try { return JSON.parse(dbSettingsGet("secondary_super_admins") || "[]"); } catch { return []; }
+  }
+  function saveSecondarySuperAdmins(list: any[]): void {
+    dbSettingsSet("secondary_super_admins", JSON.stringify(list));
+  }
+
   // ─── Admin: Login ─────────────────────────────────────────────────────────
   app.post("/api/admin/login", async (req, res) => {
     const { email, password, totpCode } = req.body;
@@ -1178,6 +1187,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.json({ success: true, token, role: "super" });
     }
 
+    // Check secondary super admins
+    const secondaryAdmins = getSecondarySuperAdmins();
+    const secondaryMatch = secondaryAdmins.find((sa: any) => sa.email === email && sa.active);
+    if (secondaryMatch) {
+      const valid = await bcrypt.compare(password, secondaryMatch.passwordHash);
+      if (valid) {
+        const token = createAdminToken({ role: "super", secondaryId: secondaryMatch.id });
+        logAdminAction({ action: "Secondary super admin logged in", category: "auth", details: `Email: ${email}`, ip, status: "success" });
+        return res.json({ success: true, token, role: "super" });
+      }
+    }
+
     const subAdmin = await storage.getSubAdminByEmail(email);
     if (subAdmin && subAdmin.active) {
       const valid = await bcrypt.compare(password, subAdmin.passwordHash);
@@ -1195,7 +1216,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Admin: Current user info ────────────────────────────────────────────
   app.get("/api/admin/me", adminAuthMiddleware, async (req: any, res) => {
     if (req.adminRole === "super") {
-      return res.json({ success: true, role: "super", permissions: "all" });
+      const isPrimary = !req.secondaryId;
+      if (!isPrimary) {
+        const all = getSecondarySuperAdmins();
+        const sa = all.find((s: any) => s.id === req.secondaryId);
+        return res.json({ success: true, role: "super", permissions: "all", isPrimary: false, name: sa?.name, email: sa?.email });
+      }
+      return res.json({ success: true, role: "super", permissions: "all", isPrimary: true });
     }
     const subAdmin = await storage.getSubAdminById(req.subAdminId);
     if (!subAdmin || !subAdmin.active) return res.status(401).json({ success: false, error: "Account deactivated" });
@@ -2692,6 +2719,71 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
+  });
+
+  // ─── Secondary Super Admins CRUD (primary super admin only) ──────────────
+  app.get("/api/admin/super-admins", adminAuthMiddleware, primarySuperAdminOnly, (_req, res) => {
+    const list = getSecondarySuperAdmins().map(({ passwordHash: _ph, ...rest }: any) => rest);
+    res.json({ success: true, superAdmins: list });
+  });
+
+  app.post("/api/admin/super-admins", adminAuthMiddleware, primarySuperAdminOnly, async (req, res) => {
+    try {
+      const { name, email, password } = req.body;
+      if (!email || !password) return res.status(400).json({ success: false, error: "Email and password are required" });
+      if (password.length < 8) return res.status(400).json({ success: false, error: "Password must be at least 8 characters" });
+      const list = getSecondarySuperAdmins();
+      if (list.find((sa: any) => sa.email === email)) {
+        return res.status(400).json({ success: false, error: "A super admin with this email already exists" });
+      }
+      const passwordHash = await bcrypt.hash(password, 10);
+      const newAdmin = { id: Date.now(), name: name || email.split("@")[0], email, passwordHash, active: true, createdAt: new Date().toISOString() };
+      list.push(newAdmin);
+      saveSecondarySuperAdmins(list);
+      logAdminAction({ action: `Secondary super admin added: ${email}`, category: "settings", details: `Name: ${newAdmin.name}`, status: "success" });
+      const { passwordHash: _ph, ...safe } = newAdmin;
+      res.json({ success: true, superAdmin: safe });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.patch("/api/admin/super-admins/:id/toggle", adminAuthMiddleware, primarySuperAdminOnly, (req, res) => {
+    const id = parseInt(req.params.id);
+    const list = getSecondarySuperAdmins();
+    const idx = list.findIndex((sa: any) => sa.id === id);
+    if (idx === -1) return res.status(404).json({ success: false, error: "Super admin not found" });
+    list[idx].active = !list[idx].active;
+    saveSecondarySuperAdmins(list);
+    logAdminAction({ action: `Secondary super admin ${list[idx].active ? "activated" : "deactivated"}: ${list[idx].email}`, category: "settings", details: `ID: ${id}`, status: "warning" });
+    res.json({ success: true, active: list[idx].active });
+  });
+
+  app.put("/api/admin/super-admins/:id/password", adminAuthMiddleware, primarySuperAdminOnly, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { password } = req.body;
+      if (!password || password.length < 8) return res.status(400).json({ success: false, error: "Password must be at least 8 characters" });
+      const list = getSecondarySuperAdmins();
+      const idx = list.findIndex((sa: any) => sa.id === id);
+      if (idx === -1) return res.status(404).json({ success: false, error: "Super admin not found" });
+      list[idx].passwordHash = await bcrypt.hash(password, 10);
+      saveSecondarySuperAdmins(list);
+      logAdminAction({ action: `Secondary super admin password reset: ${list[idx].email}`, category: "settings", details: `ID: ${id}`, status: "warning" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/admin/super-admins/:id", adminAuthMiddleware, primarySuperAdminOnly, (req, res) => {
+    const id = parseInt(req.params.id);
+    const list = getSecondarySuperAdmins();
+    const target = list.find((sa: any) => sa.id === id);
+    if (!target) return res.status(404).json({ success: false, error: "Super admin not found" });
+    saveSecondarySuperAdmins(list.filter((sa: any) => sa.id !== id));
+    logAdminAction({ action: `Secondary super admin removed: ${target.email}`, category: "settings", details: `ID: ${id}`, status: "error" });
+    res.json({ success: true });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════

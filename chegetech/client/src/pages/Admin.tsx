@@ -24,7 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp";
+type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -97,6 +97,7 @@ export default function Admin() {
   const [token, setTokenState] = useState<string | null>(() => getToken());
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [adminRole, setAdminRole] = useState<"super" | "subadmin" | null>(null);
+  const [isPrimary, setIsPrimary] = useState<boolean>(false);
   const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
   const [adminProfile, setAdminProfile] = useState<{ name: string; avatar: string; email: string } | null>(null);
   const [, setLocation] = useLocation();
@@ -115,6 +116,7 @@ export default function Admin() {
       authFetch("/api/admin/me").then((d) => {
         if (d.success) {
           setAdminRole(d.role);
+          if (d.role === "super") setIsPrimary(d.isPrimary === true);
           if (d.role === "subadmin") setAdminPermissions(d.permissions || []);
         }
       }).catch(() => {});
@@ -153,6 +155,7 @@ export default function Admin() {
     { id: "whatsapp", label: "WhatsApp Bot", icon: MessageCircle, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
+    { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
     { id: "geo-restrict", label: "Geo Restrict", icon: Globe, superOnly: true },
     { id: "vps", label: "VPS Manager", icon: Server, superOnly: true },
     { id: "domains", label: "Domains", icon: Link2, superOnly: true },
@@ -161,6 +164,7 @@ export default function Admin() {
 
   const visibleTabs = allTabs.filter(tab => {
     if (tab.alwaysVisible) return true;
+    if (tab.id === "super-admins") return adminRole === "super" && isPrimary;
     if (adminRole === "super") return true;
     if (tab.superOnly) return false;
     if (adminPermissions.length === 0) return false;
@@ -281,6 +285,7 @@ export default function Admin() {
           {activeTab === "logs" && <LogsTab />}
           {activeTab === "whatsapp" && <WhatsAppTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
+          {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
           {activeTab === "vps" && adminRole === "super" && <VpsTab />}
           {activeTab === "domains" && adminRole === "super" && <DomainsTab />}
@@ -5491,6 +5496,172 @@ const COUNTRY_LIST = [
   { code: "YE", name: "Yemen" }, { code: "ZM", name: "Zambia" },
   { code: "ZW", name: "Zimbabwe" },
 ];
+
+function SuperAdminsTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [saving, setSaving] = useState(false);
+  const [resetId, setResetId] = useState<number | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const inputCls = "w-full rounded-xl px-3 py-2 text-sm text-white placeholder:text-white/25 focus:outline-none focus:ring-1 focus:ring-violet-500/50 transition-all";
+  const glassInput = { background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)" };
+
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/super-admins"],
+    queryFn: () => authFetch("/api/admin/super-admins"),
+  });
+  const admins: any[] = data?.superAdmins ?? [];
+
+  async function handleAdd() {
+    if (!form.email || !form.password) return toast({ title: "Email and password required", variant: "destructive" });
+    if (form.password.length < 8) return toast({ title: "Password must be at least 8 characters", variant: "destructive" });
+    setSaving(true);
+    const r = await authFetch("/api/admin/super-admins", { method: "POST", body: JSON.stringify(form) });
+    setSaving(false);
+    if (r.success) {
+      toast({ title: "Super admin added" });
+      setForm({ name: "", email: "", password: "" });
+      setShowForm(false);
+      refetch();
+      qc.invalidateQueries({ queryKey: ["/api/admin/super-admins"] });
+    } else {
+      toast({ title: r.error || "Failed to add", variant: "destructive" });
+    }
+  }
+
+  async function handleToggle(id: number) {
+    const r = await authFetch(`/api/admin/super-admins/${id}/toggle`, { method: "PATCH" });
+    if (r.success) { refetch(); toast({ title: r.active ? "Activated" : "Deactivated" }); }
+    else toast({ title: r.error || "Failed", variant: "destructive" });
+  }
+
+  async function handleDelete(id: number, email: string) {
+    if (!confirm(`Remove super admin ${email}? This cannot be undone.`)) return;
+    const r = await authFetch(`/api/admin/super-admins/${id}`, { method: "DELETE" });
+    if (r.success) { refetch(); toast({ title: "Super admin removed" }); }
+    else toast({ title: r.error || "Failed", variant: "destructive" });
+  }
+
+  async function handleResetPassword() {
+    if (!newPassword || newPassword.length < 8) return toast({ title: "Password must be at least 8 characters", variant: "destructive" });
+    setResetting(true);
+    const r = await authFetch(`/api/admin/super-admins/${resetId}/password`, { method: "PUT", body: JSON.stringify({ password: newPassword }) });
+    setResetting(false);
+    if (r.success) { toast({ title: "Password updated" }); setResetId(null); setNewPassword(""); }
+    else toast({ title: r.error || "Failed", variant: "destructive" });
+  }
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <Shield className="w-5 h-5 text-violet-400" /> Super Admins
+          </h2>
+          <p className="text-sm text-white/40 mt-0.5">These accounts have full admin access, identical to yours. Only you can manage them.</p>
+        </div>
+        <button onClick={() => setShowForm(s => !s)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all"
+          style={{ background: "rgba(139,92,246,.2)", color: "#c4b5fd", border: "1px solid rgba(139,92,246,.3)" }}>
+          <Plus className="w-3.5 h-3.5" /> Add Super Admin
+        </button>
+      </div>
+
+      {/* Add form */}
+      {showForm && (
+        <div className="glass rounded-2xl p-5 space-y-3" style={{ border: "1px solid rgba(139,92,246,.2)" }}>
+          <p className="text-sm font-semibold text-white/70">New Super Admin</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="Display name (optional)" className={inputCls} style={glassInput} />
+            <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+              placeholder="Email address *" type="email" className={inputCls} style={glassInput} />
+          </div>
+          <input value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+            placeholder="Password (min 8 characters) *" type="password" className={inputCls} style={glassInput} />
+          <div className="flex gap-2 pt-1">
+            <button onClick={handleAdd} disabled={saving}
+              className="px-4 py-1.5 rounded-xl text-xs font-semibold text-white transition-all"
+              style={{ background: saving ? "rgba(139,92,246,.3)" : "rgba(139,92,246,.6)" }}>
+              {saving ? "Adding…" : "Add Super Admin"}
+            </button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-1.5 rounded-xl text-xs text-white/40 hover:text-white/60 transition-all">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* List */}
+      {isLoading ? (
+        <div className="glass rounded-2xl p-8 text-center text-white/30 text-sm">Loading…</div>
+      ) : admins.length === 0 && !showForm ? (
+        <div className="glass rounded-2xl p-10 text-center space-y-2">
+          <Shield className="w-8 h-8 text-white/20 mx-auto" />
+          <p className="text-white/30 text-sm">No additional super admins yet</p>
+          <p className="text-white/20 text-xs">Click "Add Super Admin" to grant full admin access to another account.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {admins.map((sa: any) => (
+            <div key={sa.id} className="glass rounded-xl px-4 py-3 flex items-center gap-3" style={{ border: "1px solid rgba(255,255,255,.07)" }}>
+              <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
+                style={{ background: sa.active ? "rgba(139,92,246,.25)" : "rgba(255,255,255,.06)", color: sa.active ? "#c4b5fd" : "rgba(255,255,255,.3)" }}>
+                {(sa.name || sa.email).slice(0, 2).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-white truncate">{sa.name}</p>
+                <p className="text-xs text-white/40 truncate">{sa.email}</p>
+              </div>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${sa.active ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
+                {sa.active ? "Active" : "Suspended"}
+              </span>
+              <div className="flex items-center gap-1 shrink-0">
+                {resetId === sa.id ? (
+                  <div className="flex items-center gap-1">
+                    <input value={newPassword} onChange={e => setNewPassword(e.target.value)} type="password"
+                      placeholder="New password" className="text-xs px-2 py-1 rounded-lg w-32"
+                      style={{ background: "rgba(255,255,255,.08)", color: "#fff", border: "1px solid rgba(255,255,255,.1)" }} />
+                    <button onClick={handleResetPassword} disabled={resetting}
+                      className="text-xs px-2 py-1 rounded-lg text-emerald-400 hover:bg-emerald-500/10 transition-all">
+                      {resetting ? "…" : "Save"}
+                    </button>
+                    <button onClick={() => { setResetId(null); setNewPassword(""); }}
+                      className="text-xs px-2 py-1 rounded-lg text-white/30 hover:text-white/50">✕</button>
+                  </div>
+                ) : (
+                  <button onClick={() => { setResetId(sa.id); setNewPassword(""); }}
+                    className="text-[11px] px-2 py-1 rounded-lg text-white/30 hover:text-white/60 transition-all">
+                    Reset pw
+                  </button>
+                )}
+                <button onClick={() => handleToggle(sa.id)}
+                  className="text-[11px] px-2 py-1 rounded-lg transition-all"
+                  style={{ color: sa.active ? "#fca5a5" : "#86efac" }}>
+                  {sa.active ? "Suspend" : "Activate"}
+                </button>
+                <button onClick={() => handleDelete(sa.id, sa.email)}
+                  className="text-[11px] px-2 py-1 rounded-lg text-red-400/60 hover:text-red-400 transition-all">
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Reset password modal for inline is already inline above */}
+
+      <div className="p-3 rounded-xl text-[11px] text-white/30 leading-relaxed" style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)" }}>
+        <strong className="text-white/50">Note:</strong> Secondary super admins have full access to the admin panel — plans, orders, customers, settings, and everything else. The only thing they cannot do is manage other super admins (only your primary account can do that).
+      </div>
+    </div>
+  );
+}
 
 function GeoRestrictTab() {
   const { toast } = useToast();

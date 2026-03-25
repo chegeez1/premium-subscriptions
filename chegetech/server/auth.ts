@@ -88,6 +88,7 @@ export function verifyTotpWithSecret(token: string, secret: string): boolean {
 export interface AdminTokenPayload {
   role: "super" | "subadmin";
   subAdminId?: number;
+  secondaryId?: number;
   permissions?: string[];
 }
 
@@ -104,6 +105,11 @@ export function createAdminToken(payload?: AdminTokenPayload): string {
   const timestamp = Date.now();
   if (payload && payload.role === "subadmin") {
     const data = `subadmin:${payload.subAdminId}:${timestamp}`;
+    const sig = hmacSign(data);
+    return Buffer.from(`${data}:${sig}`).toString("base64");
+  }
+  if (payload && payload.role === "super" && payload.secondaryId) {
+    const data = `superadmin2:${payload.secondaryId}:${timestamp}`;
     const sig = hmacSign(data);
     return Buffer.from(`${data}:${sig}`).toString("base64");
   }
@@ -126,6 +132,17 @@ export function validateAdminToken(token: string): AdminTokenPayload | false {
       if (hmacSign(data) !== sig) return false;
       if (Date.now() - timestamp >= maxAge) return false;
       return { role: "subadmin", subAdminId };
+    }
+
+    if (decoded.startsWith("superadmin2:")) {
+      const parts = decoded.split(":");
+      const secondaryId = parseInt(parts[1]);
+      const timestamp = parseInt(parts[2]);
+      const sig = parts[3];
+      const data = `superadmin2:${secondaryId}:${timestamp}`;
+      if (hmacSign(data) !== sig) return false;
+      if (Date.now() - timestamp >= maxAge) return false;
+      return { role: "super", secondaryId };
     }
 
     if (decoded.startsWith("admin:")) {
@@ -164,12 +181,20 @@ export async function adminAuthMiddleware(req: any, res: any, next: any) {
 
   req.adminRole = payload.role;
   req.subAdminId = payload.subAdminId;
+  req.secondaryId = payload.secondaryId;
   next();
 }
 
 export function superAdminOnly(req: any, res: any, next: any) {
   if (req.adminRole !== "super") {
     return res.status(403).json({ success: false, error: "Super admin access required" });
+  }
+  next();
+}
+
+export function primarySuperAdminOnly(req: any, res: any, next: any) {
+  if (req.adminRole !== "super" || req.secondaryId) {
+    return res.status(403).json({ success: false, error: "Primary super admin access required" });
   }
   next();
 }
