@@ -1,9 +1,11 @@
-import makeWASocket, {
+import pkg from "gifted-baileys";
+const {
+  default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
   makeCacheableSignalKeyStore,
-  fetchLatestBaileysVersion,
-} from "@whiskeysockets/baileys";
+  Browsers,
+} = pkg as any;
 import { Boom } from "@hapi/boom";
 import path from "path";
 import fs from "fs";
@@ -73,30 +75,27 @@ export async function connectWhatsApp(phoneNumber?: string): Promise<void> {
   if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
 
   connectionStatus = "connecting";
   qrCodeDataUrl = null;
   pairingCode = null;
 
   const localSock = makeWASocket({
-    version,
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, SILENT_LOGGER),
     },
     printQRInTerminal: false,
     logger: SILENT_LOGGER,
-    browser: ["Chege Tech Bot", "Chrome", "120.0"],
+    browser: Browsers.ubuntu("Gifted"),
     connectTimeoutMs: 60_000,
-    keepAliveIntervalMs: 10_000, // send pings every 10s to keep connection alive
+    keepAliveIntervalMs: 10_000,
     retryRequestDelayMs: 2000,
   });
   sock = localSock;
 
   // Request pairing code right away if phone provided and not yet registered
-  // Baileys queues this internally until the handshake is ready
-  if (phone && !state.creds.registered) {
+  if (phone && !localSock.authState.creds.registered) {
     localSock.requestPairingCode(phone)
       .then((code: string) => {
         if (localSock === sock) { // still the active socket
