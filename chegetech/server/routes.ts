@@ -1768,6 +1768,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             isp: geoData.isp,
             userAgent,
           });
+
+          // ── Auto-suspend: 5+ distinct IPs ───────────────────────────────
+          const logs = await storage.getLoginLogs(customer.id);
+          const privateIp = /^(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|::1$|::ffff:|localhost)/;
+          const distinctIps = new Set(
+            logs.map((l: any) => l.ip).filter((ip: string) => ip && !privateIp.test(ip))
+          );
+          if (distinctIps.size >= 5 && !customer.suspended) {
+            await storage.updateCustomer(customer.id, { suspended: true });
+            await storage.createNotification(
+              customer.id, "security",
+              "🔒 Account Suspended",
+              "Your account was automatically suspended — logins detected from 5+ different IP addresses. Contact support to restore access."
+            );
+            sendSuspensionEmail(
+              customer.email,
+              customer.name || undefined,
+              `Automatic suspension: logins detected from ${distinctIps.size} different IP addresses. This may indicate unauthorized account sharing or a compromised account.`
+            ).catch(() => {});
+            sendTelegramMessage(
+              `🔒 <b>Auto-Suspension</b>\n\n` +
+              `Customer: <code>${customer.email}</code>\n` +
+              `Name: ${customer.name || "Unknown"}\n` +
+              `Distinct IPs: <b>${distinctIps.size}</b>\n` +
+              `IPs: ${Array.from(distinctIps).join(", ")}\n\n` +
+              `Account has been <b>automatically suspended</b>.\n` +
+              `Go to Admin → Customers to review and restore if legitimate.`
+            ).catch(() => {});
+            console.warn(`[security] Auto-suspended customer ${customer.email} — ${distinctIps.size} distinct IPs detected`);
+          }
         } catch (_) {}
       })();
 
