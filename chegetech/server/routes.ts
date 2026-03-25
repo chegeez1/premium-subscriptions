@@ -2918,6 +2918,105 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   });
 
+  // ─── v1: Public store info ────────────────────────────────────────────────
+  app.get("/api/v1/store", (_req, res) => {
+    const config = getAppConfig();
+    const categories = buildPlansResponse();
+    const planCount = Object.values(categories).reduce((n: number, cat: any) => n + Object.keys(cat.plans).length, 0);
+    res.json({
+      name: config.siteName,
+      supportEmail: config.supportEmail || null,
+      whatsappNumber: config.whatsappNumber || null,
+      planCount,
+    });
+  });
+
+  // ─── v1: Customer: My wallet ──────────────────────────────────────────────
+  app.get("/api/v1/my-wallet", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (!req.apiKey.customerId) return res.status(403).json({ error: "Customer API key required" });
+    const wallet = await storage.getWallet(req.apiKey.customerId);
+    const txns = await storage.getWalletTransactions(req.apiKey.customerId);
+    res.json({ balance: wallet.balance, transactions: txns.slice(0, 20) });
+  });
+
+  // ─── v1: Customer: My subscriptions (successful orders) ──────────────────
+  app.get("/api/v1/my-subscriptions", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (!req.apiKey.customerId) return res.status(403).json({ error: "Customer API key required" });
+    const customer = await storage.getCustomerById(req.apiKey.customerId);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    const txns = await storage.getTransactionsByEmail(customer.email);
+    const active = txns
+      .filter((t: any) => t.status === "success")
+      .map((t: any) => ({
+        reference: t.reference, planId: t.planId, planName: t.planName,
+        amount: t.amount, purchasedAt: t.createdAt, expiresAt: t.expiresAt || null,
+      }));
+    res.json({ count: active.length, subscriptions: active });
+  });
+
+  // ─── v1: Admin: Single customer detail ───────────────────────────────────
+  app.get("/api/v1/admin/customers/:id", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (req.apiKey.customerId) return res.status(403).json({ error: "Admin API key required" });
+    const c = await storage.getCustomerById(parseInt(req.params.id));
+    if (!c) return res.status(404).json({ error: "Customer not found" });
+    const stats = await storage.getCustomerSpendingStats(c.email);
+    const wallet = await storage.getWallet(c.id);
+    res.json({
+      id: c.id, email: c.email, name: c.name, suspended: c.suspended,
+      emailVerified: c.emailVerified, createdAt: c.createdAt,
+      walletBalance: wallet.balance, ...stats,
+    });
+  });
+
+  // ─── v1: Admin: Suspend / unsuspend customer ──────────────────────────────
+  app.patch("/api/v1/admin/customers/:id/suspend", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (req.apiKey.customerId) return res.status(403).json({ error: "Admin API key required" });
+    const { suspended } = req.body;
+    if (typeof suspended !== "boolean") return res.status(400).json({ error: "suspended must be a boolean" });
+    const c = await storage.updateCustomer(parseInt(req.params.id), { suspended });
+    if (!c) return res.status(404).json({ error: "Customer not found" });
+    res.json({ success: true, id: c.id, email: c.email, suspended: c.suspended });
+  });
+
+  // ─── v1: Admin: Customer wallet balance + history ─────────────────────────
+  app.get("/api/v1/admin/customers/:id/wallet", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (req.apiKey.customerId) return res.status(403).json({ error: "Admin API key required" });
+    const customerId = parseInt(req.params.id);
+    const wallet = await storage.getWallet(customerId);
+    const txns = await storage.getWalletTransactions(customerId);
+    res.json({ balance: wallet.balance, transactions: txns.slice(0, 50) });
+  });
+
+  // ─── v1: Admin: Top up customer wallet ───────────────────────────────────
+  app.post("/api/v1/admin/wallet/topup", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (req.apiKey.customerId) return res.status(403).json({ error: "Admin API key required" });
+    const { customerId, amount, description } = req.body;
+    if (!customerId || !amount || amount <= 0) return res.status(400).json({ error: "customerId and positive amount are required" });
+    const c = await storage.getCustomerById(customerId);
+    if (!c) return res.status(404).json({ error: "Customer not found" });
+    await storage.creditWallet(customerId, amount, description || "Admin top-up via API");
+    const wallet = await storage.getWallet(customerId);
+    res.json({ success: true, customerId, amount, newBalance: wallet.balance });
+  });
+
+  // ─── v1: Admin: Single order by reference ────────────────────────────────
+  app.get("/api/v1/admin/orders/:reference", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (req.apiKey.customerId) return res.status(403).json({ error: "Admin API key required" });
+    const tx = await storage.getTransaction(req.params.reference);
+    if (!tx) return res.status(404).json({ error: "Order not found" });
+    res.json({ order: tx });
+  });
+
+  // ─── v1: Admin: Re-deliver order credentials ─────────────────────────────
+  app.post("/api/v1/admin/orders/:reference/deliver", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (req.apiKey.customerId) return res.status(403).json({ error: "Admin API key required" });
+    const tx = await storage.getTransaction(req.params.reference);
+    if (!tx) return res.status(404).json({ error: "Order not found" });
+    if (tx.status !== "success") return res.status(400).json({ error: "Can only re-deliver successful orders" });
+    const delivery = await deliverAccount(tx as any);
+    res.json({ success: delivery.success, error: delivery.error || null });
+  });
+
   // ─── Customer: Support Tickets ───────────────────────────────────────
   app.get("/api/customer/tickets", customerAuthMiddleware, async (req: any, res) => {
     try {

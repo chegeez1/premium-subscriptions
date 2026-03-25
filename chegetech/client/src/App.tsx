@@ -12,10 +12,11 @@ import Admin from "@/pages/Admin";
 import Auth from "@/pages/Auth";
 import Dashboard from "@/pages/Dashboard";
 import NotFound from "@/pages/not-found";
+import Docs from "@/pages/Docs";
 import ChatWidget from "@/components/ChatWidget";
 
-const NO_CHAT_PATHS = ["/admin"];
-const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success"];
+const NO_CHAT_PATHS = ["/admin", "/docs"];
+const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs"];
 
 function Router() {
   const [location] = useLocation();
@@ -53,6 +54,7 @@ function Router() {
         <Route path="/auth" component={Auth} />
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/admin" component={Admin} />
+        <Route path="/docs" component={Docs} />
         <Route component={NotFound} />
       </Switch>
       {showChat && <ChatWidget />}
