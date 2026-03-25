@@ -195,6 +195,11 @@ async function sendScheduledCampaign(campaign: any) {
 // RETAIL_MULTIPLIER: shared plans are ~46% cheaper than retail, so retail ≈ totalSpent × 1.85
 const RETAIL_MULTIPLIER = 1.85;
 
+// Escape HTML entities in values interpolated into email templates
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
+}
+
 export async function sendMonthlySummaries(targetEmail?: string, mode: "previous_month" | "current_month" = "previous_month") {
   try {
     const { siteName } = getAppConfig();
@@ -254,21 +259,24 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
       // Build order rows
       const orderRows = orders.map((t: any) => {
         const date = new Date(t.createdAt || 0).toLocaleDateString("en-KE", { day: "numeric", month: "short" });
+        const safePlanName = escHtml(t.planName || "Subscription");
         return `<tr>
-          <td style="padding:10px 12px;font-size:13px;color:#374151;border-bottom:1px solid #F3F4F6;">${t.planName || "Subscription"}</td>
+          <td style="padding:10px 12px;font-size:13px;color:#374151;border-bottom:1px solid #F3F4F6;">${safePlanName}</td>
           <td style="padding:10px 12px;font-size:13px;color:#6B7280;border-bottom:1px solid #F3F4F6;">${date}</td>
           <td style="padding:10px 12px;font-size:13px;color:#111827;font-weight:600;text-align:right;border-bottom:1px solid #F3F4F6;">KES ${(t.amount || 0).toLocaleString()}</td>
         </tr>`;
       }).join("");
 
-      const firstName = (customer.name || "there").split(" ")[0];
+      const firstName = escHtml((customer.name || "there").split(" ")[0]);
+      const safeMonthName = escHtml(monthName);
+      const safeSiteName  = escHtml(siteName);
 
       const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>${monthName} Spending Summary</title>
+  <title>${safeMonthName} Spending Summary</title>
 </head>
 <body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
   <div style="max-width:560px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 32px rgba(0,0,0,.12);">
@@ -276,15 +284,15 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
     <!-- Header -->
     <div style="background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);padding:36px 32px;text-align:center;">
       <p style="color:rgba(255,255,255,.7);font-size:12px;letter-spacing:2px;text-transform:uppercase;margin:0 0 10px;">Monthly Summary</p>
-      <h1 style="color:#fff;margin:0 0 6px;font-size:26px;font-weight:800;">${monthName}</h1>
-      <p style="color:rgba(255,255,255,.75);margin:0;font-size:14px;">${siteName}</p>
+      <h1 style="color:#fff;margin:0 0 6px;font-size:26px;font-weight:800;">${safeMonthName}</h1>
+      <p style="color:rgba(255,255,255,.75);margin:0;font-size:14px;">${safeSiteName}</p>
     </div>
 
     <!-- Greeting -->
     <div style="padding:28px 32px 0;">
       <p style="color:#374151;font-size:16px;margin:0 0 6px;">Hi <strong>${firstName}</strong> 👋</p>
       <p style="color:#6B7280;font-size:14px;margin:0 0 24px;line-height:1.6;">
-        Here's a look at what you unlocked in <strong>${monthName}</strong> — ${orders.length} subscription${orders.length !== 1 ? "s" : ""} at a fraction of the direct price.
+        Here's a look at what you unlocked in <strong>${safeMonthName}</strong> — ${orders.length} subscription${orders.length !== 1 ? "s" : ""} at a fraction of the direct price.
       </p>
     </div>
 
@@ -308,7 +316,7 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
     <div style="padding:0 32px 28px;">
       <div style="background:linear-gradient(135deg,rgba(79,70,229,.07) 0%,rgba(124,58,237,.07) 100%);border:1px solid rgba(99,102,241,.2);border-radius:14px;padding:22px 24px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <span style="color:#6B7280;font-size:14px;">Total spent in ${monthName}</span>
+          <span style="color:#6B7280;font-size:14px;">Total spent in ${safeMonthName}</span>
           <span style="color:#111827;font-size:20px;font-weight:800;">KES ${totalSpent.toLocaleString()}</span>
         </div>
         <div style="height:1px;background:rgba(99,102,241,.15);margin-bottom:12px;"></div>
@@ -332,14 +340,14 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
         Shop Again →
       </a>
       <p style="color:#9CA3AF;font-size:12px;margin:16px 0 0;">
-        Keep saving every month with ${siteName}.
+        Keep saving every month with ${safeSiteName}.
       </p>
     </div>
 
     <!-- Footer -->
     <div style="background:#F9FAFB;padding:16px 32px;border-top:1px solid #F3F4F6;text-align:center;">
       <p style="font-size:11px;color:#D1D5DB;margin:0;">
-        &copy; ${now.getFullYear()} ${siteName}. All rights reserved.<br>
+        &copy; ${now.getFullYear()} ${safeSiteName}. All rights reserved.<br>
         <span style="color:#E5E7EB;">To unsubscribe from summary emails, contact support.</span>
       </p>
     </div>
@@ -349,7 +357,7 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
 
       const emailOk = await sendRawEmail(
         customer.email,
-        `Your ${monthName} Spending Summary — ${siteName}`,
+        `Your ${safeMonthName} Spending Summary — ${safeSiteName}`,
         html
       ).then(() => true).catch((e: any) => {
         console.warn(`[cron][monthly-summary] Failed to send to ${customer.email}:`, e.message);
