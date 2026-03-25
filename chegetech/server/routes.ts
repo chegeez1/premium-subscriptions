@@ -375,21 +375,68 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
     metadata: { accountId: account.id, accountEmail: account.email },
   });
 
+  // ─── Gift support: deliver to giftEmail if set ────────────────────
+  let deliveryEmail = transaction.customerEmail;
+  let deliveryName = transaction.customerName || "Customer";
+  let giftData: { giftEmail: string; giftMessage: string } | null = null;
+  try {
+    const raw = dbSettingsGet(`gift_${transaction.reference}`);
+    if (raw) {
+      giftData = JSON.parse(raw);
+      if (giftData?.giftEmail) {
+        deliveryEmail = giftData.giftEmail;
+        deliveryName = "there"; // unknown name for recipient
+      }
+    }
+  } catch (_) {}
+
   const emailResult = await sendAccountEmail(
-    transaction.customerEmail,
+    deliveryEmail,
     transaction.planName,
     account,
-    transaction.customerName || "Customer"
+    deliveryName
   );
+
+  // If it was a gift, also notify the buyer
+  if (giftData?.giftEmail) {
+    try {
+      const { Resend } = await import("resend");
+      const key = getResendApiKey();
+      if (key && !key.startsWith("re_xxx")) {
+        const resend = new Resend(key);
+        const fromAddr = getResendFrom() || "onboarding@resend.dev";
+        const msgLine = giftData.giftMessage ? `<p style="color:#555;font-size:14px;font-style:italic;">"${giftData.giftMessage}"</p>` : "";
+        await resend.emails.send({
+          from: `Chege Tech <${fromAddr}>`,
+          to: transaction.customerEmail,
+          subject: `🎁 Gift delivered — ${transaction.planName}`,
+          html: `<!DOCTYPE html><html><body style="font-family:sans-serif;background:#f0f4f8;margin:0;padding:0">
+          <div style="max-width:520px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.1)">
+            <div style="background:linear-gradient(135deg,#4169E1 0%,#7C3AED 100%);padding:28px;text-align:center">
+              <p style="font-size:36px;margin:0 0 8px">🎁</p>
+              <h1 style="color:#fff;margin:0;font-size:20px">Gift Delivered!</h1>
+            </div>
+            <div style="padding:28px">
+              <p style="color:#333;font-size:15px">Hi <strong>${transaction.customerName || "there"}</strong>,</p>
+              <p style="color:#555;font-size:14px">Your gift of <strong>${transaction.planName}</strong> has been delivered to <strong>${giftData.giftEmail}</strong>.</p>
+              ${msgLine}
+              <p style="color:#888;font-size:13px;margin-top:16px">Thank you for spreading the joy! 💜</p>
+            </div>
+          </div></body></html>`
+        }).catch(() => {});
+      }
+    } catch (_) {}
+    dbSettingsSet(`gift_${transaction.reference}`, "");
+  }
 
   logDelivery({
     ...logBase,
     method: "email",
     status: emailResult.success ? "success" : "failed",
     details: emailResult.success
-      ? `Credentials email sent to ${transaction.customerEmail}`
+      ? `Credentials email sent to ${deliveryEmail}${giftData?.giftEmail ? ` (gift from ${transaction.customerEmail})` : ""}`
       : `Email delivery failed: ${emailResult.error || "unknown error"}`,
-    metadata: { recipientEmail: transaction.customerEmail },
+    metadata: { recipientEmail: deliveryEmail },
   });
 
   await storage.updateTransaction(transaction.reference, {
@@ -599,7 +646,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Public: Initialize payment ──────────────────────────────────────────
   app.post("/api/payment/initialize", async (req, res) => {
     try {
-      const { planId, customerName, email, promoCode } = req.body;
+      const { planId, customerName, email, promoCode, giftEmail, giftMessage } = req.body;
       if (!email || !planId) return res.status(400).json({ success: false, error: "Email and planId are required" });
 
       const categories = buildPlansResponse();
@@ -664,6 +711,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         emailSent: false,
         accountAssigned: false,
       });
+      if (giftEmail?.trim()) {
+        dbSettingsSet(`gift_${reference}`, JSON.stringify({ giftEmail: giftEmail.trim(), giftMessage: giftMessage?.trim() || "" }));
+      }
 
       const paystackSecret = getPaystackSecretKey();
       if (!paystackSecret) {
@@ -3495,6 +3545,115 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
+  });
+
+  // ─── Announcements ────────────────────────────────────────────────────────
+  function getAnnouncements(): any[] {
+    try { return JSON.parse(dbSettingsGet("announcements") || "[]"); } catch { return []; }
+  }
+  function saveAnnouncements(list: any[]) { dbSettingsSet("announcements", JSON.stringify(list)); }
+
+  app.get("/api/announcements", (req, res) => {
+    const now = new Date();
+    const active = getAnnouncements().filter((a: any) => !a.expiresAt || new Date(a.expiresAt) > now);
+    res.json({ announcements: active });
+  });
+
+  app.post("/api/admin/announcements", adminAuthMiddleware, (req, res) => {
+    const { title, message, type = "info", expiresAt, link, linkLabel } = req.body;
+    if (!title || !message) return res.status(400).json({ success: false, error: "Title and message are required." });
+    const list = getAnnouncements();
+    const ann = { id: `ann-${Date.now()}`, title, message, type, expiresAt: expiresAt || null, link: link || null, linkLabel: linkLabel || null, createdAt: new Date().toISOString() };
+    list.unshift(ann);
+    saveAnnouncements(list);
+    res.json({ success: true, announcement: ann });
+  });
+
+  app.delete("/api/admin/announcements/:id", adminAuthMiddleware, (req, res) => {
+    const list = getAnnouncements().filter((a: any) => a.id !== req.params.id);
+    saveAnnouncements(list);
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/announcements", adminAuthMiddleware, (req, res) => {
+    res.json({ announcements: getAnnouncements() });
+  });
+
+  // ─── Waitlist ─────────────────────────────────────────────────────────────
+  function getWaitlist(): any[] {
+    try { return JSON.parse(dbSettingsGet("waitlist") || "[]"); } catch { return []; }
+  }
+  function saveWaitlist(list: any[]) { dbSettingsSet("waitlist", JSON.stringify(list)); }
+
+  app.post("/api/waitlist", async (req, res) => {
+    try {
+      const { email, planId } = req.body;
+      if (!email || !planId) return res.status(400).json({ success: false, error: "Email and planId are required." });
+      const list = getWaitlist();
+      const existing = list.find((w: any) => w.email.toLowerCase() === email.toLowerCase() && w.planId === planId);
+      if (existing) return res.json({ success: true, alreadyJoined: true });
+      const categories = buildPlansResponse();
+      let planName = planId;
+      for (const cat of Object.values(categories) as any[]) {
+        if (cat.plans[planId]) { planName = cat.plans[planId].name; break; }
+      }
+      list.push({ id: `wl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, email, planId, planName, joinedAt: new Date().toISOString() });
+      saveWaitlist(list);
+      res.json({ success: true });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.get("/api/admin/waitlist", adminAuthMiddleware, (req, res) => {
+    const list = getWaitlist();
+    res.json({ waitlist: list, total: list.length });
+  });
+
+  app.delete("/api/admin/waitlist/:id", adminAuthMiddleware, (req, res) => {
+    const list = getWaitlist().filter((w: any) => w.id !== req.params.id);
+    saveWaitlist(list);
+    res.json({ success: true });
+  });
+
+  app.post("/api/admin/waitlist/notify/:planId", adminAuthMiddleware, async (req, res) => {
+    try {
+      const { planId } = req.params;
+      const list = getWaitlist().filter((w: any) => w.planId === planId);
+      if (!list.length) return res.json({ success: true, notified: 0 });
+      const categories = buildPlansResponse();
+      let plan: any = null;
+      for (const cat of Object.values(categories) as any[]) {
+        if (cat.plans[planId]) { plan = cat.plans[planId]; break; }
+      }
+      const planName = plan?.name || planId;
+      const storeUrl = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "";
+      const { Resend } = await import("resend");
+      const key = getResendApiKey();
+      let notified = 0;
+      if (key && !key.startsWith("re_xxx")) {
+        const resend = new Resend(key);
+        const fromAddr = getResendFrom() || "onboarding@resend.dev";
+        for (const entry of list) {
+          const html = `<!DOCTYPE html><html><body style="font-family:sans-serif;background:#f0f4f8;margin:0;padding:0">
+          <div style="max-width:520px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.1)">
+            <div style="background:linear-gradient(135deg,#4169E1 0%,#7C3AED 100%);padding:28px;text-align:center">
+              <p style="font-size:32px;margin:0 0 8px">🎉</p>
+              <h1 style="color:#fff;margin:0;font-size:20px">Back in Stock!</h1>
+            </div>
+            <div style="padding:28px">
+              <p style="color:#333;font-size:15px">Good news! <strong>${planName}</strong> is now available again.</p>
+              <p style="color:#555;font-size:14px">You joined the waitlist and we wanted you to be the first to know. Grab your spot before it sells out!</p>
+              <a href="${storeUrl}" style="display:inline-block;background:#4169E1;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;margin-top:8px">Shop Now →</a>
+            </div>
+            <div style="background:#F9FAFB;padding:14px;text-align:center;border-top:1px solid #F3F4F6">
+              <p style="font-size:11px;color:#aaa;margin:0">&copy; ${new Date().getFullYear()} Chege Tech</p>
+            </div>
+          </div></body></html>`;
+          await resend.emails.send({ from: `Chege Tech <${fromAddr}>`, to: entry.email, subject: `✅ ${planName} is back in stock!`, html }).catch(() => {});
+          notified++;
+        }
+      }
+      res.json({ success: true, notified });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
   });
 
   // ─── Admin: CSV Exports ───────────────────────────────────────────────────

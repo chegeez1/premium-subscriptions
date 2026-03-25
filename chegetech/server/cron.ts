@@ -2,49 +2,85 @@ import cron from "node-cron";
 import { storage } from "./storage";
 import { sendTelegramMessage } from "./telegram";
 import { getAppConfig } from "./app-config";
-import { dbSettingsGet } from "./storage";
+import { dbSettingsGet, dbSettingsSet } from "./storage";
 import { sendAdminEmail, sendBulkEmail, sendRawEmail } from "./email";
 
-// ─── Daily: check expiring accounts + notify ──────────────────────────────
+// ─── Daily: check expiring accounts + renewal reminders ───────────────────
 
 async function checkExpiringAccounts() {
   try {
     const txs = await storage.getAllTransactions();
     const { siteName } = getAppConfig();
     const now = new Date();
-    const in3Days = new Date(now.getTime() + 3 * 86400000);
+    const storeUrl = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "";
 
-    const expiring = txs.filter((t: any) => {
+    const REMINDER_DAYS = [7, 3, 1];
+
+    const expiringWithin7 = txs.filter((t: any) => {
       if (t.status !== "success" || !t.expiresAt) return false;
       const exp = new Date(t.expiresAt);
-      return exp > now && exp <= in3Days;
+      return exp > now && exp <= new Date(now.getTime() + 7 * 86400000);
     });
 
-    for (const tx of expiring) {
+    for (const tx of expiringWithin7) {
       if (!tx.customerEmail) continue;
-      const expDate = new Date(tx.expiresAt!).toLocaleDateString();
-      const html = `
-        <div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-          <div style="background:linear-gradient(135deg,#4F46E5,#7C3AED);padding:32px;border-radius:12px 12px 0 0;text-align:center">
-            <h1 style="color:#fff;margin:0;font-size:22px">${siteName}</h1>
-          </div>
-          <div style="background:#fff;padding:32px;border-radius:0 0 12px 12px;border:1px solid #e5e7eb">
-            <h2 style="color:#1f2937;margin-top:0">⏰ Subscription Expiring Soon</h2>
-            <p style="color:#4b5563">Hi there! Your <b>${tx.planName}</b> subscription expires on <b>${expDate}</b>.</p>
-            <p style="color:#4b5563">Renew now to avoid any interruption in service.</p>
-            <a href="${process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : ""}"
-               style="display:inline-block;background:#4F46E5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
-              Renew Now →
-            </a>
-          </div>
-        </div>`;
-      await sendRawEmail(tx.customerEmail, `⏰ Your ${tx.planName} expires on ${expDate}`, html).catch(() => {});
+      const exp = new Date(tx.expiresAt!);
+      const daysLeft = Math.ceil((exp.getTime() - now.getTime()) / 86400000);
+      const expDate = exp.toLocaleDateString("en-KE", { year: "numeric", month: "long", day: "numeric" });
+
+      for (const day of REMINDER_DAYS) {
+        if (daysLeft > day) continue; // too far away
+        const key = `renewal_reminder_${tx.reference}_${day}d`;
+        if (dbSettingsGet(key)) continue; // already sent this reminder
+        dbSettingsSet(key, new Date().toISOString());
+
+        const urgency = day === 1 ? "🚨 Last Day!" : day === 3 ? "⚠️ 3 Days Left" : "⏰ 7 Days Left";
+        const badgeBg = day === 1 ? "#EF4444" : day === 3 ? "#F59E0B" : "#4F46E5";
+
+        const html = `<!DOCTYPE html><html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <div style="max-width:520px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
+    <div style="background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);padding:28px;text-align:center;">
+      <span style="background:${badgeBg};color:#fff;font-size:12px;font-weight:700;padding:4px 14px;border-radius:99px;letter-spacing:.5px;">${urgency}</span>
+      <h1 style="color:#fff;margin:14px 0 4px;font-size:20px;">${siteName}</h1>
+      <p style="color:rgba(255,255,255,.75);margin:0;font-size:13px;">Subscription Renewal Reminder</p>
+    </div>
+    <div style="padding:28px;">
+      <p style="color:#374151;font-size:15px;margin:0 0 12px;">Hi there,</p>
+      <p style="color:#374151;font-size:15px;margin:0 0 20px;">
+        Your <strong>${tx.planName}</strong> subscription expires on <strong>${expDate}</strong>
+        — that's <strong>${daysLeft === 1 ? "today!" : `in ${daysLeft} days`}</strong>
+      </p>
+      <a href="${storeUrl}" style="display:inline-block;background:#4F46E5;color:#fff;padding:13px 28px;border-radius:9px;text-decoration:none;font-weight:700;font-size:15px;">
+        Renew Now →
+      </a>
+      <p style="color:#9CA3AF;font-size:12px;margin-top:20px;">Renew before it expires to keep uninterrupted access.</p>
+    </div>
+    <div style="background:#F9FAFB;padding:14px;text-align:center;border-top:1px solid #F3F4F6;">
+      <p style="font-size:11px;color:#aaa;margin:0;">&copy; ${new Date().getFullYear()} ${siteName}. All rights reserved.</p>
+    </div>
+  </div>
+</body></html>`;
+
+        await sendRawEmail(
+          tx.customerEmail,
+          `${urgency} — Your ${tx.planName} expires on ${expDate}`,
+          html
+        ).catch(() => {});
+        break; // only send the most urgent one per run
+      }
     }
 
-    if (expiring.length > 0) {
+    const expiring3 = expiringWithin7.filter((t: any) => {
+      const exp = new Date(t.expiresAt!);
+      return exp <= new Date(now.getTime() + 3 * 86400000);
+    });
+
+    if (expiring3.length > 0) {
       await sendTelegramMessage(
-        `⏰ <b>Expiry Alert</b>\n\n${expiring.length} subscription(s) expire in the next 3 days:\n` +
-        expiring.slice(0, 10).map((t: any) => `• ${t.planName} — ${t.customerEmail} (${new Date(t.expiresAt).toLocaleDateString()})`).join("\n")
+        `⏰ <b>Expiry Alert</b>\n\n${expiring3.length} subscription(s) expire in ≤3 days:\n` +
+        expiring3.slice(0, 10).map((t: any) => `• ${t.planName} — ${t.customerEmail} (${new Date(t.expiresAt).toLocaleDateString()})`).join("\n")
       );
     }
   } catch (err: any) {

@@ -58,6 +58,10 @@ export default function Checkout() {
   const [promoError, setPromoError] = useState("");
   const [promoLoading, setPromoLoading] = useState(false);
 
+  const [isGift, setIsGift] = useState(false);
+  const [giftEmail, setGiftEmail] = useState("");
+  const [giftMessage, setGiftMessage] = useState("");
+
   const customerToken = getCustomerToken();
 
   const { data: plansData, isLoading } = useQuery<{ categories: Record<string, any> }>({ queryKey: ["/api/plans"] });
@@ -112,7 +116,10 @@ export default function Checkout() {
   // ── Paystack full payment ─────────────────────────────────────────────────
   const initMutation = useMutation({
     mutationFn: async (data: CheckoutForm) => {
-      const res = await apiRequest("POST", "/api/payment/initialize", { ...data, planId, promoCode: appliedPromo?.code ?? null });
+      const res = await apiRequest("POST", "/api/payment/initialize", {
+        ...data, planId, promoCode: appliedPromo?.code ?? null,
+        ...(isGift && giftEmail.trim() ? { giftEmail: giftEmail.trim(), giftMessage: giftMessage.trim() } : {}),
+      });
       return res.json();
     },
     onSuccess: (data: any) => {
@@ -144,7 +151,9 @@ export default function Checkout() {
       const r = await fetch("/api/customer/wallet/pay", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
-        body: JSON.stringify({ planId, email: data.email, customerName: data.customerName, promoCode: appliedPromo?.code ?? null }),
+        body: JSON.stringify({ planId, email: data.email, customerName: data.customerName, promoCode: appliedPromo?.code ?? null,
+          ...(isGift && giftEmail.trim() ? { giftEmail: giftEmail.trim(), giftMessage: giftMessage.trim() } : {}),
+        }),
       });
       return r.json();
     },
@@ -162,7 +171,9 @@ export default function Checkout() {
       const r = await fetch("/api/payment/initialize-hybrid", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
-        body: JSON.stringify({ planId, customerName: data.customerName, walletAmountToUse: walletBalance, promoCode: appliedPromo?.code ?? null }),
+        body: JSON.stringify({ planId, customerName: data.customerName, walletAmountToUse: walletBalance, promoCode: appliedPromo?.code ?? null,
+          ...(isGift && giftEmail.trim() ? { giftEmail: giftEmail.trim(), giftMessage: giftMessage.trim() } : {}),
+        }),
       });
       return r.json();
     },
@@ -405,6 +416,35 @@ export default function Checkout() {
                       </div>
                     )}
                     {promoError && <p className="text-xs text-red-400">{promoError}</p>}
+                  </div>
+
+                  {/* Gift Toggle */}
+                  <div className="rounded-xl border border-white/8 p-4" style={{ background: "rgba(99,102,241,.06)" }}>
+                    <button type="button" onClick={() => setIsGift(g => !g)}
+                      className="flex items-center gap-3 w-full group">
+                      <div className={`w-10 h-6 rounded-full transition-colors relative ${isGift ? "bg-indigo-500" : "bg-white/10"}`}>
+                        <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${isGift ? "left-5" : "left-1"}`} />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-sm font-semibold text-white/80 flex items-center gap-1.5">
+                          🎁 Gift this to someone
+                        </p>
+                        <p className="text-xs text-white/35">Credentials will be sent to the recipient</p>
+                      </div>
+                    </button>
+                    {isGift && (
+                      <div className="mt-3 space-y-2">
+                        <Input type="email" placeholder="Recipient's email address *"
+                          value={giftEmail} onChange={e => setGiftEmail(e.target.value)}
+                          className="bg-white/5 border-white/10 text-white placeholder:text-white/25" />
+                        <Input placeholder="Personal message (optional)"
+                          value={giftMessage} onChange={e => setGiftMessage(e.target.value)}
+                          className="bg-white/5 border-white/10 text-white placeholder:text-white/25 text-xs h-8" />
+                        {isGift && giftEmail.trim() && (
+                          <p className="text-xs text-indigo-400">✓ Credentials will be delivered to <strong>{giftEmail}</strong></p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Price Breakdown */}

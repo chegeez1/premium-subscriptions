@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   Play, Music, Briefcase, Shield, Gamepad2, Search, Star,
-  CheckCircle, Zap, ShoppingCart, X, ChevronRight, Package,
+  CheckCircle, Zap, ShoppingCart, X, ChevronRight, Package, Bell,
   Sparkles, Plus, Minus, Trash2, User, LogIn, Sun, Moon,
   Wallet, Eye, EyeOff,
 } from "lucide-react";
@@ -147,6 +147,35 @@ export default function Store() {
     refetchInterval: 30000,
   });
   const flashSales: any[] = flashData?.sales ?? [];
+
+  const [waitlistOpen, setWaitlistOpen] = useState(false);
+  const [waitlistPlan, setWaitlistPlan] = useState<Plan | null>(null);
+  const [waitlistEmail, setWaitlistEmail] = useState("");
+  const [waitlistStatus, setWaitlistStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [waitlistMsg, setWaitlistMsg] = useState("");
+
+  async function handleJoinWaitlist() {
+    if (!waitlistPlan || !waitlistEmail.trim()) return;
+    setWaitlistStatus("loading");
+    try {
+      const r = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: waitlistEmail.trim(), planId: waitlistPlan.planId, planName: waitlistPlan.name }),
+      });
+      const d = await r.json();
+      if (r.ok && d.success) { setWaitlistStatus("done"); setWaitlistMsg(d.message ?? "You're on the list!"); }
+      else { setWaitlistStatus("error"); setWaitlistMsg(d.error ?? "Something went wrong."); }
+    } catch { setWaitlistStatus("error"); setWaitlistMsg("Network error. Try again."); }
+  }
+
+  function openWaitlist(plan: Plan) {
+    setWaitlistPlan(plan);
+    setWaitlistEmail(customer?.email ?? "");
+    setWaitlistStatus("idle");
+    setWaitlistMsg("");
+    setWaitlistOpen(true);
+  }
 
   const [flashNow, setFlashNow] = useState(Date.now());
   useEffect(() => {
@@ -631,6 +660,7 @@ export default function Store() {
                         flashSale={flashSale}
                         onBuyNow={() => setLocation(`/checkout?planId=${plan.planId}`)}
                         onAddToCart={() => addToCart(plan)}
+                        onWaitlist={() => openWaitlist(plan)}
                       />
                     );
                   })}
@@ -640,6 +670,54 @@ export default function Store() {
           })
         )}
       </main>
+
+      {/* Waitlist Modal */}
+      {waitlistOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,.6)", backdropFilter: "blur(8px)" }}>
+          <div className="w-full max-w-sm rounded-2xl border border-white/12 p-6 space-y-4" style={{ background: "rgba(15,15,25,.97)" }}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2"><Bell className="w-4 h-4 text-indigo-400" /> Join Waitlist</h3>
+                <p className="text-xs text-white/40 mt-0.5">{waitlistPlan?.name} — we'll email you when it's back in stock</p>
+              </div>
+              <button onClick={() => setWaitlistOpen(false)} className="text-white/30 hover:text-white/70 transition-colors mt-0.5">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {waitlistStatus === "done" ? (
+              <div className="text-center py-6">
+                <CheckCircle className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
+                <p className="text-sm font-semibold text-emerald-400">You're on the list!</p>
+                <p className="text-xs text-white/40 mt-1">{waitlistMsg}</p>
+                <Button size="sm" className="mt-4 bg-white/10 hover:bg-white/15 text-white" onClick={() => setWaitlistOpen(false)}>Close</Button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <label className="text-xs text-white/50 uppercase tracking-wider">Your Email</label>
+                  <Input
+                    type="email"
+                    placeholder="you@example.com"
+                    value={waitlistEmail}
+                    onChange={e => setWaitlistEmail(e.target.value)}
+                    className="bg-white/5 border-white/10 text-white placeholder:text-white/25"
+                    onKeyDown={e => { if (e.key === "Enter") handleJoinWaitlist(); }}
+                    disabled={waitlistStatus === "loading"}
+                  />
+                  {waitlistStatus === "error" && <p className="text-xs text-red-400">{waitlistMsg}</p>}
+                </div>
+                <Button
+                  onClick={handleJoinWaitlist}
+                  disabled={!waitlistEmail.trim() || waitlistStatus === "loading"}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold"
+                >
+                  {waitlistStatus === "loading" ? "Joining..." : "Notify Me"}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="relative z-10 glass-nav border-t border-white/8 mt-8 py-10">
@@ -665,12 +743,13 @@ export default function Store() {
   );
 }
 
-function PlanCard({ plan, catKey, flashSale, onBuyNow, onAddToCart }: {
+function PlanCard({ plan, catKey, flashSale, onBuyNow, onAddToCart, onWaitlist }: {
   plan: Plan;
   catKey: string;
   flashSale?: any;
   onBuyNow: () => void;
   onAddToCart: () => void;
+  onWaitlist: () => void;
 }) {
   const gradient = CATEGORY_GRADIENTS[catKey] ?? "from-indigo-500 to-violet-600";
   const glow = CATEGORY_GLOW[catKey] ?? "rgba(99,102,241,0.3)";
@@ -703,10 +782,10 @@ function PlanCard({ plan, catKey, flashSale, onBuyNow, onAddToCart }: {
         </div>
       )}
 
-      {/* Out of stock overlay */}
+      {/* Out of stock badge */}
       {!plan.inStock && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center glass">
-          <Badge variant="secondary" className="text-xs glass">Out of Stock</Badge>
+        <div className="absolute top-3 left-3 z-20">
+          <Badge variant="secondary" className="text-xs glass bg-red-500/20 text-red-300 border-red-500/30">Out of Stock</Badge>
         </div>
       )}
 
@@ -750,27 +829,40 @@ function PlanCard({ plan, catKey, flashSale, onBuyNow, onAddToCart }: {
           ))}
         </ul>
         <div className="flex gap-2">
-          <Button
-            size="sm"
-            className={`flex-1 bg-gradient-to-r ${gradient} border-0 text-white font-semibold shadow-lg hover:opacity-90 transition-opacity`}
-            disabled={!plan.inStock}
-            onClick={plan.inStock ? onBuyNow : undefined}
-            data-testid={`button-buy-${plan.planId}`}
-          >
-            Buy Now
-            <ChevronRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="glass border-white/10 text-white/60 hover:text-white hover:border-white/20 px-2.5"
-            disabled={!plan.inStock}
-            onClick={plan.inStock ? onAddToCart : undefined}
-            data-testid={`button-add-cart-${plan.planId}`}
-            title="Add to cart"
-          >
-            <ShoppingCart className="w-3.5 h-3.5" />
-          </Button>
+          {plan.inStock ? (
+            <>
+              <Button
+                size="sm"
+                className={`flex-1 bg-gradient-to-r ${gradient} border-0 text-white font-semibold shadow-lg hover:opacity-90 transition-opacity`}
+                onClick={onBuyNow}
+                data-testid={`button-buy-${plan.planId}`}
+              >
+                Buy Now
+                <ChevronRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="glass border-white/10 text-white/60 hover:text-white hover:border-white/20 px-2.5"
+                onClick={onAddToCart}
+                data-testid={`button-add-cart-${plan.planId}`}
+                title="Add to cart"
+              >
+                <ShoppingCart className="w-3.5 h-3.5" />
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-1 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 hover:border-indigo-500/50 transition-colors"
+              onClick={onWaitlist}
+              data-testid={`button-waitlist-${plan.planId}`}
+            >
+              <Bell className="w-3.5 h-3.5 mr-1.5" />
+              Join Waitlist
+            </Button>
+          )}
         </div>
       </div>
     </div>

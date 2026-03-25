@@ -33,7 +33,7 @@ async function customerFetch(url: string, opts: RequestInit = {}) {
   return res.json();
 }
 
-type DashTab = "orders" | "wallet" | "referral" | "payment-history" | "support" | "apikeys" | "security" | "profile" | "requests";
+type DashTab = "orders" | "wallet" | "referral" | "payment-history" | "receipts" | "support" | "apikeys" | "security" | "profile" | "requests";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   success: { label: "Completed", color: "text-emerald-400", icon: CheckCircle },
@@ -141,8 +141,24 @@ export default function Dashboard() {
   const { data: ordersData, isLoading: ordersLoading } = useQuery<any>({
     queryKey: ["/api/customer/orders"],
     queryFn: () => customerFetch("/api/customer/orders"),
-    enabled: tab === "orders",
+    enabled: tab === "orders" || tab === "receipts",
   });
+
+  const { data: announcementsData } = useQuery<any>({
+    queryKey: ["/api/announcements"],
+    queryFn: () => fetch("/api/announcements").then(r => r.json()),
+    staleTime: 60000,
+  });
+  const [dismissedAnns, setDismissedAnns] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("dismissed_anns") || "[]")); } catch { return new Set(); }
+  });
+  function dismissAnn(id: string) {
+    setDismissedAnns(prev => {
+      const next = new Set(prev); next.add(id);
+      try { localStorage.setItem("dismissed_anns", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }
 
   const { data: keysData, isLoading: keysLoading } = useQuery<any>({
     queryKey: ["/api/customer/api-keys"],
@@ -679,12 +695,39 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Announcements Banner */}
+        {(announcementsData?.announcements ?? [])
+          .filter((a: any) => !dismissedAnns.has(a.id))
+          .map((a: any) => {
+            const colors: Record<string, string> = {
+              info: "border-indigo-500/40 bg-indigo-500/10 text-indigo-300",
+              warning: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+              success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+              urgent: "border-red-500/40 bg-red-500/10 text-red-300",
+            };
+            const cls = colors[a.type] || colors.info;
+            return (
+              <div key={a.id} className={`mb-3 px-4 py-3 rounded-xl border flex items-start gap-3 ${cls}`}>
+                <Bell className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold">{a.title}</p>
+                  <p className="text-xs opacity-80 mt-0.5">{a.message}</p>
+                  {a.link && <a href={a.link} target="_blank" rel="noopener noreferrer" className="text-xs underline mt-1 inline-block opacity-70 hover:opacity-100">{a.linkLabel || a.link}</a>}
+                </div>
+                <button onClick={() => dismissAnn(a.id)} className="shrink-0 opacity-40 hover:opacity-70 transition-opacity mt-0.5">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
+
         {/* Tabs */}
         <div className="flex gap-2 mb-6 p-1.5 rounded-xl border border-white/10 w-fit flex-wrap" style={{ background: "rgba(255,255,255,.04)" }}>
           {([
             { id: "orders", label: "My Products", icon: Package },
             { id: "wallet", label: "Wallet", icon: Wallet },
             { id: "referral", label: "Referral", icon: Gift },
+            { id: "receipts", label: "Receipts", icon: Download },
             { id: "payment-history", label: "Payments", icon: History },
             { id: "support", label: "Support", icon: MessageCircle },
             { id: "requests", label: "Ideas", icon: Sparkles },
@@ -847,6 +890,72 @@ export default function Dashboard() {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* RECEIPTS TAB */}
+        {tab === "receipts" && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <Download className="w-5 h-5 text-indigo-400" /> Invoice Portal
+            </h2>
+            <p className="text-sm text-white/40">Download PDF receipts for all your completed orders.</p>
+            {ordersLoading ? (
+              <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-indigo-400 animate-spin" /></div>
+            ) : (() => {
+              const receipts = (ordersData?.orders ?? []).filter((o: any) => o.status === "success");
+              if (!receipts.length) return (
+                <div className="text-center py-16 rounded-xl border border-white/10" style={{ background: "rgba(255,255,255,.03)" }}>
+                  <Download className="w-10 h-10 text-white/15 mx-auto mb-3" />
+                  <p className="text-white/30 text-sm">No completed orders yet</p>
+                </div>
+              );
+              return (
+                <div className="space-y-2">
+                  {receipts.map((order: any) => (
+                    <div key={order.reference} className="flex items-center justify-between gap-4 px-4 py-3.5 rounded-xl border border-white/8 hover:border-white/15 transition-colors" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-500/15 flex items-center justify-center shrink-0">
+                          <Download className="w-4 h-4 text-indigo-400" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-white/90 truncate">{order.planName}</p>
+                          <p className="text-xs text-white/35">{new Date(order.createdAt).toLocaleDateString("en-KE", { year: "numeric", month: "short", day: "numeric" })} · KES {(order.amount ?? 0).toLocaleString()} · Ref: {order.reference}</p>
+                        </div>
+                      </div>
+                      <a
+                        href={`/api/customer/orders/${order.reference}/receipt`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download
+                        onClick={() => {
+                          const el = document.createElement("a");
+                          el.href = `/api/customer/orders/${order.reference}/receipt`;
+                          el.setAttribute("download", `receipt-${order.reference}.pdf`);
+                          Object.assign(el.style, { position: "fixed", left: "-9999px" });
+                          document.body.appendChild(el);
+                          const headers: Record<string, string> = {};
+                          const token = localStorage.getItem("customer_token") || "";
+                          if (token) headers["Authorization"] = `Bearer ${token}`;
+                          fetch(`/api/customer/orders/${order.reference}/receipt`, { headers })
+                            .then(r => r.blob())
+                            .then(blob => {
+                              const url = URL.createObjectURL(blob);
+                              el.href = url;
+                              el.click();
+                              setTimeout(() => URL.revokeObjectURL(url), 5000);
+                            })
+                            .finally(() => document.body.removeChild(el));
+                        }}
+                        className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5" /> PDF
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
 

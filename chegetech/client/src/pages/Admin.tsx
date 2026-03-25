@@ -1206,6 +1206,213 @@ function AffiliateTiersSection({ inputCls }: { inputCls: string }) {
   );
 }
 
+// ─── ANNOUNCEMENTS SECTION ───────────────────────────────────────────────────
+function AnnouncementsSection({ inputCls }: { inputCls: string }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/announcements"],
+    queryFn: () => fetch("/api/announcements").then(r => r.json()),
+  });
+  const announcements: any[] = data?.announcements ?? [];
+
+  const [form, setForm] = useState({ title: "", message: "", type: "info", link: "", linkLabel: "", expiresAt: "" });
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function handleCreate() {
+    if (!form.title.trim() || !form.message.trim()) { toast({ title: "Title and message required", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const r = await authFetch("/api/admin/announcements", { method: "POST", body: JSON.stringify(form) });
+      if (r.success) {
+        toast({ title: "Announcement created" });
+        setForm({ title: "", message: "", type: "info", link: "", linkLabel: "", expiresAt: "" });
+        refetch(); qc.invalidateQueries({ queryKey: ["/api/announcements"] });
+      } else toast({ title: r.error ?? "Failed", variant: "destructive" });
+    } finally { setSaving(false); }
+  }
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    try {
+      const r = await authFetch(`/api/admin/announcements/${id}`, { method: "DELETE" });
+      if (r.success) { refetch(); qc.invalidateQueries({ queryKey: ["/api/announcements"] }); }
+      else toast({ title: r.error ?? "Failed", variant: "destructive" });
+    } finally { setDeletingId(null); }
+  }
+
+  const typeColors: Record<string, string> = {
+    info: "bg-indigo-500/15 text-indigo-300 border-indigo-500/30",
+    warning: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+    success: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+    urgent: "bg-red-500/15 text-red-300 border-red-500/30",
+  };
+
+  return (
+    <div className="glass-card rounded-2xl overflow-hidden">
+      <div className="p-5 border-b border-white/8 flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-violet-600/20 flex items-center justify-center">
+          <Info className="w-5 h-5 text-violet-400" />
+        </div>
+        <div>
+          <p className="font-semibold text-white">In-App Announcements</p>
+          <p className="text-xs text-white/40">Broadcast banners shown on customers' dashboards</p>
+        </div>
+      </div>
+      <div className="p-5 space-y-4">
+        {/* Create form */}
+        <div className="space-y-3 p-4 rounded-xl border border-white/8 bg-white/2">
+          <p className="text-xs text-white/50 uppercase tracking-wider font-semibold">New Announcement</p>
+          <Input className={inputCls} placeholder="Title *" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+          <textarea
+            className={`${inputCls} w-full min-h-[72px] rounded-md px-3 py-2 text-sm resize-none`}
+            placeholder="Message *"
+            value={form.message}
+            onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <select className={`${inputCls} rounded-md px-3 py-2 text-sm bg-white/5`} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
+              <option value="info">Info</option>
+              <option value="warning">Warning</option>
+              <option value="success">Success</option>
+              <option value="urgent">Urgent</option>
+            </select>
+            <Input className={inputCls} type="datetime-local" placeholder="Expires At (optional)" value={form.expiresAt} onChange={e => setForm(f => ({ ...f, expiresAt: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Input className={inputCls} placeholder="Link URL (optional)" value={form.link} onChange={e => setForm(f => ({ ...f, link: e.target.value }))} />
+            <Input className={inputCls} placeholder="Link label" value={form.linkLabel} onChange={e => setForm(f => ({ ...f, linkLabel: e.target.value }))} />
+          </div>
+          <Button onClick={handleCreate} disabled={saving} className="bg-gradient-to-r from-violet-600 to-indigo-600 border-0 text-white text-xs h-8 px-4">
+            <Plus className="w-3.5 h-3.5 mr-1.5" />{saving ? "Creating..." : "Post Announcement"}
+          </Button>
+        </div>
+
+        {/* Existing announcements */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-6"><Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /></div>
+        ) : announcements.length === 0 ? (
+          <p className="text-center text-white/25 text-sm py-4">No announcements yet</p>
+        ) : (
+          <div className="space-y-2">
+            {announcements.map((a: any) => (
+              <div key={a.id} className={`flex items-start gap-3 p-3 rounded-xl border ${typeColors[a.type] ?? typeColors.info}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{a.title}</p>
+                  <p className="text-xs opacity-70 mt-0.5 line-clamp-2">{a.message}</p>
+                  {a.expiresAt && <p className="text-xs opacity-50 mt-1">Expires {new Date(a.expiresAt).toLocaleString("en-KE")}</p>}
+                </div>
+                <button
+                  onClick={() => handleDelete(a.id)}
+                  disabled={deletingId === a.id}
+                  className="shrink-0 text-red-400/60 hover:text-red-400 transition-colors"
+                >
+                  {deletingId === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── WAITLIST SECTION ─────────────────────────────────────────────────────────
+function WaitlistSection({ inputCls }: { inputCls: string }) {
+  const { toast } = useToast();
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/waitlist"],
+    queryFn: () => authFetch("/api/admin/waitlist"),
+  });
+  const entries: any[] = data?.waitlist ?? [];
+
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [notifyingPlan, setNotifyingPlan] = useState<string | null>(null);
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    try {
+      const r = await authFetch(`/api/admin/waitlist/${id}`, { method: "DELETE" });
+      if (r.success) refetch();
+      else toast({ title: r.error ?? "Failed", variant: "destructive" });
+    } finally { setDeletingId(null); }
+  }
+
+  async function handleNotify(planId: string, planName: string) {
+    setNotifyingPlan(planId);
+    try {
+      const r = await authFetch(`/api/admin/waitlist/notify/${planId}`, { method: "POST" });
+      if (r.success) toast({ title: `Notified ${r.count ?? "all"} subscribers for ${planName}` });
+      else toast({ title: r.error ?? "Failed", variant: "destructive" });
+    } finally { setNotifyingPlan(null); }
+  }
+
+  // Group entries by planId
+  const planGroups = entries.reduce((acc: Record<string, any[]>, e: any) => {
+    if (!acc[e.planId]) acc[e.planId] = [];
+    acc[e.planId].push(e); return acc;
+  }, {});
+
+  return (
+    <div className="glass-card rounded-2xl overflow-hidden">
+      <div className="p-5 border-b border-white/8 flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-amber-600/20 flex items-center justify-center">
+          <Bell className="w-5 h-5 text-amber-400" />
+        </div>
+        <div>
+          <p className="font-semibold text-white">Waitlist</p>
+          <p className="text-xs text-white/40">{entries.length} customer{entries.length !== 1 ? "s" : ""} waiting · Notify when back in stock</p>
+        </div>
+      </div>
+      <div className="p-5">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-6"><Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /></div>
+        ) : entries.length === 0 ? (
+          <p className="text-center text-white/25 text-sm py-4">No waitlist entries yet</p>
+        ) : (
+          <div className="space-y-4">
+            {Object.entries(planGroups).map(([planId, planEntries]) => (
+              <div key={planId} className="border border-white/8 rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between gap-3 px-4 py-3 bg-white/3 border-b border-white/5">
+                  <div>
+                    <p className="text-sm font-semibold text-white">{planEntries[0]?.planName ?? planId}</p>
+                    <p className="text-xs text-white/35">{planEntries.length} waiting</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => handleNotify(planId, planEntries[0]?.planName ?? planId)}
+                    disabled={notifyingPlan === planId}
+                    className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs h-7 px-3"
+                  >
+                    <Send className="w-3 h-3 mr-1.5" />
+                    {notifyingPlan === planId ? "Notifying..." : "Notify All"}
+                  </Button>
+                </div>
+                <div className="divide-y divide-white/5">
+                  {planEntries.map((e: any) => (
+                    <div key={e.id} className="flex items-center justify-between px-4 py-2.5 gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs text-white/70 truncate">{e.email}</p>
+                        <p className="text-xs text-white/25">{new Date(e.joinedAt).toLocaleDateString("en-KE")}</p>
+                      </div>
+                      <button onClick={() => handleDelete(e.id)} disabled={deletingId === e.id}
+                        className="shrink-0 text-red-400/50 hover:text-red-400 transition-colors">
+                        {deletingId === e.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SettingsTab() {
   const { toast } = useToast();
   const inputCls = "glass border-white/10 bg-white/5 text-white placeholder:text-white/25 focus:border-indigo-500/50";
@@ -1279,6 +1486,12 @@ function SettingsTab() {
 
         {/* ─── Admin Profile ───────────────────────────────── */}
         <AdminProfileSection inputCls={inputCls} />
+
+        {/* ─── Announcements ───────────────────────────────── */}
+        <AnnouncementsSection inputCls={inputCls} />
+
+        {/* ─── Waitlist ─────────────────────────────────────── */}
+        <WaitlistSection inputCls={inputCls} />
 
         {/* ─── Environment Variables Status ────────────────── */}
         <div className="glass-card rounded-2xl overflow-hidden">
