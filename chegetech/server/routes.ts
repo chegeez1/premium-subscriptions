@@ -674,6 +674,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true, categories: buildPlansResponse() });
   });
 
+  // ─── Public: Music tracks proxy (Deezer) ─────────────────────────────────
+  const MUSIC_QUERIES = ["drake", "weeknd", "travis scott", "lil tecca", "future", "polo g", "gunna", "pop smoke", "juice wrld", "lil baby"];
+  let _musicCache: { tracks: any[]; fetchedAt: number } | null = null;
+
+  app.get("/api/music-tracks", async (_req, res) => {
+    try {
+      const now = Date.now();
+      if (_musicCache && now - _musicCache.fetchedAt < 30 * 60 * 1000) {
+        return res.json({ success: true, tracks: _musicCache.tracks });
+      }
+      const picks = [...MUSIC_QUERIES].sort(() => Math.random() - 0.5).slice(0, 5);
+      const all: any[] = [];
+      for (const q of picks) {
+        try {
+          const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=5`);
+          const j: any = await r.json();
+          if (j.data) {
+            j.data.forEach((t: any) => {
+              if (t.preview) all.push({ title: t.title, artist: t.artist?.name ?? "", preview: t.preview });
+            });
+          }
+        } catch {}
+      }
+      const tracks = all.sort(() => Math.random() - 0.5);
+      _musicCache = { tracks, fetchedAt: now };
+      res.json({ success: true, tracks });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: "Failed to load tracks" });
+    }
+  });
+
   // ─── Public: Validate promo code ─────────────────────────────────────────
   app.post("/api/payment/validate-promo", (req, res) => {
     const { code, planId, amount } = req.body;
