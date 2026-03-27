@@ -1370,7 +1370,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Admin: Get all accounts ──────────────────────────────────────────────
   app.get("/api/admin/accounts", adminAuthMiddleware, requirePermission("accounts"), (_req, res) => {
-    res.json({ success: true, accounts: accountManager.getAllAccounts() });
+    const raw = accountManager.getAllAccounts();
+    // Strip plain-text passwords from the response — no admin should read them back
+    const masked: Record<string, any[]> = {};
+    for (const [planId, accs] of Object.entries(raw)) {
+      masked[planId] = (accs as any[]).map((acc) => ({
+        ...acc,
+        password: undefined,
+        hasPassword: !!(acc as any).password,
+      }));
+    }
+    res.json({ success: true, accounts: masked });
   });
 
   // ─── Admin: Add account ───────────────────────────────────────────────────
@@ -1382,7 +1392,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         email, username, password, activationCode, redeemLink, instructions,
         maxUsers: parseInt(maxUsers) || 5,
       });
-      res.json({ success: true, account });
+      const { password: _pw, ...safeAcc } = account as any;
+      res.json({ success: true, account: { ...safeAcc, hasPassword: !!_pw } });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1390,9 +1401,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Admin: Update account ────────────────────────────────────────────────
   app.put("/api/admin/accounts/:id", adminAuthMiddleware, requirePermission("accounts"), (req, res) => {
-    const updated = accountManager.updateAccount(req.params.id, req.body);
+    // Only update the password if the admin explicitly provided a non-empty new one
+    const updates = { ...req.body };
+    if (!updates.password || updates.password.trim() === "") {
+      delete updates.password; // keep the stored password untouched
+    }
+    const updated = accountManager.updateAccount(req.params.id, updates);
     if (!updated) return res.status(404).json({ success: false, error: "Account not found" });
-    res.json({ success: true, account: updated });
+    // Never return the password in the response
+    const { password: _pw, ...safeAccount } = updated as any;
+    res.json({ success: true, account: { ...safeAccount, hasPassword: !!_pw } });
   });
 
   // ─── Admin: Toggle account disabled ──────────────────────────────────────

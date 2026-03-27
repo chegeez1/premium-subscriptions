@@ -2634,7 +2634,11 @@ function AccountsTab() {
                           <div className="space-y-3">
                             <div className="grid grid-cols-2 gap-3">
                               <div><label className="text-xs text-white/40">Email</label><Input value={editValues.email ?? ""} onChange={(e) => setEditValues((p: any) => ({ ...p, email: e.target.value }))} className={inputCls + " mt-1"} /></div>
-                              <div><label className="text-xs text-white/40">Password</label><Input value={editValues.password ?? ""} onChange={(e) => setEditValues((p: any) => ({ ...p, password: e.target.value }))} className={inputCls + " mt-1"} /></div>
+                              <div>
+                                <label className="text-xs text-white/40">Password</label>
+                                {acc.hasPassword && <span className="text-[10px] text-amber-400/70 ml-2">Password set — leave blank to keep</span>}
+                                <Input type="password" value={editValues.password ?? ""} onChange={(e) => setEditValues((p: any) => ({ ...p, password: e.target.value }))} className={inputCls + " mt-1"} placeholder={acc.hasPassword ? "Leave blank to keep current" : "No password set"} autoComplete="new-password" />
+                              </div>
                               <div><label className="text-xs text-white/40">Username</label><Input value={editValues.username ?? ""} onChange={(e) => setEditValues((p: any) => ({ ...p, username: e.target.value }))} className={inputCls + " mt-1"} /></div>
                               <div><label className="text-xs text-white/40">Max Slots</label><Input type="number" value={editValues.maxUsers ?? 5} onChange={(e) => setEditValues((p: any) => ({ ...p, maxUsers: parseInt(e.target.value) }))} className={inputCls + " mt-1"} /></div>
                               <div className="col-span-2"><label className="text-xs text-white/40">Instructions</label><Input value={editValues.instructions ?? ""} onChange={(e) => setEditValues((p: any) => ({ ...p, instructions: e.target.value }))} className={inputCls + " mt-1"} /></div>
@@ -2658,6 +2662,7 @@ function AccountsTab() {
                                 ) : (
                                   <Badge className="bg-emerald-600/70 text-white border-0 text-xs">{acc.currentUsers}/{acc.maxUsers} slots</Badge>
                                 )}
+                                {acc.hasPassword && <Badge className="glass border-white/10 text-white/30 text-xs">🔑 Password set</Badge>}
                               </div>
                               <p className="text-xs text-white/30 mt-0.5">Added {new Date(acc.addedAt).toLocaleDateString()} · {acc.usedBy?.length ?? 0} assigned</p>
                               {acc.usedBy && acc.usedBy.length > 0 && (
@@ -2682,7 +2687,7 @@ function AccountsTab() {
                             </div>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <Button size="sm" variant="outline" className="glass border-white/10 text-white/60 hover:text-white h-8"
-                                onClick={() => { setEditingId(acc.id); setEditValues({ email: acc.email, password: acc.password, username: acc.username, maxUsers: acc.maxUsers, instructions: acc.instructions }); }}>
+                                onClick={() => { setEditingId(acc.id); setEditValues({ email: acc.email, password: "", username: acc.username, maxUsers: acc.maxUsers, instructions: acc.instructions }); }}>
                                 <Edit2 className="w-3.5 h-3.5 mr-1" />Edit
                               </Button>
                               <Button size="sm" variant="outline"
