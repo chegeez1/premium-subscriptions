@@ -640,7 +640,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       p === "/api/customer/login" ||
       p === "/api/auth/register" ||
       p === "/api/customer/register" ||
-      p === "/api/config"
+      p === "/api/config" ||
+      p === "/api/track"
     ) {
       return next();
     }
@@ -4666,6 +4667,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ═══════════════════════════════════════════════════════════════════════════
   // PUBLIC RECEIPT VERIFICATION
   // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─── Public: Order tracking ───────────────────────────────────────────────
+  app.get("/api/track", async (req, res) => {
+    try {
+      const reference = ((req.query.reference as string) || "").trim();
+      const email     = ((req.query.email     as string) || "").trim();
+      if (!reference || !email) {
+        return res.status(400).json({ success: false, error: "Reference and email are required" });
+      }
+      const tx = await storage.getTransaction(reference);
+      // Deliberately use the same "not found" message for wrong-email or missing order
+      // so bad actors can't enumerate references
+      if (!tx || tx.customerEmail.toLowerCase() !== email.toLowerCase()) {
+        return res.status(404).json({ success: false, error: "No order found for that reference and email combination. Double-check and try again." });
+      }
+      res.json({
+        success: true,
+        order: {
+          reference:       tx.reference,
+          planName:        tx.planName,
+          amount:          tx.amount,
+          status:          tx.status,
+          createdAt:       tx.createdAt,
+          accountAssigned: !!(tx as any).accountAssigned || !!(tx as any).account_assigned,
+          emailSent:       !!(tx as any).emailSent      || !!(tx as any).email_sent,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
 
   app.get("/api/receipt/verify/:reference", async (req, res) => {
     try {
