@@ -174,7 +174,27 @@ export async function connectWhatsApp(phoneNumber?: string): Promise<void> {
   });
 }
 
-const RANSOM_PREVIEW_URL = "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/2a/17/cc/2a17cc34-099b-8db4-8426-6a777636b981/mzaf_2270249946485081165.plus.aac.p.m4a";
+let _ransomUrl: string | null = null;
+let _ransomFetchedAt = 0;
+
+async function getRansomUrl(): Promise<string | null> {
+  const now = Date.now();
+  if (_ransomUrl && now - _ransomFetchedAt < 45 * 60 * 1000) return _ransomUrl;
+  try {
+    const res = await fetch("https://api.deezer.com/search?q=ransom%20lil%20tecca&limit=1");
+    const json: any = await res.json();
+    const preview: string | undefined = json?.data?.[0]?.preview;
+    if (preview) {
+      _ransomUrl = preview;
+      _ransomFetchedAt = now;
+      console.log("[WA] Refreshed Ransom preview URL from Deezer");
+      return preview;
+    }
+  } catch (err: any) {
+    console.error("[WA] Deezer fetch error:", err?.message);
+  }
+  return null;
+}
 
 async function sendMessage(jid: string, text: string) {
   if (!sock || connectionStatus !== "connected") return;
@@ -190,7 +210,7 @@ async function sendAudio(jid: string, audioUrl: string) {
   try {
     await sock.sendMessage(jid, {
       audio: { url: audioUrl },
-      mimetype: "audio/mp4",
+      mimetype: "audio/mpeg",
       ptt: false,
     });
   } catch (err: any) {
@@ -201,12 +221,17 @@ async function sendAudio(jid: string, audioUrl: string) {
 async function sendMenuWithJingle(jid: string) {
   const { whatsappChannel } = getAppConfig();
   await sendMessage(jid, MENU);
-  await sendAudio(jid, RANSOM_PREVIEW_URL);
-  await sendMessage(jid,
-    `🎵 *This is CHEGE TECH INCOPORATIVE*\n` +
-    `🎶 _Ransom — Lil Tecca_` +
-    (whatsappChannel ? `\n\n📣 *Join our WhatsApp Channel:*\n${whatsappChannel}` : "")
-  );
+  const audioUrl = await getRansomUrl();
+  if (audioUrl) {
+    await sendAudio(jid, audioUrl);
+    await sendMessage(jid,
+      `🎵 *This is CHEGE TECH INCOPORATIVE*\n` +
+      `🎶 _Ransom — Lil Tecca_` +
+      (whatsappChannel ? `\n\n📣 *Join our WhatsApp Channel:*\n${whatsappChannel}` : "")
+    );
+  } else if (whatsappChannel) {
+    await sendMessage(jid, `📣 *Join our WhatsApp Channel:*\n${whatsappChannel}`);
+  }
 }
 
 const MENU = `👋 *Welcome to Chege Tech!*
