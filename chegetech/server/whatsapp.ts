@@ -2,6 +2,7 @@ import { getCredentialsOverride } from "./credentials-store";
 import { storage } from "./storage";
 import { accountManager } from "./accounts";
 import { sendAccountEmail } from "./email";
+import { getAppConfig } from "./app-config";
 
 function getWAConfig() {
   const override = getCredentialsOverride();
@@ -84,6 +85,21 @@ Reply with a number:
 4️⃣ - Contact Support
 
 Type *menu* anytime to see this again.`;
+
+function getJingleText(): string {
+  const { whatsappChannel } = getAppConfig();
+  return (
+    `🎵 *This is CHEGE TECH INCOPORATIVE*\n` +
+    `🎶 Now playing: _Ransom — Lil Tecca_\n` +
+    `▶️ https://youtu.be/_7uLgPWFOOA` +
+    (whatsappChannel ? `\n\n📣 *Join our WhatsApp Channel:*\n${whatsappChannel}` : "")
+  );
+}
+
+async function sendMenuWA(from: string): Promise<void> {
+  await sendWhatsAppMessage(from, MENU_TEXT);
+  await sendWhatsAppMessage(from, getJingleText());
+}
 
 const sessionState: Record<string, { step: string; data?: any }> = {};
 
@@ -171,7 +187,7 @@ export async function handleInboundWhatsApp(
 
   if (intent === "menu") {
     sessionState[from] = { step: "menu" };
-    await sendWhatsAppMessage(from, MENU_TEXT);
+    await sendMenuWA(from);
     return;
   }
 
@@ -271,7 +287,7 @@ export async function handleInboundWhatsApp(
 
   if (state.step === "idle" || state.step === "menu") {
     sessionState[from] = { step: "menu" };
-    await sendWhatsAppMessage(from, MENU_TEXT);
+    await sendMenuWA(from);
     return;
   }
 

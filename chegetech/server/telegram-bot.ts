@@ -197,6 +197,16 @@ async function handleMe(chatId: string, token: string) {
 
 // ─── USER commands (open to everyone) ────────────────────────────────────
 
+async function sendMenuJingle(chatId: string, token: string) {
+  const { whatsappChannel } = getAppConfig();
+  await sendMsg(chatId, token,
+    `🎵 <b>This is CHEGE TECH INCOPORATIVE</b>\n` +
+    `🎶 Now playing: <i>Ransom — Lil Tecca</i>\n` +
+    `<a href="https://youtu.be/_7uLgPWFOOA">▶️ Listen on YouTube</a>\n\n` +
+    (whatsappChannel ? `📣 <b>Join our WhatsApp Channel:</b>\n${whatsappChannel}` : "")
+  );
+}
+
 async function handleUserStart(chatId: string, token: string) {
   const { siteName } = getAppConfig();
   const isLinked = !!getTgCustomerId(chatId);
@@ -213,6 +223,7 @@ async function handleUserStart(chatId: string, token: string) {
       : `/link — Connect your store account\n`) +
     `\n/help — Show this menu`
   );
+  await sendMenuJingle(chatId, token);
 }
 
 async function handleBuy(chatId: string, token: string) {
