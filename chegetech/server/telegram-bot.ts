@@ -197,7 +197,27 @@ async function handleMe(chatId: string, token: string) {
 
 // ─── USER commands (open to everyone) ────────────────────────────────────
 
-const RANSOM_PREVIEW_URL = "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/2a/17/cc/2a17cc34-099b-8db4-8426-6a777636b981/mzaf_2270249946485081165.plus.aac.p.m4a";
+let _tgRansomUrl: string | null = null;
+let _tgRansomFetchedAt = 0;
+
+async function getTgRansomUrl(): Promise<string | null> {
+  const now = Date.now();
+  if (_tgRansomUrl && now - _tgRansomFetchedAt < 45 * 60 * 1000) return _tgRansomUrl;
+  try {
+    const res = await fetch("https://api.deezer.com/search?q=ransom%20lil%20tecca&limit=1");
+    const json: any = await res.json();
+    const preview: string | undefined = json?.data?.[0]?.preview;
+    if (preview) {
+      _tgRansomUrl = preview;
+      _tgRansomFetchedAt = now;
+      console.log("[TG] Refreshed Ransom preview URL from Deezer");
+      return preview;
+    }
+  } catch (err: any) {
+    console.error("[TG] Deezer fetch error:", err?.message);
+  }
+  return null;
+}
 
 async function sendTgAudio(chatId: string, token: string, audioUrl: string, caption: string) {
   try {
@@ -216,11 +236,16 @@ async function sendTgAudio(chatId: string, token: string, audioUrl: string, capt
 
 async function sendMenuJingle(chatId: string, token: string) {
   const { whatsappChannel } = getAppConfig();
+  const audioUrl = await getTgRansomUrl();
   const caption =
     `🎵 <b>This is CHEGE TECH INCOPORATIVE</b>\n` +
     `🎶 <i>Ransom — Lil Tecca</i>` +
     (whatsappChannel ? `\n\n📣 <b>Join our WhatsApp Channel:</b>\n${whatsappChannel}` : "");
-  await sendTgAudio(chatId, token, RANSOM_PREVIEW_URL, caption);
+  if (audioUrl) {
+    await sendTgAudio(chatId, token, audioUrl, caption);
+  } else if (whatsappChannel) {
+    await sendMsg(chatId, token, `📣 <b>Join our WhatsApp Channel:</b>\n${whatsappChannel}`);
+  }
 }
 
 async function handleUserStart(chatId: string, token: string) {
@@ -735,7 +760,7 @@ async function handleMessage(msg: any, botToken: string, adminChatId: string) {
   if (text === "/me") { return handleMe(chatId, botToken); }
   if (text.startsWith("/link")) { return handleLink(chatId, botToken, text); }
 
-  if (text === "/start" || text === "/help") {
+  if (text === "/start" || text === "/help" || text === "/menu") {
     if (isAdmin) return handleAdminStart(chatId, botToken);
     return handleUserStart(chatId, botToken);
   }
