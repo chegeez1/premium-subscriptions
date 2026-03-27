@@ -211,7 +211,7 @@ async function sendAudio(jid: string, audioUrl: string) {
     await sock.sendMessage(jid, {
       audio: { url: audioUrl },
       mimetype: "audio/mpeg",
-      ptt: false,
+      ptt: true,
     });
   } catch (err: any) {
     console.error("[WA] Audio send error:", err?.message);

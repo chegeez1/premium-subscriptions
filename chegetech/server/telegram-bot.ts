@@ -221,16 +221,25 @@ async function getTgRansomUrl(): Promise<string | null> {
 
 async function sendTgAudio(chatId: string, token: string, audioUrl: string, caption: string) {
   try {
-    await tgApi(token, "sendAudio", {
+    await tgApi(token, "sendVoice", {
       chat_id: chatId,
-      audio: audioUrl,
+      voice: audioUrl,
       caption,
       parse_mode: "HTML",
-      performer: "Lil Tecca",
-      title: "Ransom",
     });
   } catch {
-    await sendMsg(chatId, token, caption);
+    try {
+      await tgApi(token, "sendAudio", {
+        chat_id: chatId,
+        audio: audioUrl,
+        caption,
+        parse_mode: "HTML",
+        performer: "Lil Tecca",
+        title: "Ransom",
+      });
+    } catch {
+      await sendMsg(chatId, token, caption);
+    }
   }
 }
 

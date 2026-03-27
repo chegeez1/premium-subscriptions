@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import StoreAudioPlayer from "@/components/StoreAudioPlayer";
 import {
   Play, Music, Briefcase, Shield, Gamepad2, Search, Star,
   CheckCircle, Zap, ShoppingCart, X, ChevronRight, Package, Bell,
@@ -757,6 +758,7 @@ export default function Store() {
           <p className="text-xs text-white/25">&copy; {new Date().getFullYear()} Chege Tech. All rights reserved.</p>
         </div>
       </footer>
+      <StoreAudioPlayer />
     </div>
   );
 }
