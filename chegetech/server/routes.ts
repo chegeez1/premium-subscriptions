@@ -3136,6 +3136,81 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ count: active.length, subscriptions: active });
   });
 
+  // ─── v1: Customer: My notifications ──────────────────────────────────────
+  app.get("/api/v1/my-notifications", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (!req.apiKey.customerId) return res.status(403).json({ error: "Customer API key required" });
+    const notifs = await storage.getNotifications(req.apiKey.customerId);
+    res.json({ count: notifs.length, notifications: notifs.slice(0, 30) });
+  });
+
+  // ─── v1: Customer: My stats ───────────────────────────────────────────────
+  app.get("/api/v1/my-stats", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (!req.apiKey.customerId) return res.status(403).json({ error: "Customer API key required" });
+    const customer = await storage.getCustomerById(req.apiKey.customerId);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    const stats = await storage.getCustomerSpendingStats(customer.email);
+    const wallet = await storage.getWallet(req.apiKey.customerId);
+    res.json({ walletBalance: wallet.balance, ...stats });
+  });
+
+  // ─── v1: Customer: My referral ────────────────────────────────────────────
+  app.get("/api/v1/my-referral", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (!req.apiKey.customerId) return res.status(403).json({ error: "Customer API key required" });
+    const customer = await storage.getCustomerById(req.apiKey.customerId);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    const stats = await storage.getReferralStats(req.apiKey.customerId);
+    const config = getAppConfig();
+    const origin = (config as any).customDomain
+      ? `https://${(config as any).customDomain}`
+      : "";
+    res.json({
+      referralCode: customer.referralCode,
+      referralLink: customer.referralCode ? `${origin}/?ref=${customer.referralCode}` : null,
+      totalReferrals: stats.totalReferrals,
+      completedReferrals: stats.completedReferrals,
+      totalEarned: stats.totalEarned,
+    });
+  });
+
+  // ─── v1: Customer: My support tickets ────────────────────────────────────
+  app.get("/api/v1/my-tickets", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (!req.apiKey.customerId) return res.status(403).json({ error: "Customer API key required" });
+    const customer = await storage.getCustomerById(req.apiKey.customerId);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    const tickets = await storage.getTicketsByEmail(customer.email);
+    res.json({ count: tickets.length, tickets: tickets.map((t: any) => ({ id: t.id, subject: t.subject, status: t.status, createdAt: t.createdAt })) });
+  });
+
+  // ─── v1: Customer: Open a support ticket ─────────────────────────────────
+  app.post("/api/v1/tickets", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (!req.apiKey.customerId) return res.status(403).json({ error: "Customer API key required" });
+    const customer = await storage.getCustomerById(req.apiKey.customerId);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    const { subject, message } = req.body;
+    if (!subject?.trim() || !message?.trim()) return res.status(400).json({ error: "subject and message are required" });
+    const ticket = await storage.createTicket({ customerEmail: customer.email, customerName: customer.name, subject: subject.trim() });
+    await storage.addMessage({ ticketId: ticket.id, sender: "customer", message: message.trim() });
+    res.json({ success: true, ticketId: ticket.id, token: ticket.token });
+  });
+
+  // ─── v1: Customer: Get credentials for an order ──────────────────────────
+  app.get("/api/v1/my-credentials/:reference", apiKeyAuthMiddleware, async (req: any, res) => {
+    if (!req.apiKey.customerId) return res.status(403).json({ error: "Customer API key required" });
+    const customer = await storage.getCustomerById(req.apiKey.customerId);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    const txn = await storage.getTransactionByReference(req.params.reference);
+    if (!txn || txn.customerEmail !== customer.email) return res.status(404).json({ error: "Order not found" });
+    if (txn.status !== "success") return res.status(400).json({ error: "Order not yet completed" });
+    const override = getCredentialsOverride(req.params.reference);
+    const account = override || (txn.planId ? await accountManager.findAccountByCustomer(txn.planId, customer.email) : null);
+    if (!account) return res.json({ reference: req.params.reference, credentials: null, note: "No credentials assigned yet" });
+    res.json({
+      reference: req.params.reference,
+      plan: txn.planName,
+      credentials: { email: (account as any).email ?? null, password: (account as any).password ?? null, extra: (account as any).extra ?? null },
+    });
+  });
+
   // ─── v1: Admin: Single customer detail ───────────────────────────────────
   app.get("/api/v1/admin/customers/:id", apiKeyAuthMiddleware, async (req: any, res) => {
     if (req.apiKey.customerId) return res.status(403).json({ error: "Admin API key required" });

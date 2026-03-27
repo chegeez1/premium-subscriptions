@@ -1617,29 +1617,36 @@ export default function Dashboard() {
 
             {apiKeys.length > 0 && (
               <div className="rounded-xl p-4 border border-white/10 mt-4" style={{ background: "rgba(255,255,255,.04)" }}>
-                <p className="text-sm font-semibold text-white mb-3" data-testid="text-api-docs-title">API Documentation</p>
-                <p className="text-xs text-white/40 mb-3">Use your API key with the <code className="bg-white/10 px-1 rounded">X-API-Key</code> header to access these endpoints:</p>
-                <div className="space-y-3">
-                  <div className="rounded-lg p-3 bg-white/5 border border-white/8">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded">GET</span>
-                      <code className="text-xs text-white/70 font-mono">/api/v1/my-profile</code>
+                <p className="text-sm font-semibold text-white mb-1" data-testid="text-api-docs-title">API Documentation</p>
+                <p className="text-xs text-white/40 mb-4">Authenticate with the <code className="bg-white/10 px-1 rounded">X-API-Key: YOUR_KEY</code> header on all requests.</p>
+                <div className="space-y-2">
+                  {[
+                    { method: "GET", path: "/api/v1/my-profile", desc: "Your account profile (email, name, verified status)" },
+                    { method: "GET", path: "/api/v1/my-orders", desc: "All your orders and their statuses" },
+                    { method: "GET", path: "/api/v1/my-subscriptions", desc: "Your active subscriptions with expiry dates" },
+                    { method: "GET", path: "/api/v1/my-wallet", desc: "Wallet balance + last 20 transactions" },
+                    { method: "GET", path: "/api/v1/my-stats", desc: "Total spend, order count, wallet balance" },
+                    { method: "GET", path: "/api/v1/my-referral", desc: "Referral code, link, earnings and counts" },
+                    { method: "GET", path: "/api/v1/my-notifications", desc: "Your last 30 notifications" },
+                    { method: "GET", path: "/api/v1/my-tickets", desc: "All your support tickets" },
+                    { method: "POST", path: "/api/v1/tickets", desc: 'Open a support ticket — body: {"subject":"...","message":"..."}' },
+                    { method: "GET", path: "/api/v1/my-credentials/:reference", desc: "Get login credentials for a completed order" },
+                    { method: "GET", path: "/api/v1/store", desc: "Public store info — no API key needed" },
+                  ].map(({ method, path, desc }) => (
+                    <div key={path} className="rounded-lg p-3 bg-white/5 border border-white/8">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${method === "GET" ? "text-emerald-400 bg-emerald-500/15" : "text-amber-400 bg-amber-500/15"}`}>{method}</span>
+                        <code className="text-xs text-white/70 font-mono truncate">{path}</code>
+                      </div>
+                      <p className="text-[11px] text-white/35">{desc}</p>
                     </div>
-                    <p className="text-xs text-white/35 mb-2">Get your account profile information</p>
-                    <code className="text-[10px] text-white/30 bg-black/30 rounded px-2 py-1 block break-all" data-testid="text-curl-profile">
-                      curl -H "X-API-Key: YOUR_KEY" {window.location.origin}/api/v1/my-profile
-                    </code>
-                  </div>
-                  <div className="rounded-lg p-3 bg-white/5 border border-white/8">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded">GET</span>
-                      <code className="text-xs text-white/70 font-mono">/api/v1/my-orders</code>
-                    </div>
-                    <p className="text-xs text-white/35 mb-2">Get all your orders and their statuses</p>
-                    <code className="text-[10px] text-white/30 bg-black/30 rounded px-2 py-1 block break-all" data-testid="text-curl-orders">
-                      curl -H "X-API-Key: YOUR_KEY" {window.location.origin}/api/v1/my-orders
-                    </code>
-                  </div>
+                  ))}
+                </div>
+                <div className="mt-4 rounded-lg p-3 bg-black/30 border border-white/8">
+                  <p className="text-[10px] text-white/40 font-semibold mb-1.5 uppercase tracking-wide">Example request</p>
+                  <code className="text-[10px] text-indigo-300 break-all" data-testid="text-curl-profile">
+                    curl -H "X-API-Key: YOUR_KEY" {window.location.origin}/api/v1/my-profile
+                  </code>
                 </div>
               </div>
             )}
