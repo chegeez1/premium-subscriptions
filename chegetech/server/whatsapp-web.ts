@@ -14,6 +14,8 @@ import { subscriptionPlans } from "./plans";
 import { sendTelegramMessage } from "./telegram";
 import { getCredentialsOverride } from "./credentials-store";
 import { accountManager } from "./accounts";
+import { sendAccountEmail } from "./email";
+import { getAppConfig } from "./app-config";
 
 const AUTH_DIR = path.join(process.cwd(), "whatsapp-auth");
 
@@ -172,6 +174,8 @@ export async function connectWhatsApp(phoneNumber?: string): Promise<void> {
   });
 }
 
+const RANSOM_PREVIEW_URL = "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/2a/17/cc/2a17cc34-099b-8db4-8426-6a777636b981/mzaf_2270249946485081165.plus.aac.p.m4a";
+
 async function sendMessage(jid: string, text: string) {
   if (!sock || connectionStatus !== "connected") return;
   try {
@@ -181,6 +185,30 @@ async function sendMessage(jid: string, text: string) {
   }
 }
 
+async function sendAudio(jid: string, audioUrl: string) {
+  if (!sock || connectionStatus !== "connected") return;
+  try {
+    await sock.sendMessage(jid, {
+      audio: { url: audioUrl },
+      mimetype: "audio/mp4",
+      ptt: false,
+    });
+  } catch (err: any) {
+    console.error("[WA] Audio send error:", err?.message);
+  }
+}
+
+async function sendMenuWithJingle(jid: string) {
+  const { whatsappChannel } = getAppConfig();
+  await sendMessage(jid, MENU);
+  await sendAudio(jid, RANSOM_PREVIEW_URL);
+  await sendMessage(jid,
+    `🎵 *This is CHEGE TECH INCOPORATIVE*\n` +
+    `🎶 _Ransom — Lil Tecca_` +
+    (whatsappChannel ? `\n\n📣 *Join our WhatsApp Channel:*\n${whatsappChannel}` : "")
+  );
+}
+
 const MENU = `👋 *Welcome to Chege Tech!*
 
 We sell premium shared subscription accounts.
@@ -188,9 +216,9 @@ We sell premium shared subscription accounts.
 Reply with a number:
 
 1️⃣ - My Orders / Get Credentials
-2️⃣ - Browse Plans & Prices
-3️⃣ - Contact Support
-4️⃣ - My Support Tickets
+2️⃣ - Resend Credentials
+3️⃣ - Browse Plans & Prices
+4️⃣ - Contact Support
 
 Type *menu* anytime to see options again.`;
 
@@ -439,6 +467,51 @@ async function handleAdminMessage(from: string, text: string) {
 
 // ── Customer message handler ──────────────────────────────────────────────────
 
+async function handleResendByEmail(from: string, email: string) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    await sendMessage(from, "❌ That doesn't look like a valid email. Please send your email address:");
+    return false;
+  }
+  try {
+    const txs = await storage.getTransactionsByEmail(email);
+    const done = txs.filter((t: any) => t.status === "success");
+    if (!done.length) {
+      await sendMessage(from,
+        `😔 No completed orders found for *${email}*.\n\n` +
+        `Make sure you use the exact email you purchased with.\n\n` +
+        `Type *4* to contact support if you need more help.`
+      );
+      return true;
+    }
+    const latest = done.sort((a: any, b: any) =>
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    )[0];
+    const account = accountManager.findAccountByCustomer(latest.planId, email);
+    if (!account) {
+      await sendMessage(from,
+        `⚠️ We found your order for *${latest.planName}* but the account hasn't been assigned yet.\n\n` +
+        `Our team has been notified. Type *4* to create a support ticket and we'll resolve it quickly.`
+      );
+      return true;
+    }
+    const result = await sendAccountEmail(email, latest.planName, account, latest.customerName || "Customer");
+    if (result.success) {
+      await sendMessage(from,
+        `✅ *Credentials Resent!*\n\n` +
+        `📦 Plan: ${latest.planName}\n` +
+        `📧 Sent to: ${email}\n\n` +
+        `Please check your inbox and spam folder.\n\n` +
+        `Still not received? Type *4* to contact support.`
+      );
+    } else {
+      await sendMessage(from, "❌ Failed to send email. Type *4* to contact support and we'll send them manually.");
+    }
+  } catch {
+    await sendMessage(from, "❌ Something went wrong. Type *4* to contact support.");
+  }
+  return true;
+}
+
 async function handleMessage(from: string, text: string) {
   // Route admin phone to admin commands
   if (isAdminSender(from)) {
@@ -449,15 +522,26 @@ async function handleMessage(from: string, text: string) {
   const msg = text.toLowerCase().trim();
   const state = sessionState[from] || { step: "idle" };
 
-  if (["menu", "hi", "hello", "start", "hey", "hii"].includes(msg)) {
+  // ── Natural language keyword detection ───────────────────────────────────────
+  const isResendKeyword = ["resend", "credentials", "didn't receive", "didnt receive",
+    "didn't get", "didnt get", "not received", "haven't received", "havent received",
+    "send again", "re-send", "account not sent", "i didn't get"].some(k => msg.includes(k));
+
+  if (["menu", "hi", "hello", "start", "hey", "hii", "help"].includes(msg)) {
     sessionState[from] = { step: "menu" };
-    await sendMessage(from, MENU);
+    await sendMenuWithJingle(from);
+    return;
+  }
+
+  if (isResendKeyword && state.step !== "await_resend_email") {
+    sessionState[from] = { step: "await_resend_email" };
+    await sendMessage(from, "📧 Please send the *email address* you used when purchasing and we'll resend your credentials immediately:");
     return;
   }
 
   if (state.step === "idle") {
     sessionState[from] = { step: "menu" };
-    await sendMessage(from, MENU);
+    await sendMenuWithJingle(from);
     return;
   }
 
@@ -468,6 +552,11 @@ async function handleMessage(from: string, text: string) {
       return;
     }
     if (msg === "2") {
+      sessionState[from] = { step: "await_resend_email" };
+      await sendMessage(from, "📧 Send us the *email address* you purchased with and we'll resend your credentials instantly:");
+      return;
+    }
+    if (msg === "3") {
       const plans: string[] = [];
       for (const cat of Object.values(subscriptionPlans)) {
         for (const plan of Object.values((cat as any).plans || {})) {
@@ -476,50 +565,24 @@ async function handleMessage(from: string, text: string) {
         }
       }
       if (!plans.length) {
-        await sendMessage(from, "😔 No plans in stock right now. Type *3* to contact support or check back later.");
+        await sendMessage(from, "😔 No plans in stock right now. Type *4* to contact support or check back later.");
       } else {
         await sendMessage(from, `📦 *Available Plans:*\n\n${plans.slice(0, 15).join("\n")}\n\n🛒 Visit our store to buy!`);
       }
       sessionState[from] = { step: "menu" };
       return;
     }
-    if (msg === "3") {
+    if (msg === "4") {
       sessionState[from] = { step: "await_support_email" };
       await sendMessage(from, "📧 Please enter your *email address* so we can track your request:");
-      return;
-    }
-    if (msg === "4") {
-      sessionState[from] = { step: "await_ticket_email" };
-      await sendMessage(from, "📧 Enter your *email address* to view your support tickets:");
       return;
     }
     await sendMessage(from, "Please reply with *1*, *2*, *3*, or *4*.\n\nType *menu* to see options again.");
     return;
   }
 
-  if (state.step === "await_ticket_email") {
-    const email = text.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      await sendMessage(from, "❌ Invalid email. Please try again:");
-      return;
-    }
-    try {
-      const tickets = await storage.getTicketsByEmail(email);
-      if (!tickets.length) {
-        await sendMessage(from, `😔 No support tickets found for *${email}*.\n\nType *3* from the menu to create one.\n\nType *menu* to go back.`);
-      } else {
-        const lines = ["📋 *Your Support Tickets:*", ""];
-        for (const t of tickets.slice(0, 5)) {
-          const statusEmoji = t.status === "open" ? "🟡" : t.status === "escalated" ? "🔴" : "✅";
-          lines.push(`${statusEmoji} *#${t.id}* — ${t.subject || "Support Request"} (${t.status})`);
-          lines.push(`   ${new Date(t.createdAt).toLocaleDateString()}`);
-        }
-        lines.push("", "Reply via our website to see full ticket messages.");
-        await sendMessage(from, lines.join("\n"));
-      }
-    } catch {
-      await sendMessage(from, "❌ Could not look up tickets. Please try again later.\n\nType *menu* to go back.");
-    }
+  if (state.step === "await_resend_email") {
+    await handleResendByEmail(from, text.trim());
     sessionState[from] = { step: "menu" };
     return;
   }
@@ -553,7 +616,7 @@ async function handleMessage(from: string, text: string) {
           lines.push(`📦 ${o.planName} — KES ${o.amount} (${date})`);
         }
         lines.push("", "📩 Credentials were sent to your email.");
-        lines.push("Need them resent? Contact support — type *3* then *menu*.");
+        lines.push("Didn't get them? Type *2* from the menu to resend.");
         await sendMessage(from, lines.join("\n"));
       }
     } catch {
@@ -574,7 +637,7 @@ async function handleMessage(from: string, text: string) {
       });
       await storage.addMessage({ ticketId: ticket.id, sender: "customer", message: `📱 Via WhatsApp (+${phone}): ${text}` });
       await sendTelegramMessage(`💬 <b>WhatsApp Support Ticket #${ticket.id}</b>\n\nEmail: ${email}\nPhone: +${phone}\n\n${text}`).catch(() => {});
-      await sendMessage(from, `✅ *Ticket #${ticket.id} created!*\n\nWe'll get back to you shortly.\n\nYou can view your ticket history by selecting *4* from the menu.\n\nType *menu* to go back.`);
+      await sendMessage(from, `✅ *Ticket #${ticket.id} created!*\n\nWe'll get back to you shortly.\n\nType *menu* to go back.`);
     } catch {
       await sendMessage(from, "✅ Message received! We'll get back to you shortly.\n\nType *menu* to go back.");
     }
@@ -583,7 +646,7 @@ async function handleMessage(from: string, text: string) {
   }
 
   sessionState[from] = { step: "menu" };
-  await sendMessage(from, MENU);
+  await sendMenuWithJingle(from);
 }
 
 export async function sendWhatsAppNotification(to: string, text: string) {
