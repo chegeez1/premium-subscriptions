@@ -86,19 +86,36 @@ Reply with a number:
 
 Type *menu* anytime to see this again.`;
 
-function getJingleText(): string {
-  const { whatsappChannel } = getAppConfig();
-  return (
-    `🎵 *This is CHEGE TECH INCOPORATIVE*\n` +
-    `🎶 Now playing: _Ransom — Lil Tecca_\n` +
-    `▶️ https://youtu.be/_7uLgPWFOOA` +
-    (whatsappChannel ? `\n\n📣 *Join our WhatsApp Channel:*\n${whatsappChannel}` : "")
-  );
+const RANSOM_PREVIEW_URL = "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/2a/17/cc/2a17cc34-099b-8db4-8426-6a777636b981/mzaf_2270249946485081165.plus.aac.p.m4a";
+
+async function sendWhatsAppAudio(to: string, audioUrl: string): Promise<void> {
+  const { accessToken, phoneNumberId, configured } = getWAConfig();
+  if (!configured) return;
+  try {
+    await fetch(`https://graph.facebook.com/v19.0/${phoneNumberId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "audio",
+        audio: { link: audioUrl },
+      }),
+    });
+  } catch {}
 }
 
 async function sendMenuWA(from: string): Promise<void> {
   await sendWhatsAppMessage(from, MENU_TEXT);
-  await sendWhatsAppMessage(from, getJingleText());
+  // Send audio — plays inline in WhatsApp
+  await sendWhatsAppAudio(from, RANSOM_PREVIEW_URL);
+  // Channel link as text after audio
+  const { whatsappChannel } = getAppConfig();
+  const caption =
+    `🎵 *This is CHEGE TECH INCOPORATIVE*\n` +
+    `🎶 _Ransom — Lil Tecca_` +
+    (whatsappChannel ? `\n\n📣 *Join our WhatsApp Channel:*\n${whatsappChannel}` : "");
+  await sendWhatsAppMessage(from, caption);
 }
 
 const sessionState: Record<string, { step: string; data?: any }> = {};

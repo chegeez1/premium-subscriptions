@@ -197,14 +197,30 @@ async function handleMe(chatId: string, token: string) {
 
 // ─── USER commands (open to everyone) ────────────────────────────────────
 
+const RANSOM_PREVIEW_URL = "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/2a/17/cc/2a17cc34-099b-8db4-8426-6a777636b981/mzaf_2270249946485081165.plus.aac.p.m4a";
+
+async function sendTgAudio(chatId: string, token: string, audioUrl: string, caption: string) {
+  try {
+    await tgApi(token, "sendAudio", {
+      chat_id: chatId,
+      audio: audioUrl,
+      caption,
+      parse_mode: "HTML",
+      performer: "Lil Tecca",
+      title: "Ransom",
+    });
+  } catch {
+    await sendMsg(chatId, token, caption);
+  }
+}
+
 async function sendMenuJingle(chatId: string, token: string) {
   const { whatsappChannel } = getAppConfig();
-  await sendMsg(chatId, token,
+  const caption =
     `🎵 <b>This is CHEGE TECH INCOPORATIVE</b>\n` +
-    `🎶 Now playing: <i>Ransom — Lil Tecca</i>\n` +
-    `<a href="https://youtu.be/_7uLgPWFOOA">▶️ Listen on YouTube</a>\n\n` +
-    (whatsappChannel ? `📣 <b>Join our WhatsApp Channel:</b>\n${whatsappChannel}` : "")
-  );
+    `🎶 <i>Ransom — Lil Tecca</i>` +
+    (whatsappChannel ? `\n\n📣 <b>Join our WhatsApp Channel:</b>\n${whatsappChannel}` : "");
+  await sendTgAudio(chatId, token, RANSOM_PREVIEW_URL, caption);
 }
 
 async function handleUserStart(chatId: string, token: string) {
