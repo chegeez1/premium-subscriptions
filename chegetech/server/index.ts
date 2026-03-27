@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 // Load .env in development — Render injects env vars natively in production
 if (process.env.NODE_ENV !== "production") dotenv.config();
 import express, { type Request, Response, NextFunction } from "express";
+import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -28,6 +29,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
 
 // Serve uploaded avatars statically
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");

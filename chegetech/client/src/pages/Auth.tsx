@@ -36,16 +36,20 @@ export default function Auth() {
     const ref = params.get("ref");
     if (ref) { setReferralCode(ref); setMode("signup"); return; }
 
-    // Already logged in — validate token and redirect away
+    // Already logged in — check localStorage first, then fall back to cookie session
     const token = localStorage.getItem("customer_token");
-    if (!token) return;
     const cachedData = localStorage.getItem("customer_data");
-    if (cachedData) { setLocation("/"); return; }
-    // Token exists but no cached data — check with server
-    fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
+    if (token && cachedData) { setLocation("/"); return; }
+
+    // Either no localStorage token, or token exists but no cached data —
+    // ask the server (cookie will be sent automatically for same-origin requests)
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    fetch("/api/auth/me", { headers, credentials: "include" })
       .then(r => r.json())
       .then(d => {
         if (d.success) {
+          if (d.token) localStorage.setItem("customer_token", d.token);
           localStorage.setItem("customer_data", JSON.stringify(d.customer));
           setLocation("/");
         } else {

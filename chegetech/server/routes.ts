@@ -241,9 +241,11 @@ async function sendWalletTransferEmail(opts: {
 }
 
 async function customerAuthMiddleware(req: any, res: any, next: any) {
-  const auth = req.headers.authorization;
-  if (!auth) return res.status(401).json({ error: "Unauthorized" });
-  const token = auth.replace("Bearer ", "");
+  // Cookie-first: read HttpOnly cookie set on login; fall back to Bearer header for API clients
+  const token: string =
+    req.cookies?.customer_token ||
+    (req.headers.authorization ? req.headers.authorization.replace("Bearer ", "") : "");
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
   const session = await storage.getCustomerSession(token);
   if (!session) return res.status(401).json({ error: "Unauthorized" });
   if (new Date(session.expiresAt) < new Date()) {
@@ -1762,6 +1764,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ip: getReqIp(req), userAgent: regUa, deviceName: parseDeviceName(regUa),
       });
 
+      // Set persistent HttpOnly cookie (30 days)
+      res.cookie("customer_token", token, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: "/",
+      });
+
       notifyNewCustomer({ name: customer.name || "", email: customer.email }).catch(() => {});
 
       res.json({ success: true, token, customer: { id: customer.id, email: customer.email, name: customer.name, avatarUrl: customer.avatarUrl || null } });
@@ -1794,6 +1805,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await storage.createCustomerSession(customer.id, token, expiresAt, {
         ip: rawIp, userAgent, deviceName: parseDeviceName(userAgent),
       });
+
+      // Set persistent HttpOnly cookie (30 days, same lifetime as the session)
+      res.cookie("customer_token", token, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: "/",
+      });
+
       (async () => {
         try {
           let geoData: any = {};
@@ -1905,8 +1926,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Customer: Logout ─────────────────────────────────────────────────────
   app.post("/api/auth/logout", async (req, res) => {
-    const auth = req.headers.authorization;
-    if (auth) await storage.deleteCustomerSession(auth.replace("Bearer ", "")).catch(() => {});
+    // Delete session from DB — accept token from cookie or Bearer header
+    const cookieToken: string = req.cookies?.customer_token || "";
+    const headerToken: string = req.headers.authorization ? req.headers.authorization.replace("Bearer ", "") : "";
+    const token = cookieToken || headerToken;
+    if (token) await storage.deleteCustomerSession(token).catch(() => {});
+    // Always clear the cookie regardless
+    res.clearCookie("customer_token", { path: "/" });
     res.json({ success: true });
   });
 

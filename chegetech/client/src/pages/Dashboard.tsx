@@ -130,15 +130,20 @@ export default function Dashboard() {
     return !!(token && data); // if both present, no need to do async check
   });
 
-  // If we have a token but no customer_data (partial clear), re-validate silently
+  // Validate session on mount — cookie-first: if localStorage is missing,
+  // the HttpOnly cookie is sent automatically and can restore the session
   useEffect(() => {
+    if (authChecked) return; // already verified via localStorage
     const token = getToken();
-    if (!token) { setLocation("/auth"); return; }
-    if (authChecked) return; // already verified
-    fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
+    // Build request — include Bearer header if we have a token, always send credentials (cookie)
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    fetch("/api/auth/me", { headers, credentials: "include" })
       .then(r => r.json())
       .then(d => {
         if (d.success) {
+          // Re-hydrate localStorage from server response (handles cookie-only sessions)
+          if (d.token) localStorage.setItem("customer_token", d.token);
           localStorage.setItem("customer_data", JSON.stringify(d.customer));
           setCustomer(d.customer);
           setAuthChecked(true);
