@@ -217,6 +217,63 @@ export async function initializeDatabase() {
           description TEXT,
           created_at TEXT DEFAULT (NOW()::text)
         );
+
+        CREATE TABLE IF NOT EXISTS resellers (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          email TEXT UNIQUE NOT NULL,
+          business_name TEXT,
+          phone TEXT,
+          why TEXT,
+          status TEXT DEFAULT 'pending',
+          username TEXT UNIQUE,
+          password_hash TEXT,
+          slug TEXT UNIQUE,
+          store_name TEXT,
+          custom_domain TEXT,
+          logo_url TEXT,
+          wallet_balance INTEGER NOT NULL DEFAULT 0,
+          suspended INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (NOW()::text)
+        );
+
+        CREATE TABLE IF NOT EXISTS reseller_sessions (
+          id SERIAL PRIMARY KEY,
+          reseller_id INTEGER NOT NULL,
+          token TEXT UNIQUE NOT NULL,
+          created_at TEXT DEFAULT (NOW()::text),
+          expires_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS reseller_prices (
+          id SERIAL PRIMARY KEY,
+          reseller_id INTEGER NOT NULL,
+          plan_id TEXT NOT NULL,
+          price INTEGER NOT NULL,
+          UNIQUE(reseller_id, plan_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS reseller_wallet_transactions (
+          id SERIAL PRIMARY KEY,
+          reseller_id INTEGER NOT NULL,
+          type TEXT NOT NULL,
+          amount INTEGER NOT NULL,
+          description TEXT NOT NULL,
+          reference TEXT,
+          created_at TEXT DEFAULT (NOW()::text)
+        );
+
+        CREATE TABLE IF NOT EXISTS reseller_withdrawals (
+          id SERIAL PRIMARY KEY,
+          reseller_id INTEGER NOT NULL,
+          amount INTEGER NOT NULL,
+          phone TEXT NOT NULL,
+          note TEXT,
+          status TEXT DEFAULT 'pending',
+          admin_note TEXT,
+          created_at TEXT DEFAULT (NOW()::text),
+          updated_at TEXT DEFAULT (NOW()::text)
+        );
       `);
 
       // Migrate: add avatar_url column if missing (safe for existing PG DBs)
@@ -227,6 +284,8 @@ export async function initializeDatabase() {
       await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS ip TEXT");
       await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS user_agent TEXT");
       await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS device_name TEXT");
+      // Migrate: add reseller_id to transactions
+      await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
 
       const drizzlePgModule = await import("drizzle-orm/node-postgres");
       const drizzlePg = drizzlePgModule.drizzle;
@@ -437,6 +496,63 @@ function initSqlite() {
       description TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS resellers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      business_name TEXT,
+      phone TEXT,
+      why TEXT,
+      status TEXT DEFAULT 'pending',
+      username TEXT UNIQUE,
+      password_hash TEXT,
+      slug TEXT UNIQUE,
+      store_name TEXT,
+      custom_domain TEXT,
+      logo_url TEXT,
+      wallet_balance INTEGER NOT NULL DEFAULT 0,
+      suspended INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS reseller_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reseller_id INTEGER NOT NULL,
+      token TEXT UNIQUE NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS reseller_prices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reseller_id INTEGER NOT NULL,
+      plan_id TEXT NOT NULL,
+      price INTEGER NOT NULL,
+      UNIQUE(reseller_id, plan_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS reseller_wallet_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reseller_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      description TEXT NOT NULL,
+      reference TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS reseller_withdrawals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reseller_id INTEGER NOT NULL,
+      amount INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      note TEXT,
+      status TEXT DEFAULT 'pending',
+      admin_note TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
   // Migrate: add avatar_url column if missing (safe for existing DBs)
   try { sqliteInstance!.prepare("ALTER TABLE customers ADD COLUMN avatar_url TEXT").run(); } catch {}
@@ -448,6 +564,8 @@ function initSqlite() {
   try { sqliteInstance!.prepare("ALTER TABLE customer_sessions ADD COLUMN ip TEXT").run(); } catch {}
   try { sqliteInstance!.prepare("ALTER TABLE customer_sessions ADD COLUMN user_agent TEXT").run(); } catch {}
   try { sqliteInstance!.prepare("ALTER TABLE customer_sessions ADD COLUMN device_name TEXT").run(); } catch {}
+  // Migrate: add reseller_id to transactions
+  try { sqliteInstance!.prepare("ALTER TABLE transactions ADD COLUMN reseller_id INTEGER").run(); } catch {}
   console.log("[db] Connected to SQLite");
 }
 
@@ -643,6 +761,31 @@ export interface IStorage {
   createReferral(referrerId: number, code: string): Promise<void>;
   completeReferral(code: string, refereeEmail: string, rewardAmount: number): Promise<void>;
   getReferralStats(referrerId: number): Promise<{ totalReferrals: number; completedReferrals: number; totalEarned: number; code: string | null }>;
+
+  createReseller(data: { name: string; email: string; businessName?: string; phone?: string; why?: string }): Promise<any>;
+  getResellerById(id: number): Promise<any | undefined>;
+  getResellerByEmail(email: string): Promise<any | undefined>;
+  getResellerBySlug(slug: string): Promise<any | undefined>;
+  getResellerByUsername(username: string): Promise<any | undefined>;
+  getResellerByDomain(domain: string): Promise<any | undefined>;
+  getAllResellers(): Promise<any[]>;
+  getAllResellerApplications(): Promise<any[]>;
+  updateReseller(id: number, data: Record<string, any>): Promise<any | undefined>;
+  createResellerSession(resellerId: number, token: string, expiresAt: Date): Promise<any>;
+  getResellerSession(token: string): Promise<any | undefined>;
+  deleteResellerSession(token: string): Promise<void>;
+  getResellerPrices(resellerId: number): Promise<any[]>;
+  setResellerPrice(resellerId: number, planId: string, price: number): Promise<void>;
+  creditResellerWallet(resellerId: number, amount: number, description: string, reference?: string): Promise<void>;
+  debitResellerWallet(resellerId: number, amount: number, description: string, reference?: string): Promise<boolean>;
+  getResellerWalletTransactions(resellerId: number, limit?: number): Promise<any[]>;
+  createWithdrawalRequest(data: { resellerId: number; amount: number; phone: string; note?: string }): Promise<any>;
+  getWithdrawalsByReseller(resellerId: number): Promise<any[]>;
+  getPendingWithdrawals(): Promise<any[]>;
+  getWithdrawalById(id: number): Promise<any | undefined>;
+  approveWithdrawal(id: number, adminNote?: string): Promise<void>;
+  rejectWithdrawal(id: number, adminNote?: string): Promise<void>;
+  getResellerOrders(resellerId: number): Promise<any[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -1311,6 +1454,395 @@ export class DbStorage implements IStorage {
     }
     const topPlan = Object.entries(planCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
     return { totalSpent, totalOrders, topPlan };
+  }
+
+  private mapReseller(row: any) {
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      businessName: row.business_name,
+      phone: row.phone,
+      why: row.why,
+      status: row.status,
+      username: row.username,
+      passwordHash: row.password_hash,
+      slug: row.slug,
+      storeName: row.store_name,
+      customDomain: row.custom_domain,
+      logoUrl: row.logo_url,
+      walletBalance: row.wallet_balance ?? 0,
+      suspended: row.suspended === 1 || row.suspended === true,
+      createdAt: row.created_at,
+    };
+  }
+
+  async createReseller(data: { name: string; email: string; businessName?: string; phone?: string; why?: string }): Promise<any> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "INSERT INTO resellers (name, email, business_name, phone, why) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+        [data.name, data.email, data.businessName || null, data.phone || null, data.why || null]
+      );
+      return this.mapReseller(r.rows[0]);
+    }
+    const stmt = sqliteInstance!.prepare(
+      "INSERT INTO resellers (name, email, business_name, phone, why) VALUES (?,?,?,?,?)"
+    );
+    const info = stmt.run(data.name, data.email, data.businessName || null, data.phone || null, data.why || null);
+    const row = sqliteInstance!.prepare("SELECT * FROM resellers WHERE id = ?").get(info.lastInsertRowid) as any;
+    return this.mapReseller(row);
+  }
+
+  async getResellerById(id: number): Promise<any | undefined> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM resellers WHERE id = $1", [id]);
+      return r.rows[0] ? this.mapReseller(r.rows[0]) : undefined;
+    }
+    const row = sqliteInstance!.prepare("SELECT * FROM resellers WHERE id = ?").get(id) as any;
+    return row ? this.mapReseller(row) : undefined;
+  }
+
+  async getResellerByEmail(email: string): Promise<any | undefined> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM resellers WHERE email = $1", [email]);
+      return r.rows[0] ? this.mapReseller(r.rows[0]) : undefined;
+    }
+    const row = sqliteInstance!.prepare("SELECT * FROM resellers WHERE email = ?").get(email) as any;
+    return row ? this.mapReseller(row) : undefined;
+  }
+
+  async getResellerBySlug(slug: string): Promise<any | undefined> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM resellers WHERE slug = $1", [slug]);
+      return r.rows[0] ? this.mapReseller(r.rows[0]) : undefined;
+    }
+    const row = sqliteInstance!.prepare("SELECT * FROM resellers WHERE slug = ?").get(slug) as any;
+    return row ? this.mapReseller(row) : undefined;
+  }
+
+  async getResellerByUsername(username: string): Promise<any | undefined> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM resellers WHERE username = $1", [username]);
+      return r.rows[0] ? this.mapReseller(r.rows[0]) : undefined;
+    }
+    const row = sqliteInstance!.prepare("SELECT * FROM resellers WHERE username = ?").get(username) as any;
+    return row ? this.mapReseller(row) : undefined;
+  }
+
+  async getResellerByDomain(domain: string): Promise<any | undefined> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM resellers WHERE custom_domain = $1", [domain]);
+      return r.rows[0] ? this.mapReseller(r.rows[0]) : undefined;
+    }
+    const row = sqliteInstance!.prepare("SELECT * FROM resellers WHERE custom_domain = ?").get(domain) as any;
+    return row ? this.mapReseller(row) : undefined;
+  }
+
+  async getAllResellers(): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM resellers WHERE status = 'approved' ORDER BY created_at DESC");
+      return r.rows.map((row: any) => this.mapReseller(row));
+    }
+    const rows = sqliteInstance!.prepare("SELECT * FROM resellers WHERE status = 'approved' ORDER BY created_at DESC").all() as any[];
+    return rows.map((row: any) => this.mapReseller(row));
+  }
+
+  async getAllResellerApplications(): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM resellers ORDER BY created_at DESC");
+      return r.rows.map((row: any) => this.mapReseller(row));
+    }
+    const rows = sqliteInstance!.prepare("SELECT * FROM resellers ORDER BY created_at DESC").all() as any[];
+    return rows.map((row: any) => this.mapReseller(row));
+  }
+
+  async updateReseller(id: number, data: Record<string, any>): Promise<any | undefined> {
+    const colMap: Record<string, string> = {
+      name: "name",
+      email: "email",
+      businessName: "business_name",
+      phone: "phone",
+      why: "why",
+      status: "status",
+      username: "username",
+      passwordHash: "password_hash",
+      slug: "slug",
+      storeName: "store_name",
+      customDomain: "custom_domain",
+      logoUrl: "logo_url",
+      walletBalance: "wallet_balance",
+      suspended: "suspended",
+    };
+    const sets: string[] = [];
+    const values: any[] = [];
+    for (const [key, col] of Object.entries(colMap)) {
+      if (data[key] !== undefined) {
+        sets.push(col);
+        values.push(data[key]);
+      }
+    }
+    if (sets.length === 0) return this.getResellerById(id);
+    if (dbType === "pg" && pgPool) {
+      const setClauses = sets.map((s, i) => `${s} = $${i + 1}`).join(", ");
+      values.push(id);
+      await pgPool.query(`UPDATE resellers SET ${setClauses} WHERE id = $${values.length}`, values);
+    } else {
+      const setClauses = sets.map((s) => `${s} = ?`).join(", ");
+      values.push(id);
+      sqliteInstance!.prepare(`UPDATE resellers SET ${setClauses} WHERE id = ?`).run(...values);
+    }
+    return this.getResellerById(id);
+  }
+
+  async createResellerSession(resellerId: number, token: string, expiresAt: Date): Promise<any> {
+    const expiresStr = expiresAt.toISOString();
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "INSERT INTO reseller_sessions (reseller_id, token, expires_at) VALUES ($1,$2,$3) RETURNING *",
+        [resellerId, token, expiresStr]
+      );
+      const row = r.rows[0];
+      return { id: row.id, resellerId: row.reseller_id, token: row.token, createdAt: row.created_at, expiresAt: row.expires_at };
+    }
+    const stmt = sqliteInstance!.prepare(
+      "INSERT INTO reseller_sessions (reseller_id, token, expires_at) VALUES (?,?,?)"
+    );
+    const info = stmt.run(resellerId, token, expiresStr);
+    const row = sqliteInstance!.prepare("SELECT * FROM reseller_sessions WHERE id = ?").get(info.lastInsertRowid) as any;
+    return { id: row.id, resellerId: row.reseller_id, token: row.token, createdAt: row.created_at, expiresAt: row.expires_at };
+  }
+
+  async getResellerSession(token: string): Promise<any | undefined> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM reseller_sessions WHERE token = $1", [token]);
+      if (!r.rows[0]) return undefined;
+      const row = r.rows[0];
+      return { id: row.id, resellerId: row.reseller_id, token: row.token, createdAt: row.created_at, expiresAt: row.expires_at };
+    }
+    const row = sqliteInstance!.prepare("SELECT * FROM reseller_sessions WHERE token = ?").get(token) as any;
+    if (!row) return undefined;
+    return { id: row.id, resellerId: row.reseller_id, token: row.token, createdAt: row.created_at, expiresAt: row.expires_at };
+  }
+
+  async deleteResellerSession(token: string): Promise<void> {
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query("DELETE FROM reseller_sessions WHERE token = $1", [token]);
+    } else {
+      sqliteInstance!.prepare("DELETE FROM reseller_sessions WHERE token = ?").run(token);
+    }
+  }
+
+  async getResellerPrices(resellerId: number): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM reseller_prices WHERE reseller_id = $1", [resellerId]);
+      return r.rows.map((row: any) => ({ id: row.id, resellerId: row.reseller_id, planId: row.plan_id, price: row.price }));
+    }
+    const rows = sqliteInstance!.prepare("SELECT * FROM reseller_prices WHERE reseller_id = ?").all(resellerId) as any[];
+    return rows.map((row: any) => ({ id: row.id, resellerId: row.reseller_id, planId: row.plan_id, price: row.price }));
+  }
+
+  async setResellerPrice(resellerId: number, planId: string, price: number): Promise<void> {
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query(
+        "INSERT INTO reseller_prices (reseller_id, plan_id, price) VALUES ($1,$2,$3) ON CONFLICT(reseller_id, plan_id) DO UPDATE SET price = $3",
+        [resellerId, planId, price]
+      );
+    } else {
+      sqliteInstance!.prepare(
+        "INSERT INTO reseller_prices (reseller_id, plan_id, price) VALUES (?,?,?) ON CONFLICT(reseller_id, plan_id) DO UPDATE SET price = excluded.price"
+      ).run(resellerId, planId, price);
+    }
+  }
+
+  async creditResellerWallet(resellerId: number, amount: number, description: string, reference?: string): Promise<void> {
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query(
+        "UPDATE resellers SET wallet_balance = wallet_balance + $1 WHERE id = $2",
+        [amount, resellerId]
+      );
+      await pgPool.query(
+        "INSERT INTO reseller_wallet_transactions (reseller_id, type, amount, description, reference, created_at) VALUES ($1,'credit',$2,$3,$4,NOW()::text)",
+        [resellerId, amount, description, reference || null]
+      );
+    } else {
+      sqliteInstance!.prepare("UPDATE resellers SET wallet_balance = wallet_balance + ? WHERE id = ?").run(amount, resellerId);
+      sqliteInstance!.prepare(
+        "INSERT INTO reseller_wallet_transactions (reseller_id, type, amount, description, reference) VALUES (?,'credit',?,?,?)"
+      ).run(resellerId, amount, description, reference || null);
+    }
+  }
+
+  async debitResellerWallet(resellerId: number, amount: number, description: string, reference?: string): Promise<boolean> {
+    const reseller = await this.getResellerById(resellerId);
+    if (!reseller || reseller.walletBalance < amount) return false;
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query(
+        "UPDATE resellers SET wallet_balance = wallet_balance - $1 WHERE id = $2",
+        [amount, resellerId]
+      );
+      await pgPool.query(
+        "INSERT INTO reseller_wallet_transactions (reseller_id, type, amount, description, reference, created_at) VALUES ($1,'debit',$2,$3,$4,NOW()::text)",
+        [resellerId, amount, description, reference || null]
+      );
+    } else {
+      sqliteInstance!.prepare("UPDATE resellers SET wallet_balance = wallet_balance - ? WHERE id = ?").run(amount, resellerId);
+      sqliteInstance!.prepare(
+        "INSERT INTO reseller_wallet_transactions (reseller_id, type, amount, description, reference) VALUES (?,'debit',?,?,?)"
+      ).run(resellerId, amount, description, reference || null);
+    }
+    return true;
+  }
+
+  async getResellerWalletTransactions(resellerId: number, limit = 30): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "SELECT * FROM reseller_wallet_transactions WHERE reseller_id = $1 ORDER BY created_at DESC LIMIT $2",
+        [resellerId, limit]
+      );
+      return r.rows.map((row: any) => ({ id: row.id, resellerId: row.reseller_id, type: row.type, amount: row.amount, description: row.description, reference: row.reference, createdAt: row.created_at }));
+    }
+    const rows = sqliteInstance!.prepare(
+      "SELECT * FROM reseller_wallet_transactions WHERE reseller_id = ? ORDER BY created_at DESC LIMIT ?"
+    ).all(resellerId, limit) as any[];
+    return rows.map((row: any) => ({ id: row.id, resellerId: row.reseller_id, type: row.type, amount: row.amount, description: row.description, reference: row.reference, createdAt: row.created_at }));
+  }
+
+  async createWithdrawalRequest(data: { resellerId: number; amount: number; phone: string; note?: string }): Promise<any> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "INSERT INTO reseller_withdrawals (reseller_id, amount, phone, note) VALUES ($1,$2,$3,$4) RETURNING *",
+        [data.resellerId, data.amount, data.phone, data.note || null]
+      );
+      return this.mapWithdrawal(r.rows[0]);
+    }
+    const stmt = sqliteInstance!.prepare(
+      "INSERT INTO reseller_withdrawals (reseller_id, amount, phone, note) VALUES (?,?,?,?)"
+    );
+    const info = stmt.run(data.resellerId, data.amount, data.phone, data.note || null);
+    const row = sqliteInstance!.prepare("SELECT * FROM reseller_withdrawals WHERE id = ?").get(info.lastInsertRowid) as any;
+    return this.mapWithdrawal(row);
+  }
+
+  private mapWithdrawal(row: any) {
+    return {
+      id: row.id,
+      resellerId: row.reseller_id,
+      amount: row.amount,
+      phone: row.phone,
+      note: row.note,
+      status: row.status,
+      adminNote: row.admin_note,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async getWithdrawalsByReseller(resellerId: number): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM reseller_withdrawals WHERE reseller_id = $1 ORDER BY created_at DESC", [resellerId]);
+      return r.rows.map((row: any) => this.mapWithdrawal(row));
+    }
+    const rows = sqliteInstance!.prepare("SELECT * FROM reseller_withdrawals WHERE reseller_id = ? ORDER BY created_at DESC").all(resellerId) as any[];
+    return rows.map((row: any) => this.mapWithdrawal(row));
+  }
+
+  async getPendingWithdrawals(): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "SELECT w.*, r.name as reseller_name, r.email as reseller_email FROM reseller_withdrawals w LEFT JOIN resellers r ON r.id = w.reseller_id WHERE w.status = 'pending' ORDER BY w.created_at ASC"
+      );
+      return r.rows.map((row: any) => ({ ...this.mapWithdrawal(row), resellerName: row.reseller_name, resellerEmail: row.reseller_email }));
+    }
+    const rows = sqliteInstance!.prepare(
+      "SELECT w.*, r.name as reseller_name, r.email as reseller_email FROM reseller_withdrawals w LEFT JOIN resellers r ON r.id = w.reseller_id WHERE w.status = 'pending' ORDER BY w.created_at ASC"
+    ).all() as any[];
+    return rows.map((row: any) => ({ ...this.mapWithdrawal(row), resellerName: row.reseller_name, resellerEmail: row.reseller_email }));
+  }
+
+  async getWithdrawalById(id: number): Promise<any | undefined> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query("SELECT * FROM reseller_withdrawals WHERE id = $1", [id]);
+      return r.rows[0] ? this.mapWithdrawal(r.rows[0]) : undefined;
+    }
+    const row = sqliteInstance!.prepare("SELECT * FROM reseller_withdrawals WHERE id = ?").get(id) as any;
+    return row ? this.mapWithdrawal(row) : undefined;
+  }
+
+  async approveWithdrawal(id: number, adminNote?: string): Promise<void> {
+    const w = await this.getWithdrawalById(id);
+    if (!w) throw new Error("Withdrawal not found");
+    if (w.status !== "pending") throw new Error("Withdrawal is no longer pending");
+    // Conditional update: only proceed if the row is still 'pending' (guards against concurrent approvals)
+    let rowsAffected = 0;
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "UPDATE reseller_withdrawals SET status='processing', admin_note=$1, updated_at=NOW()::text WHERE id=$2 AND status='pending' RETURNING id",
+        [adminNote || null, id]
+      );
+      rowsAffected = r.rowCount ?? 0;
+    } else {
+      const result = sqliteInstance!.prepare(
+        "UPDATE reseller_withdrawals SET status='processing', admin_note=?, updated_at=datetime('now') WHERE id=? AND status='pending'"
+      ).run(adminNote || null, id);
+      rowsAffected = result.changes;
+    }
+    if (rowsAffected === 0) throw new Error("Withdrawal already processed by another request");
+    const debited = await this.debitResellerWallet(w.resellerId, w.amount, `Withdrawal #${id} approved`, `withdrawal-${id}`);
+    if (!debited) {
+      // Rollback the status change since debit failed
+      if (dbType === "pg" && pgPool) {
+        await pgPool.query("UPDATE reseller_withdrawals SET status='pending', updated_at=NOW()::text WHERE id=$1", [id]);
+      } else {
+        sqliteInstance!.prepare("UPDATE reseller_withdrawals SET status='pending', updated_at=datetime('now') WHERE id=?").run(id);
+      }
+      throw new Error("Insufficient wallet balance — debit failed");
+    }
+    // Mark as approved now that debit succeeded
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query(
+        "UPDATE reseller_withdrawals SET status='approved', updated_at=NOW()::text WHERE id=$1",
+        [id]
+      );
+    } else {
+      sqliteInstance!.prepare(
+        "UPDATE reseller_withdrawals SET status='approved', updated_at=datetime('now') WHERE id=?"
+      ).run(id);
+    }
+  }
+
+  async rejectWithdrawal(id: number, adminNote?: string): Promise<void> {
+    if (dbType === "pg" && pgPool) {
+      await pgPool.query(
+        "UPDATE reseller_withdrawals SET status='rejected', admin_note=$1, updated_at=NOW()::text WHERE id=$2",
+        [adminNote || null, id]
+      );
+    } else {
+      sqliteInstance!.prepare(
+        "UPDATE reseller_withdrawals SET status='rejected', admin_note=?, updated_at=datetime('now') WHERE id=?"
+      ).run(adminNote || null, id);
+    }
+  }
+
+  async getResellerOrders(resellerId: number): Promise<any[]> {
+    if (dbType === "pg" && pgPool) {
+      const r = await pgPool.query(
+        "SELECT * FROM transactions WHERE reseller_id = $1 ORDER BY created_at DESC",
+        [resellerId]
+      );
+      return r.rows.map((row: any) => ({
+        id: row.id, reference: row.reference, planId: row.plan_id, planName: row.plan_name,
+        customerEmail: row.customer_email, customerName: row.customer_name,
+        amount: row.amount, status: row.status, createdAt: row.created_at,
+      }));
+    }
+    const rows = sqliteInstance!.prepare(
+      "SELECT * FROM transactions WHERE reseller_id = ? ORDER BY created_at DESC"
+    ).all(resellerId) as any[];
+    return rows.map((row: any) => ({
+      id: row.id, reference: row.reference, planId: row.plan_id, planName: row.plan_name,
+      customerEmail: row.customer_email, customerName: row.customer_name,
+      amount: row.amount, status: row.status, createdAt: row.created_at,
+    }));
   }
 }
 

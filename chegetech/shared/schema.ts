@@ -22,6 +22,7 @@ export const transactions = sqliteTable("transactions", {
   accountAssigned: integer("account_assigned", { mode: "boolean" }).default(false),
   paystackReference: text("paystack_reference"),
   expiresAt: text("expires_at"),
+  resellerId: integer("reseller_id"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").default(sql`(datetime('now'))`),
 });

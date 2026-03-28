@@ -569,6 +569,29 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
     console.error("[referral] Error processing referral reward:", refErr.message);
   }
 
+  // ─── Reseller profit split ────────────────────────────────────────
+  // Margin is computed from the locked transaction.amount (what the customer
+  // actually paid) vs the base plan price, so mutating reseller prices after
+  // payment init has no effect on the payout.
+  try {
+    if ((transaction as any).resellerId) {
+      const resellerId = (transaction as any).resellerId;
+      const cats = buildPlansResponse();
+      for (const cat of Object.values(cats) as any[]) {
+        if (cat.plans[transaction.planId]) {
+          const basePrice = cat.plans[transaction.planId].price;
+          const margin = Math.max(0, transaction.amount - basePrice);
+          if (margin > 0) {
+            await storage.creditResellerWallet(resellerId, margin, `Sale margin — ${transaction.planName} (ref: ${transaction.reference})`, transaction.reference);
+          }
+          break;
+        }
+      }
+    }
+  } catch (resellerErr: any) {
+    console.error("[reseller] Error processing profit split:", resellerErr.message);
+  }
+
   // ─── In-app notification for customer ────────────────────────────
   try {
     const cust = await storage.getCustomerByEmail(transaction.customerEmail);
@@ -659,6 +682,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     next();
   });
 
+  // ─── Reseller Custom Domain Middleware ───────────────────────────────────
+  app.use(async (req: any, _res: any, next: any) => {
+    try {
+      const hostname = req.hostname;
+      if (hostname && hostname !== "localhost" && !hostname.endsWith(".replit.dev") && !hostname.endsWith(".repl.co")) {
+        const reseller = await storage.getResellerByDomain(hostname);
+        if (reseller && reseller.status === "approved" && !reseller.suspended) {
+          req.resellerSlug = reseller.slug;
+        }
+      }
+    } catch (_) {}
+    next();
+  });
+
   // ─── Public: Config ───────────────────────────────────────────────────────
   app.get("/api/config", (_req, res) => {
     const pub = getPaystackPublicKey();
@@ -723,10 +760,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── Public: Initialize payment ──────────────────────────────────────────
-  app.post("/api/payment/initialize", async (req, res) => {
+  app.post("/api/payment/initialize", async (req: any, res) => {
     try {
-      const { planId, customerName, email, promoCode, giftEmail, giftMessage } = req.body;
+      const { planId, customerName, email, promoCode, giftEmail, giftMessage, reseller: resellerSlugParam } = req.body;
       if (!email || !planId) return res.status(400).json({ success: false, error: "Email and planId are required" });
+      // Detect reseller context: from query string (?reseller=slug), body param, or custom domain middleware
+      const resellerSlug = (req.query?.reseller as string) || resellerSlugParam || req.resellerSlug || null;
 
       const categories = buildPlansResponse();
       let plan: any = null;
@@ -778,8 +817,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       } catch (_) {}
 
+      // ─── Resolve reseller and adjust price if applicable ────────────────
+      let resolvedResellerId: number | null = null;
+      if (resellerSlug) {
+        try {
+          const resellerObj = await storage.getResellerBySlug(resellerSlug);
+          if (resellerObj && resellerObj.status === "approved" && !resellerObj.suspended) {
+            resolvedResellerId = resellerObj.id;
+            const resellerPrices = await storage.getResellerPrices(resellerObj.id);
+            const rp = resellerPrices.find((p: any) => p.planId === planId);
+            if (rp) finalAmount = rp.price;
+          }
+        } catch (_) {}
+      }
+
       const reference = `SUB-${planId.toUpperCase()}-${Date.now()}`;
-      await storage.createTransaction({
+      const txData: any = {
         reference,
         planId,
         planName: plan.name,
@@ -789,7 +842,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         status: "pending",
         emailSent: false,
         accountAssigned: false,
-      });
+      };
+      if (resolvedResellerId) txData.resellerId = resolvedResellerId;
+      await storage.createTransaction(txData);
       if (giftEmail?.trim()) {
         dbSettingsSet(`gift_${reference}`, JSON.stringify({ giftEmail: giftEmail.trim(), giftMessage: giftMessage?.trim() || "" }));
       }
@@ -4947,6 +5002,438 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const wallet = await storage.getWallet(id);
       res.json({ success: true, newBalance: wallet?.balance ?? 0 });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RESELLER PLATFORM
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─── Reseller Auth Middleware ─────────────────────────────────────────────
+  async function resellerAuthMiddleware(req: any, res: any, next: any) {
+    const token: string =
+      req.cookies?.reseller_token ||
+      (req.headers.authorization ? req.headers.authorization.replace("Bearer ", "") : "");
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    const session = await storage.getResellerSession(token);
+    if (!session) return res.status(401).json({ error: "Unauthorized" });
+    if (new Date(session.expiresAt) < new Date()) {
+      await storage.deleteResellerSession(token);
+      return res.status(401).json({ error: "Session expired" });
+    }
+    const reseller = await storage.getResellerById(session.resellerId);
+    if (!reseller) return res.status(401).json({ error: "Unauthorized" });
+    if (reseller.suspended) return res.status(403).json({ error: "Account suspended. Contact admin." });
+    if (reseller.status !== "approved") return res.status(403).json({ error: "Account not yet approved." });
+    req.reseller = reseller;
+    next();
+  }
+
+  // ─── Public: Submit reseller application ─────────────────────────────────
+  app.post("/api/reseller/apply", async (req, res) => {
+    try {
+      const { name, email, businessName, phone, why } = req.body;
+      if (!name || !email) return res.status(400).json({ success: false, error: "Name and email are required" });
+      const existing = await storage.getResellerByEmail(email);
+      if (existing) return res.status(409).json({ success: false, error: "An application with this email already exists" });
+      const reseller = await storage.createReseller({ name, email, businessName, phone, why });
+      // Telegram notification
+      try {
+        const { siteName } = getAppConfig();
+        sendTelegramMessage(
+          `📋 <b>New Reseller Application</b>\n\nName: <b>${name}</b>\nEmail: <b>${email}</b>\nBusiness: ${businessName || "N/A"}\nPhone: ${phone || "N/A"}\n\nWhy: ${why || "N/A"}\n\n<a href="admin panel">Review in Admin Panel</a>`
+        ).catch(() => {});
+      } catch (_) {}
+      res.json({ success: true, id: reseller.id, message: "Application submitted. We'll review and get back to you." });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Reseller Login ───────────────────────────────────────────────────────
+  app.post("/api/reseller/login", async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      if (!username || !password) return res.status(400).json({ success: false, error: "Username and password are required" });
+      const reseller = await storage.getResellerByUsername(username);
+      if (!reseller || !reseller.passwordHash) return res.status(401).json({ success: false, error: "Invalid credentials" });
+      const valid = await bcrypt.compare(password, reseller.passwordHash);
+      if (!valid) return res.status(401).json({ success: false, error: "Invalid credentials" });
+      if (reseller.status !== "approved") return res.status(403).json({ success: false, error: "Account not yet approved" });
+      if (reseller.suspended) return res.status(403).json({ success: false, error: "Account suspended" });
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      await storage.createResellerSession(reseller.reseller_id || reseller.id, token, expiresAt);
+      res.cookie("reseller_token", token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 30 * 24 * 60 * 60 * 1000 });
+      const { passwordHash: _ph, ...safe } = reseller;
+      res.json({ success: true, reseller: safe });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Reseller Me ─────────────────────────────────────────────────────────
+  app.get("/api/reseller/me", resellerAuthMiddleware, async (req: any, res) => {
+    const { passwordHash: _ph, ...safe } = req.reseller;
+    res.json({ success: true, reseller: safe });
+  });
+
+  // ─── Reseller Logout ──────────────────────────────────────────────────────
+  app.post("/api/reseller/logout", async (req: any, res) => {
+    try {
+      const token = req.cookies?.reseller_token || (req.headers.authorization || "").replace("Bearer ", "");
+      if (token) await storage.deleteResellerSession(token);
+      res.clearCookie("reseller_token");
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Reseller Dashboard ───────────────────────────────────────────────────
+  app.get("/api/reseller/dashboard", resellerAuthMiddleware, async (req: any, res) => {
+    try {
+      const resellerId = req.reseller.id;
+      const orders = await storage.getResellerOrders(resellerId);
+      const prices = await storage.getResellerPrices(resellerId);
+      const successOrders = orders.filter((o: any) => o.status === "success");
+      const totalOrders = successOrders.length;
+      const priceMap: Record<string, number> = {};
+      for (const p of prices) priceMap[p.planId] = p.price;
+      let totalEarnings = 0;
+      for (const o of successOrders) {
+        const resellerPrice = priceMap[o.planId];
+        if (resellerPrice) {
+          const cats = buildPlansResponse();
+          for (const cat of Object.values(cats) as any[]) {
+            if (cat.plans[o.planId]) {
+              const basePrice = cat.plans[o.planId].price;
+              totalEarnings += Math.max(0, resellerPrice - basePrice);
+              break;
+            }
+          }
+        }
+      }
+      const walletBalance = req.reseller.walletBalance;
+      res.json({ success: true, totalOrders, totalEarnings, walletBalance });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Reseller Prices ─────────────────────────────────────────────────────
+  app.get("/api/reseller/prices", resellerAuthMiddleware, async (req: any, res) => {
+    try {
+      const prices = await storage.getResellerPrices(req.reseller.id);
+      res.json({ success: true, prices });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.put("/api/reseller/prices", resellerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { prices } = req.body;
+      if (!Array.isArray(prices)) return res.status(400).json({ success: false, error: "prices must be an array" });
+      const cats = buildPlansResponse();
+      const basePrices: Record<string, number> = {};
+      for (const cat of Object.values(cats) as any[]) {
+        for (const [id, plan] of Object.entries(cat.plans || {}) as any[]) {
+          basePrices[id] = plan.price;
+        }
+      }
+      for (const entry of prices) {
+        const { planId, price } = entry;
+        if (!planId || typeof price !== "number") continue;
+        const base = basePrices[planId];
+        if (base === undefined) continue;
+        if (price < base) return res.status(400).json({ success: false, error: `Price for ${planId} must be >= base price (${base})` });
+        await storage.setResellerPrice(req.reseller.id, planId, price);
+      }
+      const updated = await storage.getResellerPrices(req.reseller.id);
+      res.json({ success: true, prices: updated });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Reseller Orders ──────────────────────────────────────────────────────
+  app.get("/api/reseller/orders", resellerAuthMiddleware, async (req: any, res) => {
+    try {
+      const orders = await storage.getResellerOrders(req.reseller.id);
+      res.json({ success: true, orders });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Reseller Wallet ──────────────────────────────────────────────────────
+  app.get("/api/reseller/wallet", resellerAuthMiddleware, async (req: any, res) => {
+    try {
+      const reseller = await storage.getResellerById(req.reseller.id);
+      const transactions = await storage.getResellerWalletTransactions(req.reseller.id, 30);
+      res.json({ success: true, balance: reseller?.walletBalance ?? 0, transactions });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Reseller Withdrawal ──────────────────────────────────────────────────
+  app.post("/api/reseller/withdrawal", resellerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { amount, phone, note } = req.body;
+      if (!amount || !phone) return res.status(400).json({ success: false, error: "Amount and phone are required" });
+      const amountNum = parseInt(amount);
+      if (isNaN(amountNum) || amountNum <= 0) return res.status(400).json({ success: false, error: "Invalid amount" });
+      const reseller = await storage.getResellerById(req.reseller.id);
+      if (!reseller || reseller.walletBalance < amountNum) {
+        return res.status(400).json({ success: false, error: "Insufficient wallet balance" });
+      }
+      const withdrawal = await storage.createWithdrawalRequest({ resellerId: req.reseller.id, amount: amountNum, phone, note });
+      // Telegram notification
+      try {
+        sendTelegramMessage(
+          `💸 <b>New Reseller Withdrawal Request</b>\n\nReseller: <b>${reseller.name}</b> (${reseller.email})\nAmount: <b>KES ${amountNum.toLocaleString()}</b>\nPhone: ${phone}\nNote: ${note || "N/A"}\n\nBalance: KES ${reseller.walletBalance.toLocaleString()}`
+        ).catch(() => {});
+      } catch (_) {}
+      res.json({ success: true, withdrawal });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/reseller/withdrawals", resellerAuthMiddleware, async (req: any, res) => {
+    try {
+      const withdrawals = await storage.getWithdrawalsByReseller(req.reseller.id);
+      res.json({ success: true, withdrawals });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Reseller Profile ─────────────────────────────────────────────────────
+  app.get("/api/reseller/profile", resellerAuthMiddleware, async (req: any, res) => {
+    const { passwordHash: _ph, ...safe } = req.reseller;
+    res.json({ success: true, reseller: safe });
+  });
+
+  app.put("/api/reseller/profile", resellerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { storeName, slug, customDomain, logoUrl } = req.body;
+      const updates: Record<string, any> = {};
+      if (storeName !== undefined) updates.storeName = storeName;
+      if (logoUrl !== undefined) updates.logoUrl = logoUrl;
+      if (slug !== undefined) {
+        const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").slice(0, 60);
+        const conflict = await storage.getResellerBySlug(cleanSlug);
+        if (conflict && conflict.id !== req.reseller.id) return res.status(409).json({ success: false, error: "Slug already taken" });
+        updates.slug = cleanSlug;
+      }
+      if (customDomain !== undefined) {
+        if (customDomain) {
+          const existing = await storage.getResellerByDomain(customDomain);
+          if (existing && existing.id !== req.reseller.id) return res.status(409).json({ success: false, error: "Custom domain already in use" });
+        }
+        updates.customDomain = customDomain || null;
+      }
+      const updated = await storage.updateReseller(req.reseller.id, updates);
+      const { passwordHash: _ph, ...safe } = updated;
+      res.json({ success: true, reseller: safe });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Public: Storefront (custom domain fallback — no slug in path) ────────
+  app.get("/api/storefront", async (req: any, res) => {
+    try {
+      const slug = req.resellerSlug;
+      if (!slug) return res.status(404).json({ success: false, error: "Storefront not found" });
+      const reseller = await storage.getResellerBySlug(slug);
+      if (!reseller || reseller.status !== "approved" || reseller.suspended) {
+        return res.status(404).json({ success: false, error: "Storefront not found" });
+      }
+      const prices = await storage.getResellerPrices(reseller.id);
+      const priceMap: Record<string, number> = {};
+      for (const p of prices) priceMap[p.planId] = p.price;
+      const cats = buildPlansResponse();
+      const storefrontCats: any = {};
+      for (const [catKey, cat] of Object.entries(cats) as any[]) {
+        const plans: any = {};
+        for (const [planId, plan] of Object.entries(cat.plans || {}) as any[]) {
+          plans[planId] = { ...plan, price: priceMap[planId] ?? plan.price, basePrice: plan.price };
+        }
+        storefrontCats[catKey] = { ...cat, plans };
+      }
+      res.json({
+        success: true,
+        reseller: { id: reseller.id, storeName: reseller.storeName || reseller.name, slug: reseller.slug, logoUrl: reseller.logoUrl, customDomain: reseller.customDomain },
+        categories: storefrontCats,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Public: Storefront ───────────────────────────────────────────────────
+  app.get("/api/storefront/:slug", async (req: any, res) => {
+    try {
+      // Prefer domain-matched slug from middleware; fall back to URL slug
+      const slug = req.resellerSlug || req.params.slug;
+      const reseller = await storage.getResellerBySlug(slug);
+      if (!reseller || reseller.status !== "approved" || reseller.suspended) {
+        return res.status(404).json({ success: false, error: "Storefront not found" });
+      }
+      const prices = await storage.getResellerPrices(reseller.id);
+      const priceMap: Record<string, number> = {};
+      for (const p of prices) priceMap[p.planId] = p.price;
+      const cats = buildPlansResponse();
+      const storefrontCats: any = {};
+      for (const [catKey, cat] of Object.entries(cats) as any[]) {
+        const plans: any = {};
+        for (const [planId, plan] of Object.entries(cat.plans || {}) as any[]) {
+          plans[planId] = {
+            ...plan,
+            price: priceMap[planId] ?? plan.price,
+            basePrice: plan.price,
+          };
+        }
+        storefrontCats[catKey] = { ...cat, plans };
+      }
+      res.json({
+        success: true,
+        reseller: {
+          id: reseller.id,
+          storeName: reseller.storeName || reseller.name,
+          slug: reseller.slug,
+          logoUrl: reseller.logoUrl,
+          customDomain: reseller.customDomain,
+        },
+        categories: storefrontCats,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Admin: Reseller Applications ────────────────────────────────────────
+  app.get("/api/admin/reseller-applications", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const applications = await storage.getAllResellerApplications();
+      res.json({ success: true, applications });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/reseller-applications/:id/approve", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { username, password } = req.body;
+      if (!username || !password) return res.status(400).json({ success: false, error: "username and password are required" });
+      const reseller = await storage.getResellerById(id);
+      if (!reseller) return res.status(404).json({ success: false, error: "Application not found" });
+      const passwordHash = await bcrypt.hash(password, 12);
+      const baseSlug = username.toLowerCase().replace(/[^a-z0-9]/g, "-");
+      let slug = baseSlug;
+      let attempt = 0;
+      while (await storage.getResellerBySlug(slug)) {
+        slug = `${baseSlug}-${++attempt}`;
+      }
+      await storage.updateReseller(id, { status: "approved", username, passwordHash, slug, storeName: reseller.businessName || reseller.name });
+      res.json({ success: true, message: "Application approved", slug });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/reseller-applications/:id/reject", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.updateReseller(id, { status: "rejected" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Admin: Reseller Management ───────────────────────────────────────────
+  app.get("/api/admin/resellers", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const resellers = await storage.getAllResellers();
+      res.json({ success: true, resellers });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/admin/resellers/:id", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const reseller = await storage.getResellerById(id);
+      if (!reseller) return res.status(404).json({ success: false, error: "Reseller not found" });
+      const { passwordHash: _ph, ...safe } = reseller;
+      res.json({ success: true, reseller: safe });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/resellers/:id/suspend", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.updateReseller(id, { suspended: 1 });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/resellers/:id/unsuspend", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.updateReseller(id, { suspended: 0 });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ─── Admin: Reseller Withdrawals ──────────────────────────────────────────
+  app.get("/api/admin/reseller-withdrawals", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const withdrawals = await storage.getPendingWithdrawals();
+      res.json({ success: true, withdrawals });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/reseller-withdrawals/:id/approve", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { adminNote } = req.body;
+      const withdrawal = await storage.getWithdrawalById(id);
+      if (!withdrawal) return res.status(404).json({ success: false, error: "Withdrawal not found" });
+      if (withdrawal.status !== "pending") return res.status(400).json({ success: false, error: "Withdrawal is not pending" });
+      await storage.approveWithdrawal(id, adminNote);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/reseller-withdrawals/:id/reject", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { adminNote } = req.body;
+      const withdrawal = await storage.getWithdrawalById(id);
+      if (!withdrawal) return res.status(404).json({ success: false, error: "Withdrawal not found" });
+      if (withdrawal.status !== "pending") return res.status(400).json({ success: false, error: "Withdrawal is not pending" });
+      await storage.rejectWithdrawal(id, adminNote);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   return httpServer;
