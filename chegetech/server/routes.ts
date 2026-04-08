@@ -1429,7 +1429,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         storage.getStats(),
         Promise.resolve(accountManager.getStats()),
       ]);
-      res.json({ success: true, transactions: txStats, accounts: accStats });
+
+      // Include bot order revenue and counts
+      let botStats = { total: 0, revenue: 0, deployed: 0 };
+      try {
+        const paidStatuses = `'paid','deployed','stopped','suspended','deploy_failed'`;
+        const botRows = await runQuery(
+          `SELECT COUNT(*) as total, COALESCE(SUM(amount),0) as revenue, COUNT(CASE WHEN status='deployed' THEN 1 END) as deployed FROM bot_orders WHERE status IN (${paidStatuses})`,
+          []
+        );
+        if (botRows.length) {
+          botStats = {
+            total: Number(botRows[0].total || 0),
+            revenue: Number(botRows[0].revenue || 0),
+            deployed: Number(botRows[0].deployed || 0),
+          };
+        }
+      } catch (_) {}
+
+      res.json({
+        success: true,
+        transactions: {
+          ...txStats,
+          revenue: txStats.revenue + botStats.revenue,
+          total: txStats.total + botStats.total,
+        },
+        accounts: accStats,
+        bots: botStats,
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
