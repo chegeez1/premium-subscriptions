@@ -2725,6 +2725,55 @@ function AccountsTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ─── PlanSelector: multi-select checklist for promo plan restriction ─────────
+function PlanSelector({ selected, onChange }: { selected: string[]; onChange: (ids: string[]) => void }) {
+  const { data } = useQuery<any>({
+    queryKey: ["/api/plans"],
+    queryFn: () => fetch("/api/plans").then((r) => r.json()),
+    staleTime: 5 * 60 * 1000,
+  });
+  const categories: Record<string, any> = data?.categories ?? {};
+  const allPlans: { id: string; name: string; category: string }[] = [];
+  for (const [, cat] of Object.entries(categories)) {
+    for (const [id, plan] of Object.entries((cat as any).plans ?? {})) {
+      allPlans.push({ id, name: (plan as any).name, category: (cat as any).category });
+    }
+  }
+
+  if (!allPlans.length) return <p className="text-xs text-white/30 italic">Loading plans…</p>;
+
+  const grouped: Record<string, typeof allPlans> = {};
+  for (const p of allPlans) {
+    if (!grouped[p.category]) grouped[p.category] = [];
+    grouped[p.category].push(p);
+  }
+
+  function toggle(id: string) {
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  }
+
+  return (
+    <div className="glass border border-white/10 rounded-xl p-3 max-h-52 overflow-y-auto space-y-3">
+      {Object.entries(grouped).map(([cat, plans]) => (
+        <div key={cat}>
+          <p className="text-[10px] font-semibold text-white/30 uppercase tracking-wider mb-1">{cat}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {plans.map((p) => {
+              const active = selected.includes(p.id);
+              return (
+                <button key={p.id} type="button" onClick={() => toggle(p.id)}
+                  className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${active ? "bg-amber-500/20 border-amber-500/50 text-amber-300" : "border-white/10 text-white/40 hover:border-white/25 hover:text-white/60"}`}>
+                  {p.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // PROMO CODES TAB
 // ═══════════════════════════════════════════════════════════════
 function PromosTab() {
@@ -2738,16 +2787,16 @@ function PromosTab() {
   const codes: any[] = data?.codes ?? [];
 
   const form = useForm({
-    defaultValues: { code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "all", applicablePlans: "" },
+    defaultValues: { code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "all", applicablePlans: [] as string[] },
   });
 
   const createMutation = useMutation({
     mutationFn: (d: any) => authFetch("/api/admin/promo-codes", {
       method: "POST",
-      body: JSON.stringify({ ...d, discountValue: parseInt(d.discountValue), maxUses: d.maxUses ? parseInt(d.maxUses) : null, expiresAt: d.expiresAt || null, applicablePlans: d.applicablePlans ? d.applicablePlans.split(",").map((s: string) => s.trim()).filter(Boolean) : null, applicableTo: d.applicableTo || "all" }),
+      body: JSON.stringify({ ...d, discountValue: parseInt(d.discountValue), maxUses: d.maxUses ? parseInt(d.maxUses) : null, expiresAt: d.expiresAt || null, applicablePlans: Array.isArray(d.applicablePlans) && d.applicablePlans.length > 0 ? d.applicablePlans : null, applicableTo: d.applicableTo || "all" }),
     }),
     onSuccess: (d: any) => {
-      if (d.success) { toast({ title: "Promo code created!" }); form.reset({ code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "all", applicablePlans: "" }); setShowAdd(false); refetch(); }
+      if (d.success) { toast({ title: "Promo code created!" }); form.reset({ code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "all", applicablePlans: [] }); setShowAdd(false); refetch(); }
       else toast({ title: "Error", description: d.error, variant: "destructive" });
     },
   });
@@ -2792,7 +2841,10 @@ function PromosTab() {
               </div>
               <div><label className="text-xs text-white/50 block mb-1">Discount Value</label><Input {...form.register("discountValue")} type="number" placeholder="20" className={inputCls} /></div>
               <div><label className="text-xs text-white/50 block mb-1">Max Uses (blank = unlimited)</label><Input {...form.register("maxUses")} type="number" placeholder="Unlimited" className={inputCls} /></div>
-              <div><label className="text-xs text-white/50 block mb-1">Restrict to Plan IDs (comma-separated, blank = any plan)</label><Input {...form.register("applicablePlans")} placeholder="e.g. basic,pro,enterprise" className={inputCls} /></div>
+              <div className="col-span-2">
+                <label className="text-xs text-white/50 block mb-2">Restrict to Specific Plans <span className="text-white/25">(leave all unchecked = any plan)</span></label>
+                <PlanSelector selected={form.watch("applicablePlans") || []} onChange={(ids) => form.setValue("applicablePlans", ids)} />
+              </div>
               <div><label className="text-xs text-white/50 block mb-1">Expires At (optional)</label><Input {...form.register("expiresAt")} type="date" className={inputCls} /></div>
               <div><label className="text-xs text-white/50 block mb-1">Applies To</label>
                 <select {...form.register("applicableTo")} className="w-full h-9 rounded-lg glass border border-white/10 bg-background/50 text-white/80 px-3 text-sm">
