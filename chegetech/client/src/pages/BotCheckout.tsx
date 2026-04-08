@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Bot, ArrowLeft, CheckCircle, Loader2, CreditCard, Info } from "lucide-react";
+import { Bot, ArrowLeft, CheckCircle, Loader2, CreditCard, Info, Wallet, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,21 +10,29 @@ import { useToast } from "@/hooks/use-toast";
 
 declare global { interface Window { PaystackPop: any; } }
 
+type PayMode = "paystack" | "wallet";
+
 interface BotItem {
   id: number; name: string; description: string; repoUrl: string; price: number;
   features: string[]; requiresSessionId: boolean; requiresDbUrl: boolean;
 }
 
-function apiRequest(method: string, url: string, body?: any) {
+function apiRequest(method: string, url: string, body?: any, token?: string) {
   return fetch(url, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   }).then((r) => r.json());
 }
 
 function getCustomerData() {
   try { return JSON.parse(localStorage.getItem("customer_data") || "null"); } catch { return null; }
+}
+function getCustomerToken() {
+  try { return localStorage.getItem("customer_token") || ""; } catch { return ""; }
 }
 
 const TIMEZONES = [
@@ -39,6 +47,7 @@ export default function BotCheckout() {
   const { toast } = useToast();
 
   const customer = getCustomerData();
+  const customerToken = getCustomerToken();
 
   const [form, setForm] = useState({
     customerName: customer?.name || "",
@@ -49,14 +58,27 @@ export default function BotCheckout() {
     mode: "public",
     timezone: "Africa/Nairobi",
   });
-  const [step, setStep] = useState<"form" | "processing" | "done">("form");
-  const [orderRef, setOrderRef] = useState("");
+  const [payMode, setPayMode] = useState<PayMode>("paystack");
+  const [step, setStep] = useState<"form" | "processing">("form");
 
   const { data, isLoading } = useQuery<{ success: boolean; bot: BotItem }>({
     queryKey: [`/api/bots/${botId}`],
   });
 
+  const { data: walletData } = useQuery<{ success: boolean; balance: number }>({
+    queryKey: ["/api/customer/wallet"],
+    queryFn: () =>
+      fetch("/api/customer/wallet", {
+        headers: { Authorization: `Bearer ${customerToken}` },
+      }).then((r) => r.json()),
+    enabled: !!customerToken,
+  });
+
   const bot = data?.bot;
+  const walletBalance = walletData?.balance ?? 0;
+  const walletCoversAll = bot ? walletBalance >= bot.price : false;
+  const walletCoversPartial = bot ? walletBalance > 0 && !walletCoversAll : false;
+  const walletRemainder = bot ? Math.max(0, bot.price - walletBalance) : 0;
 
   const initMutation = useMutation({
     mutationFn: (payload: any) => apiRequest("POST", "/api/bots/order/initialize", payload),
@@ -66,17 +88,33 @@ export default function BotCheckout() {
         setStep("form");
         return;
       }
-      setOrderRef(data.reference);
       if (data.paystackConfigured && data.authorizationUrl) {
         openPaystackPopup(data.authorizationUrl, data.reference, data.paystackPublicKey, data.amount);
       } else {
-        toast({ title: "Order Created", description: "Your order has been submitted. Admin will contact you for payment." });
-        setStep("done");
+        toast({ title: "Order Created", description: "Your order was submitted. Admin will contact you for payment." });
         setLocation(`/bots/order/${data.reference}`);
       }
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to initialize order", variant: "destructive" });
+      setStep("form");
+    },
+  });
+
+  const walletMutation = useMutation({
+    mutationFn: (payload: any) =>
+      apiRequest("POST", "/api/bots/order/wallet-pay", payload, customerToken),
+    onSuccess: (data) => {
+      if (data.success) {
+        toast({ title: "Payment Confirmed!", description: "Paid with wallet credits. Your bot will be deployed shortly." });
+        setLocation(`/bots/order/${data.reference}`);
+      } else {
+        toast({ title: "Wallet payment failed", description: data.error, variant: "destructive" });
+        setStep("form");
+      }
+    },
+    onError: () => {
+      toast({ title: "Payment failed", variant: "destructive" });
       setStep("form");
     },
   });
@@ -88,18 +126,16 @@ export default function BotCheckout() {
         toast({ title: "Payment Confirmed!", description: "Your bot will be deployed shortly." });
         setLocation(`/bots/order/${ref}`);
       } else {
-        toast({ title: "Payment pending", description: "Please wait while we confirm your payment.", variant: "destructive" });
+        toast({ title: "Payment pending", description: "Please check your order status.", variant: "destructive" });
+        setStep("form");
       }
     },
-    onError: () => {
-      toast({ title: "Verification failed", description: "Please check your order status.", variant: "destructive" });
-    },
+    onError: () => { setStep("form"); },
   });
 
   function openPaystackPopup(authUrl: string, reference: string, pubKey: string, amount: number) {
     if (!pubKey || !window.PaystackPop) {
       window.open(authUrl, "_blank");
-      toast({ title: "Redirecting to Paystack", description: "Complete payment and return here." });
       return;
     }
     const handler = window.PaystackPop.setup({
@@ -113,7 +149,7 @@ export default function BotCheckout() {
         verifyMutation.mutate(response.reference);
       },
       onClose: () => {
-        toast({ title: "Payment cancelled", description: "You closed the payment window." });
+        toast({ title: "Payment cancelled" });
         setStep("form");
       },
     });
@@ -131,8 +167,27 @@ export default function BotCheckout() {
       return;
     }
     setStep("processing");
-    initMutation.mutate({ botId, ...form });
+
+    if (payMode === "wallet") {
+      if (!customerToken) {
+        setStep("form");
+        toast({ title: "Sign in required", description: "Please sign in to pay with wallet credits.", variant: "destructive" });
+        return;
+      }
+      if (walletCoversAll) {
+        walletMutation.mutate({ botId, ...form });
+      } else if (walletCoversPartial) {
+        initMutation.mutate({ botId, ...form, walletAmountToUse: walletBalance });
+      } else {
+        setStep("form");
+        toast({ title: "Insufficient wallet balance", description: "Please top up your wallet or switch to Paystack.", variant: "destructive" });
+      }
+    } else {
+      initMutation.mutate({ botId, ...form });
+    }
   }
+
+  const busy = step === "processing" || initMutation.isPending || walletMutation.isPending || verifyMutation.isPending;
 
   if (isLoading) {
     return (
@@ -170,9 +225,9 @@ export default function BotCheckout() {
               <p className="text-xs text-gray-400">Deploying</p>
               <h2 className="font-semibold text-white">{bot.name}</h2>
             </div>
-            <div className="ml-auto">
+            <div className="ml-auto text-right">
               <span className="text-2xl font-bold text-green-400">KES {bot.price}</span>
-              <p className="text-xs text-gray-500 text-right">One-time</p>
+              <p className="text-xs text-gray-500">One-time</p>
             </div>
           </div>
           <ul className="grid grid-cols-2 gap-1.5">
@@ -210,13 +265,11 @@ export default function BotCheckout() {
           {bot.requiresSessionId && (
             <div className="space-y-1.5">
               <Label className="text-gray-300 text-sm">Session ID *</Label>
-              <div className="flex items-start gap-2">
-                <Input value={form.sessionId} onChange={(e) => setForm({ ...form, sessionId: e.target.value })}
-                  placeholder='Gifted~xxxxxx...' className="bg-white/5 border-white/10 text-white font-mono text-xs" required />
-              </div>
+              <Input value={form.sessionId} onChange={(e) => setForm({ ...form, sessionId: e.target.value })}
+                placeholder='Gifted~xxxxxx...' className="bg-white/5 border-white/10 text-white font-mono text-xs" required />
               <p className="text-xs text-gray-500 flex items-start gap-1">
                 <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                Get your session ID by running the bot locally and scanning the QR code. It starts with "Gifted~".
+                Get your session ID by running the bot locally and scanning the QR code. Starts with "Gifted~".
               </p>
             </div>
           )}
@@ -256,13 +309,93 @@ export default function BotCheckout() {
             </div>
           </div>
 
+          {/* Payment method selector */}
+          <div className="space-y-3">
+            <Label className="text-gray-300 text-sm">Payment Method</Label>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Paystack */}
+              <button
+                type="button"
+                onClick={() => setPayMode("paystack")}
+                className={`relative p-4 rounded-xl border text-left transition-all ${
+                  payMode === "paystack"
+                    ? "border-green-500/50 bg-green-500/10"
+                    : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+                }`}
+              >
+                {payMode === "paystack" && (
+                  <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-500" />
+                )}
+                <CreditCard className={`w-5 h-5 mb-2 ${payMode === "paystack" ? "text-green-400" : "text-gray-500"}`} />
+                <p className={`text-sm font-semibold ${payMode === "paystack" ? "text-white" : "text-gray-400"}`}>Paystack</p>
+                <p className="text-xs text-gray-500 mt-0.5">Card / M-Pesa</p>
+              </button>
+
+              {/* Wallet */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!customerToken) {
+                    setLocation("/auth");
+                    return;
+                  }
+                  setPayMode("wallet");
+                }}
+                className={`relative p-4 rounded-xl border text-left transition-all ${
+                  payMode === "wallet"
+                    ? "border-indigo-500/50 bg-indigo-500/10"
+                    : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+                }`}
+              >
+                {payMode === "wallet" && (
+                  <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-indigo-500" />
+                )}
+                <Wallet className={`w-5 h-5 mb-2 ${payMode === "wallet" ? "text-indigo-400" : "text-gray-500"}`} />
+                <p className={`text-sm font-semibold ${payMode === "wallet" ? "text-white" : "text-gray-400"}`}>Wallet</p>
+                {customerToken && walletData ? (
+                  <p className={`text-xs mt-0.5 font-medium ${walletCoversAll ? "text-green-400" : walletCoversPartial ? "text-yellow-400" : "text-red-400"}`}>
+                    KES {walletBalance.toLocaleString()} balance
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-0.5">Sign in to use</p>
+                )}
+              </button>
+            </div>
+
+            {/* Wallet status messages */}
+            {payMode === "wallet" && customerToken && walletData && (
+              <div className={`rounded-xl p-3 text-sm flex items-start gap-2 ${
+                walletCoversAll
+                  ? "bg-green-500/10 border border-green-500/20 text-green-300"
+                  : walletCoversPartial
+                  ? "bg-yellow-500/10 border border-yellow-500/20 text-yellow-300"
+                  : "bg-red-500/10 border border-red-500/20 text-red-300"
+              }`}>
+                {walletCoversAll ? (
+                  <><CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>Your wallet covers the full amount. Payment will be instant!</span></>
+                ) : walletCoversPartial ? (
+                  <><Zap className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>KES {walletBalance} from wallet + KES {walletRemainder} via Paystack (hybrid payment)</span></>
+                ) : (
+                  <><Info className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>Insufficient balance (KES {walletBalance}). Top up your wallet or switch to Paystack.</span></>
+                )}
+              </div>
+            )}
+          </div>
+
           <Button
             type="submit"
-            disabled={step === "processing" || initMutation.isPending || verifyMutation.isPending}
+            disabled={busy || (payMode === "wallet" && walletBalance === 0 && !!customerToken)}
             className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-5 text-base"
           >
-            {step === "processing" || initMutation.isPending || verifyMutation.isPending ? (
+            {busy ? (
               <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Processing...</>
+            ) : payMode === "wallet" && walletCoversAll ? (
+              <><Wallet className="w-4 h-4 mr-2" /> Pay KES {bot.price} with Wallet</>
+            ) : payMode === "wallet" && walletCoversPartial ? (
+              <><Zap className="w-4 h-4 mr-2" /> Pay KES {walletRemainder} via Paystack (KES {walletBalance} from wallet)</>
             ) : (
               <><CreditCard className="w-4 h-4 mr-2" /> Pay KES {bot.price} & Deploy</>
             )}

@@ -272,4 +272,60 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       res.status(500).json({ success: false, error: err.message });
     }
   });
+  // ── Wallet pay: full bot order payment via wallet credits ──────────────────
+  app.post("/api/bots/order/wallet-pay", async (req: any, res) => {
+    try {
+      const { botId, customerName, customerEmail, customerPhone, sessionId, dbUrl, mode, timezone } = req.body;
+      const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+      if (!token) return res.status(401).json({ success: false, error: "Not authenticated" });
+      if (!botId || !customerName || !customerEmail || !customerPhone) {
+        return res.status(400).json({ success: false, error: "Missing required fields" });
+      }
+
+      // Verify customer token
+      const now = dbType === "pg" ? new Date().toISOString() : new Date().toISOString();
+      const sessions = await q(
+        "SELECT customer_id FROM customer_sessions WHERE token = ? AND expires_at > ? LIMIT 1",
+        [token, now]
+      );
+      if (!sessions.length) return res.status(401).json({ success: false, error: "Session expired or invalid" });
+      const customerId = sessions[0].customer_id;
+
+      // Get bot
+      const bots = await q("SELECT * FROM bots WHERE id = ?", [parseInt(botId)]);
+      if (!bots.length) return res.status(404).json({ success: false, error: "Bot not found" });
+      const bot = bots[0];
+
+      // Get wallet balance
+      const wallets = await q("SELECT balance FROM wallets WHERE customer_id = ?", [customerId]);
+      const walletBalance = wallets.length ? wallets[0].balance : 0;
+
+      if (walletBalance < bot.price) {
+        return res.status(400).json({ success: false, error: `Insufficient wallet balance. You have KES ${walletBalance}, need KES ${bot.price}.` });
+      }
+
+      const reference = generateReference();
+
+      // Debit wallet
+      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      await m(`UPDATE wallets SET balance = balance - ?, updated_at = ${updNow} WHERE customer_id = ?`, [bot.price, customerId]);
+
+      // Record wallet transaction
+      await m(
+        "INSERT INTO wallet_transactions (customer_id, type, amount, description, reference) VALUES (?, 'debit', ?, ?, ?)",
+        [customerId, bot.price, `Bot deployment: ${bot.name}`, reference]
+      );
+
+      // Create order as paid
+      await m(
+        "INSERT INTO bot_orders (reference, bot_id, bot_name, customer_name, customer_email, customer_phone, session_id, db_url, mode, timezone, amount, status, paystack_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', 'wallet')",
+        [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", bot.price]
+      );
+
+      res.json({ success: true, reference, order: { reference, status: "paid", botName: bot.name, amount: bot.price } });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
 }

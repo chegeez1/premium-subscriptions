@@ -577,6 +577,42 @@ export default function Store() {
         </section>
       )}
 
+
+      {/* Bot Deployment Banner */}
+      {!search && (
+        <section className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-6">
+          <div
+            className="relative overflow-hidden rounded-2xl border border-emerald-500/20 cursor-pointer group"
+            style={{ background: "linear-gradient(135deg, rgba(16,185,129,.08) 0%, rgba(5,150,105,.04) 100%)" }}
+            onClick={() => setLocation("/bots")}
+            data-testid="bot-deploy-banner"
+          >
+            {/* glow orb */}
+            <div className="absolute -right-12 -top-12 w-48 h-48 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none" />
+            <div className="relative flex flex-col sm:flex-row items-start sm:items-center gap-4 p-5 sm:p-6">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-lg shadow-emerald-500/20 shrink-0">
+                <Bot className="w-6 h-6 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <h3 className="font-bold text-white text-base">WhatsApp Bot Deployment</h3>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">KES 70</span>
+                </div>
+                <p className="text-sm text-gray-400">Deploy Atassa-MD, Gifted-MD & more — fully hosted, always online.</p>
+              </div>
+              <Button
+                size="sm"
+                className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold shrink-0 gap-2 group-hover:shadow-lg group-hover:shadow-emerald-500/20 transition-all"
+                onClick={(e) => { e.stopPropagation(); setLocation("/bots"); }}
+              >
+                <Bot className="w-3.5 h-3.5" />
+                Deploy Bot
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Category Filters */}
       <section className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-6">
         <div className="flex gap-2 flex-wrap">
