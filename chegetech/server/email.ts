@@ -1,6 +1,21 @@
 import { Resend } from "resend";
 import type { AccountEntry } from "@shared/schema";
 import { getResendApiKey, getResendFrom, getResendOtpFrom, getResendSupportFrom } from "./secrets";
+import { getAppConfig } from "./app-config";
+
+function getSiteUrl(): string {
+  const cfg = getAppConfig();
+  if (cfg.customDomain) return `https://${cfg.customDomain}`;
+  if (cfg.appDomain) return `https://${cfg.appDomain}`;
+  return "https://streamvault-premium.site";
+}
+
+function siteButton(label = "Visit Our Store"): string {
+  const url = getSiteUrl();
+  return `<div style="text-align:center;margin:24px 0;">
+    <a href="${url}" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#4169E1 0%,#7C3AED 100%);color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:14px 36px;border-radius:8px;letter-spacing:.3px;">${label}</a>
+  </div>`;
+}
 
 function getResend(): Resend | null {
   const key = getResendApiKey();
@@ -66,10 +81,12 @@ export async function sendAccountEmail(
           <li>Contact support immediately if you face any issues</li>
         </ul>
       </div>
+      ${siteButton()}
       <p style="font-size:13px;color:#888;text-align:center;margin:0;">Need help? Reply to this email or contact our support team.</p>
     </div>
     <div style="background:#f8faff;padding:16px;text-align:center;border-top:1px solid #eee;">
-      <p style="font-size:12px;color:#aaa;margin:0;">&copy; ${new Date().getFullYear()} Premium Subscriptions. All rights reserved.</p>
+      <p style="font-size:12px;color:#aaa;margin:0 0 4px;">&copy; ${new Date().getFullYear()} Premium Subscriptions. All rights reserved.</p>
+      <p style="font-size:12px;margin:0;"><a href="${getSiteUrl()}" style="color:#4169E1;text-decoration:none;">Visit our store</a></p>
     </div>
   </div>
 </body>
@@ -119,7 +136,8 @@ export async function sendSuspensionEmail(
       <p style="font-size:13px;color:#888;margin:0;">If you believe this is a mistake, please contact our support team by replying to this email.</p>
     </div>
     <div style="background:#f8faff;padding:16px;text-align:center;border-top:1px solid #eee;">
-      <p style="font-size:12px;color:#aaa;margin:0;">&copy; ${new Date().getFullYear()} Chege Tech. All rights reserved.</p>
+      <p style="font-size:12px;color:#aaa;margin:0 0 4px;">&copy; ${new Date().getFullYear()} Chege Tech. All rights reserved.</p>
+      <p style="font-size:12px;margin:0;"><a href="${getSiteUrl()}" style="color:#4169E1;text-decoration:none;">streamvault-premium.site</a></p>
     </div>
   </div>
 </body>
@@ -238,6 +256,7 @@ export async function sendPasswordResetEmail(
         <p style="font-size:36px;font-weight:800;letter-spacing:8px;color:#4169E1;margin:0;font-family:monospace;">${code}</p>
       </div>
       <p style="font-size:13px;color:#888;margin:0;">If you didn't request this, you can safely ignore this email.</p>
+      ${siteButton("Go to Store")}
     </div>
     <div style="background:#f8faff;padding:16px;text-align:center;border-top:1px solid #eee;">
       <p style="font-size:12px;color:#aaa;margin:0;">&copy; ${new Date().getFullYear()} Chege Tech. All rights reserved.</p>
