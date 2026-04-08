@@ -2098,7 +2098,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Customer: Me ─────────────────────────────────────────────────────────
   app.get("/api/auth/me", customerAuthMiddleware, (req: any, res) => {
     const c = req.customer;
-    res.json({ success: true, customer: { id: c.id, email: c.email, name: c.name, avatarUrl: c.avatarUrl || null } });
+    // Return the token so the client can rehydrate localStorage from a cookie-only session
+    const tok: string = req.cookies?.customer_token || (req.headers.authorization || "").replace("Bearer ", "") || "";
+    res.json({ success: true, token: tok || undefined, customer: { id: c.id, email: c.email, name: c.name, avatarUrl: c.avatarUrl || null } });
   });
 
   // ─── Customer: Order history ──────────────────────────────────────────────
