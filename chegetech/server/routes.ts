@@ -745,8 +745,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Public: Validate promo code ─────────────────────────────────────────
   app.post("/api/payment/validate-promo", (req, res) => {
-    const { code, planId, amount } = req.body;
-    const result = promoManager.validate(code, planId);
+    const { code, planId, amount, context } = req.body;
+    const result = promoManager.validate(code, planId, context || "subscription");
     if (!result.valid) return res.status(400).json({ success: false, error: result.error });
 
     const promo = result.promo!;
