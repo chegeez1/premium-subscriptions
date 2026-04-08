@@ -2,8 +2,12 @@ services:
   - type: web
     name: premium-subscriptions
     runtime: node
+    region: oregon
     buildCommand: cd chegetech && npm install && npm run build
     startCommand: cd chegetech && NODE_ENV=production node dist/index.cjs
+    healthCheckPath: /
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: 20.18.0
