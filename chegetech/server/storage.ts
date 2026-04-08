@@ -347,7 +347,7 @@ export async function initializeDatabase() {
 
 function initSqlite() {
   dbType = "sqlite";
-  const DB_DIR = path.join(process.cwd(), "data");
+  const DB_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
   const DB_PATH = path.join(DB_DIR, "database.sqlite");
 
   if (!fs.existsSync(DB_DIR)) {
@@ -726,7 +726,8 @@ function persistToJsonFile(key: string, value: string): void {
   const fileName = JSON_PERSIST_MAP[key];
   if (!fileName) return;
   try {
-    fs.writeFileSync(path.join(process.cwd(), fileName), value, "utf8");
+    const dataDir = process.env.DATA_DIR || process.cwd();
+    fs.writeFileSync(path.join(dataDir, fileName), value, "utf8");
   } catch { /* non-fatal */ }
 }
 
@@ -742,7 +743,8 @@ export function dbSettingsGet(key: string): string | null {
     // Fallback: read from committed JSON file if SQLite has no value yet
     const fileName = JSON_PERSIST_MAP[key];
     if (fileName) {
-      const filePath = path.join(process.cwd(), fileName);
+      const dataDir2 = process.env.DATA_DIR || process.cwd();
+      const filePath = path.join(dataDir2, fileName);
       if (fs.existsSync(filePath)) {
         const raw = fs.readFileSync(filePath, "utf8").trim();
         if (raw) return raw;
