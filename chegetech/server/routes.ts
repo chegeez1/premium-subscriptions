@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from "uuid";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { storage, dbSettingsGet, dbSettingsSet, getDb, dbType } from "./storage";
+import { storage, dbSettingsGet, dbSettingsSet, getDb, dbType, runQuery } from "./storage";
 import { accountManager } from "./accounts";
 import { sendAccountEmail, sendPasswordResetEmail, sendSuspensionEmail, sendUnsuspensionEmail, sendBulkEmail } from "./email";
 import { sendTelegramMessage, notifyNewOrder, notifyNewCustomer, notifyPaymentFailed, isTelegramConfigured, notifySupportEscalation } from "./telegram";
@@ -1450,7 +1450,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/admin/transactions", adminAuthMiddleware, requirePermission("dashboard", "transactions"), async (_req, res) => {
     try {
       const txs = await storage.getAllTransactions();
-      res.json({ success: true, transactions: txs });
+      // Merge bot orders as transactions
+      let botTxs: any[] = [];
+      try {
+        const botOrders = await runQuery("SELECT * FROM bot_orders ORDER BY created_at DESC", []);
+        botTxs = botOrders.map((o: any) => ({
+          id: `bot-${o.id}`,
+          reference: o.reference,
+          planId: `bot-${o.bot_id}`,
+          planName: o.bot_name,
+          customerEmail: o.customer_email,
+          customerName: o.customer_name,
+          amount: o.amount,
+          status: (o.status === "paid" || o.status === "deployed" || o.status === "deploying" || o.status === "stopped" || o.status === "suspended") ? "success" : o.status === "failed" ? "failed" : "pending",
+          emailSent: true,
+          accountAssigned: o.status === "deployed",
+          paystackReference: o.paystack_reference,
+          createdAt: o.created_at,
+          updatedAt: o.updated_at,
+          isBotOrder: true,
+          botStatus: o.status,
+          herokuAppUrl: o.render_service_url,
+        }));
+      } catch { /* bot_orders table may not exist yet */ }
+      const allTxs = [...txs, ...botTxs].sort((a: any, b: any) =>
+        new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
+      );
+      res.json({ success: true, transactions: allTxs });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

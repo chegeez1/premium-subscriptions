@@ -12,6 +12,7 @@ export interface PromoCode {
   expiresAt: string | null;
   active: boolean;
   applicablePlans: string[] | null;
+  applicableTo: "subscriptions" | "bots" | "all";
   createdAt: string;
 }
 
@@ -49,7 +50,7 @@ export class PromoManager {
     return this.codes.find((c) => c.code.toUpperCase() === code.toUpperCase());
   }
 
-  validate(code: string, planId?: string): { valid: boolean; error?: string; promo?: PromoCode } {
+  validate(code: string, planId?: string, context?: "subscription" | "bot"): { valid: boolean; error?: string; promo?: PromoCode } {
     this.load();
     const promo = this.codes.find((c) => c.code.toUpperCase() === code.toUpperCase());
     if (!promo) return { valid: false, error: "Invalid promo code" };
@@ -59,6 +60,14 @@ export class PromoManager {
     }
     if (promo.maxUses !== null && promo.uses >= promo.maxUses) {
       return { valid: false, error: "This promo code has reached its usage limit" };
+    }
+    // Check applicableTo restriction
+    const applicableTo = promo.applicableTo || "subscriptions";
+    if (applicableTo === "bots" && context !== "bot") {
+      return { valid: false, error: "This promo code is only valid for bot deployments" };
+    }
+    if (applicableTo === "subscriptions" && context === "bot") {
+      return { valid: false, error: "This promo code is not valid for bot deployments" };
     }
     if (promo.applicablePlans && promo.applicablePlans.length > 0 && planId) {
       if (!promo.applicablePlans.includes(planId)) {
@@ -85,6 +94,7 @@ export class PromoManager {
     const promo: PromoCode = {
       ...data,
       code: data.code.toUpperCase(),
+      applicableTo: data.applicableTo || "subscriptions",
       uses: 0,
       createdAt: new Date().toISOString(),
     };

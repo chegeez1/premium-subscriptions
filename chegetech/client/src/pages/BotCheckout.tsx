@@ -60,6 +60,9 @@ export default function BotCheckout() {
   });
   const [payMode, setPayMode] = useState<PayMode>("paystack");
   const [step, setStep] = useState<"form" | "processing">("form");
+  const [promoCode, setPromoCode] = useState("");
+  const [promoResult, setPromoResult] = useState<{ valid: boolean; discountType?: string; discountValue?: number; label?: string; code?: string; error?: string } | null>(null);
+  const [promoLoading, setPromoLoading] = useState(false);
 
   const { data, isLoading } = useQuery<{ success: boolean; bot: BotItem }>({
     queryKey: [`/api/bots/${botId}`],
@@ -76,8 +79,27 @@ export default function BotCheckout() {
 
   const bot = data?.bot;
   const walletBalance = walletData?.balance ?? 0;
-  const walletCoversAll = bot ? walletBalance >= bot.price : false;
+
+  const discountedPrice = bot && promoResult?.valid
+    ? promoResult.discountType === "percent"
+      ? Math.max(0, Math.round(bot.price * (1 - (promoResult.discountValue ?? 0) / 100)))
+      : Math.max(0, bot.price - (promoResult.discountValue ?? 0))
+    : bot?.price ?? 0;
+
+  const walletCoversAll = bot ? walletBalance >= discountedPrice : false;
   const walletCoversPartial = bot ? walletBalance > 0 && !walletCoversAll : false;
+
+  async function validatePromo() {
+    if (!promoCode.trim()) return;
+    setPromoLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/bots/promo/validate", { code: promoCode.trim() });
+      setPromoResult(res);
+      if (res.valid) toast({ title: `Promo applied: ${res.discountType === "percent" ? res.discountValue + "% off" : "KES " + res.discountValue + " off"}` });
+      else toast({ title: "Invalid promo code", description: res.error, variant: "destructive" });
+    } catch { setPromoResult({ valid: false, error: "Failed to validate" }); }
+    setPromoLoading(false);
+  }
   const walletRemainder = bot ? Math.max(0, bot.price - walletBalance) : 0;
 
   const initMutation = useMutation({
@@ -309,6 +331,30 @@ export default function BotCheckout() {
             </div>
           </div>
 
+          {/* Promo Code */}
+          <div className="space-y-1.5">
+            <Label className="text-gray-300 text-sm">Promo Code (optional)</Label>
+            <div className="flex gap-2">
+              <Input
+                value={promoCode}
+                onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoResult(null); }}
+                placeholder="Enter promo code"
+                className="bg-white/5 border-white/10 text-white uppercase font-mono flex-1"
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); validatePromo(); } }}
+              />
+              <Button type="button" size="sm" variant="outline" onClick={validatePromo} disabled={promoLoading || !promoCode.trim()}
+                className="border-white/10 text-gray-300 hover:text-white shrink-0">
+                {promoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
+              </Button>
+            </div>
+            {promoResult?.valid && (
+              <p className="text-xs text-emerald-400">✓ {promoResult.label || promoResult.code} — {promoResult.discountType === "percent" ? promoResult.discountValue + "% off" : "KES " + promoResult.discountValue + " off"}</p>
+            )}
+            {promoResult && !promoResult.valid && (
+              <p className="text-xs text-red-400">{promoResult.error}</p>
+            )}
+          </div>
+
           {/* Payment method selector */}
           <div className="space-y-3">
             <Label className="text-gray-300 text-sm">Payment Method</Label>
@@ -393,11 +439,11 @@ export default function BotCheckout() {
             {busy ? (
               <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Processing...</>
             ) : payMode === "wallet" && walletCoversAll ? (
-              <><Wallet className="w-4 h-4 mr-2" /> Pay KES {bot.price} with Wallet</>
+              <><Wallet className="w-4 h-4 mr-2" /> Pay KES {discountedPrice} with Wallet</>
             ) : payMode === "wallet" && walletCoversPartial ? (
               <><Zap className="w-4 h-4 mr-2" /> Pay KES {walletRemainder} via Paystack (KES {walletBalance} from wallet)</>
             ) : (
-              <><CreditCard className="w-4 h-4 mr-2" /> Pay KES {bot.price} & Deploy</>
+              <><CreditCard className="w-4 h-4 mr-2" /> Pay KES {discountedPrice} & Deploy</>
             )}
           </Button>
 

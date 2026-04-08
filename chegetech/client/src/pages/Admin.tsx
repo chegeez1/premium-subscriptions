@@ -2732,16 +2732,16 @@ function PromosTab() {
   const codes: any[] = data?.codes ?? [];
 
   const form = useForm({
-    defaultValues: { code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "" },
+    defaultValues: { code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "subscriptions" },
   });
 
   const createMutation = useMutation({
     mutationFn: (d: any) => authFetch("/api/admin/promo-codes", {
       method: "POST",
-      body: JSON.stringify({ ...d, discountValue: parseInt(d.discountValue), maxUses: d.maxUses ? parseInt(d.maxUses) : null, expiresAt: d.expiresAt || null, applicablePlans: null }),
+      body: JSON.stringify({ ...d, discountValue: parseInt(d.discountValue), maxUses: d.maxUses ? parseInt(d.maxUses) : null, expiresAt: d.expiresAt || null, applicablePlans: null, applicableTo: d.applicableTo || "subscriptions" }),
     }),
     onSuccess: (d: any) => {
-      if (d.success) { toast({ title: "Promo code created!" }); form.reset({ code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "" }); setShowAdd(false); refetch(); }
+      if (d.success) { toast({ title: "Promo code created!" }); form.reset({ code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "subscriptions" }); setShowAdd(false); refetch(); }
       else toast({ title: "Error", description: d.error, variant: "destructive" });
     },
   });
@@ -2787,6 +2787,13 @@ function PromosTab() {
               <div><label className="text-xs text-white/50 block mb-1">Discount Value</label><Input {...form.register("discountValue")} type="number" placeholder="20" className={inputCls} /></div>
               <div><label className="text-xs text-white/50 block mb-1">Max Uses (blank = unlimited)</label><Input {...form.register("maxUses")} type="number" placeholder="Unlimited" className={inputCls} /></div>
               <div><label className="text-xs text-white/50 block mb-1">Expires At (optional)</label><Input {...form.register("expiresAt")} type="date" className={inputCls} /></div>
+              <div><label className="text-xs text-white/50 block mb-1">Applies To</label>
+                <select {...form.register("applicableTo")} className="w-full h-9 rounded-lg glass border border-white/10 bg-background/50 text-white/80 px-3 text-sm">
+                  <option value="subscriptions">Subscriptions only</option>
+                  <option value="bots">Bot Deployments only</option>
+                  <option value="all">All services</option>
+                </select>
+              </div>
             </div>
             <div className="flex gap-3">
               <Button type="submit" disabled={createMutation.isPending} className="bg-gradient-to-r from-amber-500 to-orange-600 border-0 text-white">
@@ -2825,6 +2832,11 @@ function PromosTab() {
                       {" · "}Used {promo.uses}/{promo.maxUses ?? "∞"}
                       {promo.expiresAt ? ` · Expires ${new Date(promo.expiresAt).toLocaleDateString()}` : ""}
                     </p>
+                    <div className="flex gap-1 mt-1">
+                      {promo.applicableTo === "bots" && <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded px-1.5 py-0.5">Bots only</span>}
+                      {promo.applicableTo === "all" && <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded px-1.5 py-0.5">All services</span>}
+                      {(!promo.applicableTo || promo.applicableTo === "subscriptions") && <span className="text-xs bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded px-1.5 py-0.5">Subscriptions</span>}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2991,7 +3003,12 @@ function TransactionsTab() {
                   return (
                     <TableRow key={tx.id} className="border-white/5 hover:bg-white/3" data-testid={`tx-row-${tx.id}`}>
                       <TableCell className="font-mono text-xs text-white/30">{tx.reference?.split("-").slice(-1)[0]}</TableCell>
-                      <TableCell className="font-medium text-sm text-white">{tx.planName}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium text-sm text-white">{tx.planName}</span>
+                          {tx.isBotOrder && <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded px-1.5 py-0.5">Bot Deploy</span>}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <div className="text-sm text-white/80">{tx.customerName}</div>
                         <div className="text-xs text-white/30">{tx.customerEmail}</div>
@@ -3003,21 +3020,29 @@ function TransactionsTab() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {tx.emailSent
-                          ? <Badge className="bg-emerald-600/70 text-white border-0 text-xs">Sent</Badge>
-                          : <Badge className="glass border-white/10 text-white/40 text-xs">Pending</Badge>}
+                        {tx.isBotOrder
+                          ? <Badge className={`text-xs border ${tx.botStatus === "deployed" ? "bg-green-500/10 text-green-400 border-green-500/20" : tx.botStatus === "stopped" || tx.botStatus === "suspended" ? "bg-orange-500/10 text-orange-400 border-orange-500/20" : "bg-blue-500/10 text-blue-400 border-blue-500/20"}`}>{tx.botStatus}</Badge>
+                          : tx.emailSent
+                            ? <Badge className="bg-emerald-600/70 text-white border-0 text-xs">Sent</Badge>
+                            : <Badge className="glass border-white/10 text-white/40 text-xs">Pending</Badge>}
                       </TableCell>
                       <TableCell className="text-xs text-white/30">{new Date(tx.createdAt).toLocaleDateString()}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <Button size="sm" variant="ghost"
+                          {!tx.isBotOrder && <Button size="sm" variant="ghost"
                             className="h-7 px-2 text-white/40 hover:text-emerald-400 hover:bg-emerald-500/10"
                             onClick={() => loadDeliveryProof(tx.reference)}
                             title="View delivery proof"
                             data-testid={`button-proof-${tx.id}`}>
                             <ClipboardCheck className="w-3.5 h-3.5" />
-                          </Button>
-                          {tx.status === "success" && (
+                          </Button>}
+                          {tx.isBotOrder && tx.herokuAppUrl && (
+                            <a href={tx.herokuAppUrl} target="_blank" rel="noopener noreferrer"
+                              className="h-7 px-2 flex items-center text-emerald-400/60 hover:text-emerald-400 text-xs">
+                              <Bot className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          {!tx.isBotOrder && tx.status === "success" && (
                             <Button size="sm" variant="ghost"
                               className="h-7 px-2 text-white/40 hover:text-indigo-400 hover:bg-indigo-500/10"
                               onClick={() => resendCredentials(tx.reference)}
@@ -3029,7 +3054,7 @@ function TransactionsTab() {
                                 : <RotateCcw className="w-3.5 h-3.5" />}
                             </Button>
                           )}
-                          {(tx.status === "pending" || tx.status === "failed") && (
+                          {!tx.isBotOrder && (tx.status === "pending" || tx.status === "failed") && (
                             <Button size="sm" variant="ghost"
                               className="h-7 px-2 text-white/40 hover:text-emerald-400 hover:bg-emerald-500/10"
                               onClick={() => manualVerify(tx.reference)}

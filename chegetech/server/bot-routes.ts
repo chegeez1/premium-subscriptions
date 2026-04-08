@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { runQuery, runMutation, dbType } from "./storage";
 import { getPaystackSecretKey, getPaystackPublicKey, getHerokuApiKey } from "./secrets";
+import { promoManager } from "./promo";
 
 function generateReference(): string {
   return `CTB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -138,6 +139,26 @@ async function deployBotToHeroku(
 
 export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
 
+  // ── Public: validate promo code for bots ───────────────────────────────────
+  app.post("/api/bots/promo/validate", async (req, res) => {
+    try {
+      const { code } = req.body;
+      if (!code) return res.status(400).json({ valid: false, error: "Code required" });
+      const result = promoManager.validate(code, undefined, "bot");
+      if (!result.valid) return res.json({ valid: false, error: result.error });
+      const promo = result.promo!;
+      res.json({
+        valid: true,
+        discountType: promo.discountType,
+        discountValue: promo.discountValue,
+        label: promo.label,
+        code: promo.code,
+      });
+    } catch (err: any) {
+      res.status(500).json({ valid: false, error: err.message });
+    }
+  });
+
   // ── Public: list active bots ────────────────────────────────────────────────
   app.get("/api/bots", async (_req, res) => {
     try {
@@ -152,7 +173,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   // ── Public: initialize bot order + Paystack payment ────────────────────────
   app.post("/api/bots/order/initialize", async (req, res) => {
     try {
-      const { botId, customerName, customerEmail, customerPhone, sessionId, dbUrl, mode, timezone } = req.body;
+      const { botId, customerName, customerEmail, customerPhone, sessionId, dbUrl, mode, timezone, promoCode } = req.body;
       if (!botId || !customerName || !customerEmail || !customerPhone) {
         return res.status(400).json({ success: false, error: "Missing required fields" });
       }
@@ -161,9 +182,24 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const bot = bots[0];
       const reference = generateReference();
 
+      // Apply promo discount
+      let finalAmount = bot.price;
+      let promoUsed: string | null = null;
+      if (promoCode) {
+        const pr = promoManager.validate(promoCode, undefined, "bot");
+        if (pr.valid && pr.promo) {
+          if (pr.promo.discountType === "percent") {
+            finalAmount = Math.max(0, Math.round(bot.price * (1 - pr.promo.discountValue / 100)));
+          } else {
+            finalAmount = Math.max(0, bot.price - pr.promo.discountValue);
+          }
+          promoUsed = pr.promo.code;
+        }
+      }
+
       await m(
         "INSERT INTO bot_orders (reference, bot_id, bot_name, customer_name, customer_email, customer_phone, session_id, db_url, mode, timezone, amount, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
-        [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", bot.price]
+        [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", finalAmount]
       );
 
       const secretKey = getPaystackSecretKey();
@@ -180,8 +216,10 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         }),
       });
       const paystackData = await paystackRes.json() as any;
+      if (promoUsed) promoManager.use(promoUsed);
       res.json({
-        success: true, reference, amount: bot.price,
+        success: true, reference, amount: finalAmount, originalAmount: bot.price,
+        promoApplied: promoUsed,
         authorizationUrl: paystackData.data?.authorization_url,
         paystackConfigured: true, paystackPublicKey: getPaystackPublicKey(),
       });
@@ -246,7 +284,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   // ── Wallet pay + auto-deploy ────────────────────────────────────────────────
   app.post("/api/bots/order/wallet-pay", async (req: any, res) => {
     try {
-      const { botId, customerName, customerEmail, customerPhone, sessionId, dbUrl, mode, timezone } = req.body;
+      const { botId, customerName, customerEmail, customerPhone, sessionId, dbUrl, mode, timezone, promoCode: walletPromoCode } = req.body;
       const token = ((req.headers.authorization as string) || "").replace("Bearer ", "").trim();
       if (!token) return res.status(401).json({ success: false, error: "Not authenticated" });
       if (!botId || !customerName || !customerEmail || !customerPhone) {
@@ -268,24 +306,40 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const wallets = await q("SELECT balance FROM wallets WHERE customer_id = ?", [customerId]);
       const walletBalance = wallets.length ? Number(wallets[0].balance) : 0;
 
-      if (walletBalance < bot.price) {
+      // Apply promo discount for wallet pay
+      let walletFinalAmount = bot.price;
+      let walletPromoUsed: string | null = null;
+      if (walletPromoCode) {
+        const pr = promoManager.validate(walletPromoCode, undefined, "bot");
+        if (pr.valid && pr.promo) {
+          if (pr.promo.discountType === "percent") {
+            walletFinalAmount = Math.max(0, Math.round(bot.price * (1 - pr.promo.discountValue / 100)));
+          } else {
+            walletFinalAmount = Math.max(0, bot.price - pr.promo.discountValue);
+          }
+          walletPromoUsed = pr.promo.code;
+        }
+      }
+
+      if (walletBalance < walletFinalAmount) {
         return res.status(400).json({
           success: false,
-          error: `Insufficient wallet balance. You have KES ${walletBalance}, need KES ${bot.price}.`,
+          error: `Insufficient wallet balance. You have KES ${walletBalance}, need KES ${walletFinalAmount}.`,
         });
       }
 
       const reference = generateReference();
       const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
 
-      await m(`UPDATE wallets SET balance = balance - ?, updated_at = ${updNow} WHERE customer_id = ?`, [bot.price, customerId]);
+      await m(`UPDATE wallets SET balance = balance - ?, updated_at = ${updNow} WHERE customer_id = ?`, [walletFinalAmount, customerId]);
       await m(
         "INSERT INTO wallet_transactions (customer_id, type, amount, description, reference) VALUES (?, 'debit', ?, ?, ?)",
-        [customerId, bot.price, `Bot deployment: ${bot.name}`, reference]
+        [customerId, walletFinalAmount, `Bot deployment: ${bot.name}${walletPromoUsed ? ` [${walletPromoUsed}]` : ""}`, reference]
       );
+      if (walletPromoUsed) promoManager.use(walletPromoUsed);
       await m(
         "INSERT INTO bot_orders (reference, bot_id, bot_name, customer_name, customer_email, customer_phone, session_id, db_url, mode, timezone, amount, status, paystack_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', 'wallet')",
-        [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", bot.price]
+        [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", walletFinalAmount]
       );
 
       // Auto-deploy to Heroku (non-blocking)
