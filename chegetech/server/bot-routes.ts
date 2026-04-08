@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { runQuery, runMutation, dbType } from "./storage";
-import { getPaystackSecretKey, getPaystackPublicKey, getRenderApiKey } from "./secrets";
+import { getPaystackSecretKey, getPaystackPublicKey, getHerokuApiKey } from "./secrets";
 
 function generateReference(): string {
   return `CTB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -35,8 +35,8 @@ function fmtOrder(o: Record<string, any>) {
     dbUrl: o.db_url ?? o.dbUrl,
     paystackReference: o.paystack_reference ?? o.paystackReference,
     deploymentNotes: o.deployment_notes ?? o.deploymentNotes,
-    renderServiceId: o.render_service_id ?? o.renderServiceId,
-    renderServiceUrl: o.render_service_url ?? o.renderServiceUrl,
+    herokuAppName: o.render_service_id ?? o.herokuAppName,
+    herokuAppUrl: o.render_service_url ?? o.herokuAppUrl,
     deployedAt: o.deployed_at ?? o.deployedAt,
     createdAt: o.created_at ?? o.createdAt,
     updatedAt: o.updated_at ?? o.updatedAt,
@@ -62,83 +62,76 @@ async function m(template: string, params: any[] = []): Promise<void> {
   return runMutation(query, p);
 }
 
-// ── Auto-deploy bot to Render ─────────────────────────────────────────────────
-async function deployBotToRender(
+// ── Heroku headers helper ─────────────────────────────────────────────────────
+function herokuHeaders(apiKey: string) {
+  return {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    Accept: "application/vnd.heroku+json; version=3",
+  };
+}
+
+// ── Auto-deploy bot to Heroku ─────────────────────────────────────────────────
+async function deployBotToHeroku(
   order: Record<string, any>,
   bot: Record<string, any>
-): Promise<{ serviceId: string; serviceUrl: string } | null> {
-  const apiKey = getRenderApiKey();
+): Promise<{ appName: string; appUrl: string } | null> {
+  const apiKey = getHerokuApiKey();
   if (!apiKey) {
-    console.log("[Bot Deploy] RENDER_API_KEY not set — skipping auto-deploy");
+    console.log("[Bot Deploy] HEROKU_API_KEY not set — skipping auto-deploy");
     return null;
   }
 
   try {
-    // 1. Get Render owner ID
-    const ownersRes = await fetch("https://api.render.com/v1/owners?limit=1", {
-      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-    });
-    const ownersData = await ownersRes.json() as any[];
-    const ownerId = ownersData?.[0]?.owner?.id;
-    if (!ownerId) {
-      console.error("[Bot Deploy] Could not fetch Render owner ID");
-      return null;
-    }
+    // 1. Build app name: gifted-md-abc123 (Heroku max 30 chars, lowercase, no underscores)
+    const slug = bot.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const suffix = Date.now().toString(36).slice(-5);
+    const appName = `${slug}-${suffix}`.slice(0, 30);
 
-    // 2. Build environment variables
-    const envVars: Array<{ key: string; value: string }> = [];
-    if (order.session_id) envVars.push({ key: "SESSION_ID", value: order.session_id });
-    if (order.db_url) envVars.push({ key: "DATABASE_URL", value: order.db_url });
-    envVars.push({ key: "MODE", value: order.mode || "public" });
-    envVars.push({ key: "TZ", value: order.timezone || "Africa/Nairobi" });
-    envVars.push({ key: "BOT_NAME", value: bot.name });
-    envVars.push({ key: "OWNER_NUMBER", value: order.customer_phone || "" });
-
-    // 3. Service name: bot-gifted-md-abc123
-    const slug = bot.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const suffix = Date.now().toString(36);
-    const serviceName = `${slug}-${suffix}`.slice(0, 63);
-
-    // 4. Create background_worker service on Render
-    const createRes = await fetch("https://api.render.com/v1/services", {
+    // 2. Create Heroku app
+    const createRes = await fetch("https://api.heroku.com/apps", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        type: "background_worker",
-        name: serviceName,
-        ownerId,
-        repo: bot.repo_url,
-        branch: "main",
-        autoDeploy: "yes",
-        envVars,
-        serviceDetails: {
-          env: "node",
-          buildCommand: "npm install",
-          startCommand: "npm start",
-          plan: "free",
-        },
-      }),
+      headers: herokuHeaders(apiKey),
+      body: JSON.stringify({ name: appName, region: "us" }),
     });
-
-    const createData = await createRes.json() as any;
-    const service = createData.service ?? createData;
-
-    if (!service?.id) {
-      console.error("[Bot Deploy] Service creation failed:", JSON.stringify(createData).slice(0, 300));
+    const app = await createRes.json() as any;
+    if (!app.name) {
+      console.error("[Bot Deploy] App creation failed:", JSON.stringify(app).slice(0, 300));
       return null;
     }
+    console.log(`[Bot Deploy] Heroku app created: ${app.name}`);
 
-    const serviceUrl = service.serviceDetails?.url
-      ?? `https://${serviceName}.onrender.com`;
+    // 3. Set config vars (env variables)
+    const configVars: Record<string, string> = {};
+    if (order.session_id) configVars["SESSION_ID"] = order.session_id;
+    if (order.db_url) configVars["DATABASE_URL"] = order.db_url;
+    configVars["MODE"] = order.mode || "public";
+    configVars["TZ"] = order.timezone || "Africa/Nairobi";
+    configVars["BOT_NAME"] = bot.name;
+    configVars["OWNER_NUMBER"] = order.customer_phone || "";
 
-    console.log(`[Bot Deploy] Created service: ${service.id} — ${serviceUrl}`);
-    return { serviceId: service.id, serviceUrl };
+    await fetch(`https://api.heroku.com/apps/${app.name}/config-vars`, {
+      method: "PATCH",
+      headers: herokuHeaders(apiKey),
+      body: JSON.stringify(configVars),
+    });
+
+    // 4. Trigger build from GitHub tarball (works for public repos)
+    const tarballUrl = `${bot.repo_url}/archive/refs/heads/main.tar.gz`;
+    const buildRes = await fetch(`https://api.heroku.com/apps/${app.name}/builds`, {
+      method: "POST",
+      headers: herokuHeaders(apiKey),
+      body: JSON.stringify({ source_blob: { url: tarballUrl, version: "main" } }),
+    });
+    const build = await buildRes.json() as any;
+    console.log(`[Bot Deploy] Build triggered: ${build.id ?? "unknown"} — status: ${build.status ?? "queued"}`);
+
+    return {
+      appName: app.name,
+      appUrl: `https://${app.name}.herokuapp.com`,
+    };
   } catch (err: any) {
-    console.error("[Bot Deploy] Unexpected error:", err.message);
+    console.error("[Bot Deploy] Heroku error:", err.message);
     return null;
   }
 }
@@ -207,14 +200,13 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       if (!orders.length) return res.status(404).json({ success: false, error: "Order not found" });
       const order = orders[0];
 
-      // Already processed
       if (order.status !== "pending") return res.json({ success: true, order: fmtOrder(order) });
 
       const secretKey = getPaystackSecretKey();
       let paymentOk = false;
 
       if (!secretKey) {
-        paymentOk = true; // dev mode: skip verification
+        paymentOk = true;
       } else {
         const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
           headers: { Authorization: `Bearer ${secretKey}` },
@@ -226,23 +218,22 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         }
       }
 
-      // Mark as paid first
       const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
       await m(`UPDATE bot_orders SET status = 'paid', paystack_reference = ?, updated_at = ${updNow} WHERE reference = ?`, [reference, reference]);
 
-      // Auto-deploy to Render (non-blocking)
+      // Auto-deploy to Heroku (non-blocking)
       const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
       if (bots.length) {
         const updatedOrder = (await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]))[0];
-        deployBotToRender(updatedOrder, bots[0]).then(async (result) => {
+        deployBotToHeroku(updatedOrder, bots[0]).then(async (result) => {
           if (result) {
             await m(
               `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
-              [result.serviceId, result.serviceUrl, reference]
+              [result.appName, result.appUrl, reference]
             );
-            console.log(`[Bot Deploy] Order ${reference} deployed — ${result.serviceUrl}`);
+            console.log(`[Bot Deploy] Order ${reference} deployed to Heroku — ${result.appUrl}`);
           }
-        }).catch((e) => console.error("[Bot Deploy] Background deploy error:", e.message));
+        }).catch((e) => console.error("[Bot Deploy] Heroku background deploy error:", e.message));
       }
 
       const updated = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
@@ -297,20 +288,20 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", bot.price]
       );
 
-      // Auto-deploy to Render (non-blocking)
+      // Auto-deploy to Heroku (non-blocking)
       const orderForDeploy = {
-        bot_id: bot.id, session_id: sessionId || null, db_url: dbUrl || null,
+        session_id: sessionId || null, db_url: dbUrl || null,
         mode: mode || "public", timezone: timezone || "Africa/Nairobi", customer_phone: customerPhone,
       };
-      deployBotToRender(orderForDeploy, bot).then(async (result) => {
+      deployBotToHeroku(orderForDeploy, bot).then(async (result) => {
         if (result) {
           await m(
             `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
-            [result.serviceId, result.serviceUrl, reference]
+            [result.appName, result.appUrl, reference]
           );
-          console.log(`[Bot Deploy] Wallet order ${reference} deployed — ${result.serviceUrl}`);
+          console.log(`[Bot Deploy] Wallet order ${reference} deployed to Heroku — ${result.appUrl}`);
         }
-      }).catch((e) => console.error("[Bot Deploy] Wallet deploy error:", e.message));
+      }).catch((e) => console.error("[Bot Deploy] Heroku wallet deploy error:", e.message));
 
       const created = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
       res.json({ success: true, reference, order: fmtOrder(created[0]) });
@@ -438,15 +429,15 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const rows = await q("SELECT * FROM bot_orders WHERE id = ?", [id]);
       const order = rows[0];
 
-      // Manual redeploy trigger (admin can force-redeploy)
+      // Manual redeploy trigger
       if (redeploy && order) {
         const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
         if (bots.length) {
-          deployBotToRender(order, bots[0]).then(async (result) => {
+          deployBotToHeroku(order, bots[0]).then(async (result) => {
             if (result) {
               await m(
                 `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE id = ?`,
-                [result.serviceId, result.serviceUrl, id]
+                [result.appName, result.appUrl, id]
               );
             }
           }).catch((e) => console.error("[Bot Deploy] Admin redeploy error:", e.message));
@@ -459,24 +450,30 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     }
   });
 
-  // ── Admin: get Render deploy status ────────────────────────────────────────
-  app.get("/api/admin/bot-orders/:orderId/render-status", adminAuthMiddleware, async (req, res) => {
+  // ── Admin: check Heroku app status ──────────────────────────────────────────
+  app.get("/api/admin/bot-orders/:orderId/heroku-status", adminAuthMiddleware, async (req, res) => {
     try {
       const id = parseInt(req.params.orderId);
       const rows = await q("SELECT * FROM bot_orders WHERE id = ?", [id]);
       if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
       const order = rows[0];
-      if (!order.render_service_id) {
-        return res.json({ success: true, renderConfigured: false, message: "Not yet deployed to Render" });
-      }
-      const apiKey = getRenderApiKey();
-      if (!apiKey) return res.json({ success: true, renderConfigured: false, message: "RENDER_API_KEY not set" });
+      const appName = order.render_service_id;
+      if (!appName) return res.json({ success: true, deployed: false, message: "Not yet deployed to Heroku" });
 
-      const svcRes = await fetch(`https://api.render.com/v1/services/${order.render_service_id}`, {
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      const apiKey = getHerokuApiKey();
+      if (!apiKey) return res.json({ success: true, deployed: false, message: "HEROKU_API_KEY not set" });
+
+      const [appRes, buildRes] = await Promise.all([
+        fetch(`https://api.heroku.com/apps/${appName}`, { headers: herokuHeaders(apiKey) }),
+        fetch(`https://api.heroku.com/apps/${appName}/builds?limit=1`, { headers: herokuHeaders(apiKey) }),
+      ]);
+      const [appData, buildsData] = await Promise.all([appRes.json(), buildRes.json()]) as [any, any];
+      res.json({
+        success: true, deployed: true,
+        app: appData,
+        latestBuild: Array.isArray(buildsData) ? buildsData[0] : buildsData,
+        appUrl: order.render_service_url,
       });
-      const svcData = await svcRes.json() as any;
-      res.json({ success: true, renderConfigured: true, service: svcData });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

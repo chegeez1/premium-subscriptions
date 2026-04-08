@@ -81,6 +81,6 @@ export function getSecretsStatus() {
   };
 }
 
-export function getRenderApiKey(): string {
-  return process.env.RENDER_API_KEY || "";
+export function getHerokuApiKey(): string {
+  return process.env.HEROKU_API_KEY || "";
 }
