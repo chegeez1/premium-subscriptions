@@ -274,6 +274,41 @@ export async function initializeDatabase() {
           created_at TEXT DEFAULT (NOW()::text),
           updated_at TEXT DEFAULT (NOW()::text)
         );
+
+        CREATE TABLE IF NOT EXISTS bots (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          repo_url TEXT NOT NULL,
+          image_url TEXT,
+          price INTEGER NOT NULL DEFAULT 70,
+          features TEXT NOT NULL DEFAULT '[]',
+          requires_session_id BOOLEAN DEFAULT true,
+          requires_db_url BOOLEAN DEFAULT false,
+          active BOOLEAN DEFAULT true,
+          category TEXT DEFAULT 'general',
+          created_at TEXT DEFAULT (NOW()::text)
+        );
+
+        CREATE TABLE IF NOT EXISTS bot_orders (
+          id SERIAL PRIMARY KEY,
+          reference TEXT UNIQUE NOT NULL,
+          bot_id INTEGER NOT NULL,
+          bot_name TEXT NOT NULL,
+          customer_name TEXT NOT NULL,
+          customer_email TEXT NOT NULL,
+          customer_phone TEXT NOT NULL,
+          session_id TEXT,
+          db_url TEXT,
+          mode TEXT DEFAULT 'public',
+          timezone TEXT DEFAULT 'Africa/Nairobi',
+          amount INTEGER NOT NULL,
+          status TEXT DEFAULT 'pending',
+          paystack_reference TEXT,
+          deployment_notes TEXT,
+          created_at TEXT DEFAULT (NOW()::text),
+          updated_at TEXT DEFAULT (NOW()::text)
+        );
       `);
 
       // Migrate: add avatar_url column if missing (safe for existing PG DBs)
@@ -553,6 +588,41 @@ function initSqlite() {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS bots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      repo_url TEXT NOT NULL,
+      image_url TEXT,
+      price INTEGER NOT NULL DEFAULT 70,
+      features TEXT NOT NULL DEFAULT '[]',
+      requires_session_id INTEGER DEFAULT 1,
+      requires_db_url INTEGER DEFAULT 0,
+      active INTEGER DEFAULT 1,
+      category TEXT DEFAULT 'general',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS bot_orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reference TEXT UNIQUE NOT NULL,
+      bot_id INTEGER NOT NULL,
+      bot_name TEXT NOT NULL,
+      customer_name TEXT NOT NULL,
+      customer_email TEXT NOT NULL,
+      customer_phone TEXT NOT NULL,
+      session_id TEXT,
+      db_url TEXT,
+      mode TEXT DEFAULT 'public',
+      timezone TEXT DEFAULT 'Africa/Nairobi',
+      amount INTEGER NOT NULL,
+      status TEXT DEFAULT 'pending',
+      paystack_reference TEXT,
+      deployment_notes TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
   // Migrate: add avatar_url column if missing (safe for existing DBs)
   try { sqliteInstance!.prepare("ALTER TABLE customers ADD COLUMN avatar_url TEXT").run(); } catch {}
@@ -567,6 +637,33 @@ function initSqlite() {
   // Migrate: add reseller_id to transactions
   try { sqliteInstance!.prepare("ALTER TABLE transactions ADD COLUMN reseller_id INTEGER").run(); } catch {}
   console.log("[db] Connected to SQLite");
+}
+
+export async function runQuery(query: string, params: any[] = []): Promise<any[]> {
+  if (dbType === "pg" && pgPool) {
+    const result = await pgPool.query(query, params);
+    return result.rows;
+  } else if (sqliteInstance) {
+    try {
+      const stmt = sqliteInstance.prepare(query);
+      const rows = params.length > 0 ? stmt.all(...params) : stmt.all();
+      return rows;
+    } catch (e: any) {
+      throw e;
+    }
+  }
+  throw new Error("No database connection available");
+}
+
+export async function runMutation(query: string, params: any[] = []): Promise<void> {
+  if (dbType === "pg" && pgPool) {
+    await pgPool.query(query, params);
+  } else if (sqliteInstance) {
+    const stmt = sqliteInstance.prepare(query);
+    params.length > 0 ? stmt.run(...params) : stmt.run();
+  } else {
+    throw new Error("No database connection available");
+  }
 }
 
 async function migrateJsonToDbAsync() {
