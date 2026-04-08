@@ -104,6 +104,7 @@ export class PromoManager {
     if (existing) throw new Error("Promo code already exists");
 
     const promo: PromoCode = {
+      active: true,           // always active by default
       ...data,
       code: data.code.toUpperCase(),
       applicableTo: data.applicableTo || "all",
