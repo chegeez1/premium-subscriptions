@@ -156,3 +156,45 @@ export interface AccountEntry {
 export interface AccountsData {
   [planId: string]: AccountEntry[];
 }
+
+// ─── WhatsApp Bot Deployment ─────────────────────────────────────────────────
+
+export const bots = sqliteTable("bots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  repoUrl: text("repo_url").notNull(),
+  imageUrl: text("image_url"),
+  price: integer("price").notNull().default(70),
+  features: text("features").notNull().default("[]"),
+  requiresSessionId: integer("requires_session_id", { mode: "boolean" }).default(true),
+  requiresDbUrl: integer("requires_db_url", { mode: "boolean" }).default(false),
+  active: integer("active", { mode: "boolean" }).default(true),
+  category: text("category").default("general"),
+  createdAt: text("created_at").default(sql`(datetime('now'))`),
+});
+
+export const botOrders = sqliteTable("bot_orders", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  reference: text("reference").unique().notNull(),
+  botId: integer("bot_id").notNull(),
+  botName: text("bot_name").notNull(),
+  customerName: text("customer_name").notNull(),
+  customerEmail: text("customer_email").notNull(),
+  customerPhone: text("customer_phone").notNull(),
+  sessionId: text("session_id"),
+  dbUrl: text("db_url"),
+  mode: text("mode").default("public"),
+  timezone: text("timezone").default("Africa/Nairobi"),
+  amount: integer("amount").notNull(),
+  status: text("status").default("pending"),
+  paystackReference: text("paystack_reference"),
+  deploymentNotes: text("deployment_notes"),
+  createdAt: text("created_at").default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").default(sql`(datetime('now'))`),
+});
+
+export type Bot = typeof bots.$inferSelect;
+export type InsertBot = typeof bots.$inferInsert;
+export type BotOrder = typeof botOrders.$inferSelect;
+export type InsertBotOrder = typeof botOrders.$inferInsert;

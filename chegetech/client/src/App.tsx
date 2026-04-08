@@ -15,11 +15,14 @@ import NotFound from "@/pages/not-found";
 import Docs from "@/pages/Docs";
 import Privacy from "@/pages/Privacy";
 import Track from "@/pages/Track";
+import BotStore from "@/pages/BotStore";
+import BotCheckout from "@/pages/BotCheckout";
+import BotOrder from "@/pages/BotOrder";
 import ChatWidget from "@/components/ChatWidget";
 import CookieConsent from "@/components/CookieConsent";
 
-const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy", "/track"];
-const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track"];
+const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy", "/track", "/bots"];
+const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots"];
 const NO_COOKIE_PATHS = ["/admin"];
 
 function Router() {
@@ -62,6 +65,9 @@ function Router() {
         <Route path="/track" component={Track} />
         <Route path="/docs" component={Docs} />
         <Route path="/privacy" component={Privacy} />
+        <Route path="/bots" component={BotStore} />
+        <Route path="/bots/checkout/:botId" component={BotCheckout} />
+        <Route path="/bots/order/:reference" component={BotOrder} />
         <Route component={NotFound} />
       </Switch>
       {showChat && <ChatWidget />}

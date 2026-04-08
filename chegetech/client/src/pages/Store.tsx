@@ -6,7 +6,7 @@ import {
   Play, Music, Briefcase, Shield, Gamepad2, Search, Star,
   CheckCircle, Zap, ShoppingCart, X, ChevronRight, Package, Bell,
   Sparkles, Plus, Minus, Trash2, LogIn, Sun, Moon,
-  Wallet, Eye, EyeOff,
+  Wallet, Eye, EyeOff, Bot,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -363,6 +363,18 @@ export default function Store() {
                 </span>
               )}
             </button>
+
+            {/* Bot Store Link */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setLocation("/bots")}
+              data-testid="link-bot-store"
+              className={`${isLight ? "border-slate-200 text-slate-700 hover:bg-slate-100" : "glass border-green-500/30 text-green-400 hover:text-green-300 hover:border-green-500/50"}`}
+            >
+              <Bot className="w-3.5 h-3.5 mr-1" />
+              <span className="hidden sm:inline">Bot Store</span>
+            </Button>
 
             {/* Auth / Dashboard */}
             {customer ? (
