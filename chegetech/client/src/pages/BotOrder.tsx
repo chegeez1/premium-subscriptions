@@ -15,6 +15,9 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any; b
   deploying: { label: "Deploying Bot", color: "text-purple-400", icon: Loader2, bg: "bg-purple-500/10 border-purple-500/20" },
   deployed: { label: "Bot Deployed!", color: "text-green-400", icon: Zap, bg: "bg-green-500/10 border-green-500/20" },
   failed: { label: "Deployment Failed", color: "text-red-400", icon: XCircle, bg: "bg-red-500/10 border-red-500/20" },
+  deploy_failed: { label: "Deployment Failed", color: "text-red-400", icon: XCircle, bg: "bg-red-500/10 border-red-500/20" },
+  stopped: { label: "Bot Stopped", color: "text-orange-400", icon: XCircle, bg: "bg-orange-500/10 border-orange-500/20" },
+  suspended: { label: "Bot Suspended", color: "text-orange-400", icon: XCircle, bg: "bg-orange-500/10 border-orange-500/20" },
 };
 
 const STATUS_STEPS = ["pending", "paid", "deploying", "deployed"];
@@ -25,10 +28,11 @@ export default function BotOrder() {
 
   const { data, isLoading } = useQuery<{ success: boolean; order: BotOrderData }>({
     queryKey: [`/api/bots/order/${reference}`],
-    refetchInterval: 30000,
+    refetchInterval: 10000,
   });
 
   const order = data?.order;
+  const isFailedState = order?.status === "failed" || order?.status === "deploy_failed";
   const statusCfg = order ? (STATUS_CONFIG[order.status] || STATUS_CONFIG.pending) : null;
   const StatusIcon = statusCfg?.icon;
 
@@ -74,11 +78,14 @@ export default function BotOrder() {
             {order.status === "deploying" && "Your bot is being deployed. This usually takes a few minutes."}
             {order.status === "deployed" && "Your bot is live and running on our servers!"}
             {order.status === "failed" && "There was an issue deploying your bot. Please contact support."}
+            {order.status === "deploy_failed" && "Deployment to Heroku failed. See the error details below."}
+            {order.status === "stopped" && "Your bot has been stopped by admin."}
+            {order.status === "suspended" && "Your bot has been suspended."}
           </p>
         </div>
 
         {/* Progress steps */}
-        {order.status !== "failed" && (
+        {!isFailedState && order.status !== "stopped" && order.status !== "suspended" && (
           <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-5 mb-6">
             <div className="flex items-center justify-between">
               {STATUS_STEPS.map((step, i) => {
@@ -142,8 +149,11 @@ export default function BotOrder() {
 
           {order.deploymentNotes && (
             <div className="pt-3 border-t border-white/5">
-              <p className="text-xs text-gray-500 mb-1">Admin Notes</p>
-              <p className="text-sm text-gray-300">{order.deploymentNotes}</p>
+              <p className="text-xs text-gray-500 mb-1">{isFailedState ? "Error Details" : "Admin Notes"}</p>
+              <p className={`text-sm ${isFailedState ? "text-red-400" : "text-gray-300"}`}>{order.deploymentNotes}</p>
+              {isFailedState && (
+                <p className="text-xs text-gray-500 mt-2">Please contact support with your order reference: <span className="text-gray-300">{order.reference}</span></p>
+              )}
             </div>
           )}
         </div>
