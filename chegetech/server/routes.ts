@@ -783,7 +783,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let finalAmount = plan.price;
       let promoUsed: string | null = null;
       if (promoCode) {
-        const promoResult = promoManager.validate(promoCode, planId);
+        const promoResult = promoManager.validate(promoCode, planId, "subscription");
         if (promoResult.valid && promoResult.promo) {
           const p = promoResult.promo;
           if (p.discountType === "percent") {
@@ -954,7 +954,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Apply promo if any
       let finalAmount = plan.price;
       if (promoCode) {
-        const pr = promoManager.validate(promoCode, planId);
+        const pr = promoManager.validate(promoCode, planId, "subscription");
         if (pr.valid && pr.promo) {
           const p = pr.promo;
           finalAmount = p.discountType === "percent"
