@@ -5,8 +5,14 @@ services:
     buildCommand: cd chegetech && npm install && npm run build
     startCommand: cd chegetech && NODE_ENV=production node dist/index.cjs
     healthCheckPath: /
+    disk:
+      name: app-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
         value: 20.18.0
+      - key: DATA_DIR
+        value: /data
