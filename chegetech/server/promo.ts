@@ -65,7 +65,7 @@ export class PromoManager {
     this.load();
     const promo = this.codes.find((c) => c.code.toUpperCase() === code.toUpperCase());
     if (!promo) return { valid: false, error: "Invalid promo code" };
-    if (!promo.active) return { valid: false, error: "This promo code is inactive" };
+    if (promo.active === false) return { valid: false, error: "This promo code is inactive" };
     if (promo.expiresAt && new Date(promo.expiresAt) < new Date()) {
       return { valid: false, error: "This promo code has expired" };
     }
