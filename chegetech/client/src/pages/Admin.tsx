@@ -2793,7 +2793,7 @@ function PromosTab() {
   const createMutation = useMutation({
     mutationFn: (d: any) => authFetch("/api/admin/promo-codes", {
       method: "POST",
-      body: JSON.stringify({ ...d, discountValue: parseInt(d.discountValue), maxUses: d.maxUses ? parseInt(d.maxUses) : null, expiresAt: d.expiresAt || null, applicablePlans: Array.isArray(d.applicablePlans) && d.applicablePlans.length > 0 ? d.applicablePlans : null, applicableTo: d.applicableTo || "all" }),
+      body: JSON.stringify({ ...d, active: true, discountValue: parseInt(d.discountValue), maxUses: d.maxUses ? parseInt(d.maxUses) : null, expiresAt: d.expiresAt || null, applicablePlans: Array.isArray(d.applicablePlans) && d.applicablePlans.length > 0 ? d.applicablePlans : null, applicableTo: d.applicableTo || "all" }),
     }),
     onSuccess: (d: any) => {
       if (d.success) { toast({ title: "Promo code created!" }); form.reset({ code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "all", applicablePlans: [] }); setShowAdd(false); refetch(); }
@@ -2804,12 +2804,19 @@ function PromosTab() {
   const toggleMutation = useMutation({
     mutationFn: ({ code, active }: { code: string; active: boolean }) =>
       authFetch(`/api/admin/promo-codes/${code}`, { method: "PUT", body: JSON.stringify({ active }) }),
-    onSuccess: () => refetch(),
+    onSuccess: (d: any) => {
+      if (d.success) refetch();
+      else toast({ title: "Failed to update promo code", description: d.error || "Unknown error", variant: "destructive" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Network error", description: err.message || "Could not update promo code", variant: "destructive" });
+      refetch(); // revert switch to server state
+    },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (code: string) => authFetch(`/api/admin/promo-codes/${code}`, { method: "DELETE" }),
-    onSuccess: () => { toast({ title: "Promo code deleted" }); refetch(); },
+    onSuccess: (d: any) => { if (d.success) { toast({ title: "Promo code deleted" }); refetch(); } else toast({ title: "Delete failed", description: d.error, variant: "destructive" }); },
   });
 
   const inputCls = "glass border-white/10 bg-white/5 text-white placeholder:text-white/25";
