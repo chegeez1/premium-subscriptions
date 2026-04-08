@@ -80,3 +80,7 @@ export function getSecretsStatus() {
     adminEmail,
   };
 }
+
+export function getRenderApiKey(): string {
+  return process.env.RENDER_API_KEY || "";
+}

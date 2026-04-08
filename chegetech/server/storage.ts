@@ -319,6 +319,9 @@ export async function initializeDatabase() {
       await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS ip TEXT");
       await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS user_agent TEXT");
       await pgPool.query("ALTER TABLE customer_sessions ADD COLUMN IF NOT EXISTS device_name TEXT");
+      await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS render_service_id TEXT");
+      await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS render_service_url TEXT");
+      await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS deployed_at TEXT");
       // Migrate: add reseller_id to transactions
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
 
@@ -636,6 +639,10 @@ function initSqlite() {
   try { sqliteInstance!.prepare("ALTER TABLE customer_sessions ADD COLUMN device_name TEXT").run(); } catch {}
   // Migrate: add reseller_id to transactions
   try { sqliteInstance!.prepare("ALTER TABLE transactions ADD COLUMN reseller_id INTEGER").run(); } catch {}
+
+  try { sqliteInstance!.prepare("ALTER TABLE bot_orders ADD COLUMN render_service_id TEXT").run(); } catch {}
+  try { sqliteInstance!.prepare("ALTER TABLE bot_orders ADD COLUMN render_service_url TEXT").run(); } catch {}
+  try { sqliteInstance!.prepare("ALTER TABLE bot_orders ADD COLUMN deployed_at TEXT").run(); } catch {}
   console.log("[db] Connected to SQLite");
 }
 
