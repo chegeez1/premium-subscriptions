@@ -62,7 +62,7 @@ export class PromoManager {
       return { valid: false, error: "This promo code has reached its usage limit" };
     }
     // Check applicableTo restriction
-    const applicableTo = promo.applicableTo || "subscriptions";
+    const applicableTo = promo.applicableTo || "all";
     if (applicableTo === "bots" && context !== "bot") {
       return { valid: false, error: "This promo code is only valid for bot deployments" };
     }
@@ -94,7 +94,7 @@ export class PromoManager {
     const promo: PromoCode = {
       ...data,
       code: data.code.toUpperCase(),
-      applicableTo: data.applicableTo || "subscriptions",
+      applicableTo: data.applicableTo || "all",
       uses: 0,
       createdAt: new Date().toISOString(),
     };
