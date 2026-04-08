@@ -1,4 +1,15 @@
 import { dbSettingsGet, dbSettingsSet } from "./storage";
+import { subscriptionPlans } from "./plans";
+
+// Build a flat map of planId → plan name for error messages
+function getPlanName(planId: string): string {
+  for (const cat of Object.values(subscriptionPlans)) {
+    if (cat.plans && planId in cat.plans) {
+      return (cat.plans as any)[planId].name;
+    }
+  }
+  return planId;
+}
 
 const SETTINGS_KEY = "promo_codes";
 
@@ -69,9 +80,10 @@ export class PromoManager {
     if (applicableTo === "subscriptions" && context === "bot") {
       return { valid: false, error: "This promo code is not valid for bot deployments" };
     }
-    if (promo.applicablePlans && promo.applicablePlans.length > 0 && planId) {
-      if (!promo.applicablePlans.includes(planId)) {
-        return { valid: false, error: "This promo code is not valid for this plan" };
+    if (promo.applicablePlans && promo.applicablePlans.length > 0) {
+      if (planId && !promo.applicablePlans.includes(planId)) {
+        const names = promo.applicablePlans.map(getPlanName).join(", ");
+        return { valid: false, error: `This promo code is only valid for: ${names}` };
       }
     }
     return { valid: true, promo };
