@@ -118,22 +118,44 @@ async function deployBotToHeroku(
     });
 
     // 4. Trigger build from GitHub tarball (works for public repos)
-    const tarballUrl = `${bot.repo_url}/archive/refs/heads/main.tar.gz`;
-    const buildRes = await fetch(`https://api.heroku.com/apps/${app.name}/builds`, {
+    // Try main branch first, fall back to master
+    const repoBase = bot.repo_url.replace(/\.git$/, "").replace(/\/$/, "");
+    let tarballUrl = `${repoBase}/archive/refs/heads/main.tar.gz`;
+    // Try main branch, fall back to master if build fails
+    let buildRes = await fetch(`https://api.heroku.com/apps/${app.name}/builds`, {
       method: "POST",
       headers: herokuHeaders(apiKey),
       body: JSON.stringify({ source_blob: { url: tarballUrl, version: "main" } }),
     });
-    const build = await buildRes.json() as any;
-    console.log(`[Bot Deploy] Build triggered: ${build.id ?? "unknown"} — status: ${build.status ?? "queued"}`);
+    let build = await buildRes.json() as any;
+
+    // If main branch failed (404 tarball), try master
+    if (build.id && build.status === "failed") {
+      console.log("[Bot Deploy] main branch build failed, trying master...");
+      tarballUrl = `${repoBase}/archive/refs/heads/master.tar.gz`;
+      buildRes = await fetch(`https://api.heroku.com/apps/${app.name}/builds`, {
+        method: "POST",
+        headers: herokuHeaders(apiKey),
+        body: JSON.stringify({ source_blob: { url: tarballUrl, version: "master" } }),
+      });
+      build = await buildRes.json() as any;
+    }
+
+    if (build.id) {
+      console.log(`[Bot Deploy] ✓ Build triggered: ${build.id} status=${build.status ?? "pending"} app=${app.name}`);
+    } else {
+      const errMsg = JSON.stringify(build).slice(0, 300);
+      console.error(`[Bot Deploy] Build trigger failed: ${errMsg}`);
+      throw new Error("Build trigger failed: " + errMsg);
+    }
 
     return {
       appName: app.name,
       appUrl: `https://${app.name}.herokuapp.com`,
     };
   } catch (err: any) {
-    console.error("[Bot Deploy] Heroku error:", err.message);
-    return null;
+    console.error("[Bot Deploy] ✗ Heroku error:", err.message);
+    throw err; // Re-throw so callers can set deploy_failed status
   }
 }
 
@@ -264,14 +286,18 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       if (bots.length) {
         const updatedOrder = (await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]))[0];
         deployBotToHeroku(updatedOrder, bots[0]).then(async (result) => {
-          if (result) {
-            await m(
-              `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
-              [result.appName, result.appUrl, reference]
-            );
-            console.log(`[Bot Deploy] Order ${reference} deployed to Heroku — ${result.appUrl}`);
-          }
-        }).catch((e) => console.error("[Bot Deploy] Heroku background deploy error:", e.message));
+          await m(
+            `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
+            [result.appName, result.appUrl, reference]
+          );
+          console.log(`[Bot Deploy] ✓ Order ${reference} deployed — ${result.appUrl}`);
+        }).catch(async (e: any) => {
+          console.error("[Bot Deploy] ✗ Deploy failed for order", reference, ":", e.message);
+          await m(
+            `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE reference = ?`,
+            ["Heroku deploy failed: " + e.message.slice(0, 200), reference]
+          );
+        });
       }
 
       const updated = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
@@ -348,14 +374,18 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         mode: mode || "public", timezone: timezone || "Africa/Nairobi", customer_phone: customerPhone,
       };
       deployBotToHeroku(orderForDeploy, bot).then(async (result) => {
-        if (result) {
-          await m(
-            `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
-            [result.appName, result.appUrl, reference]
-          );
-          console.log(`[Bot Deploy] Wallet order ${reference} deployed to Heroku — ${result.appUrl}`);
-        }
-      }).catch((e) => console.error("[Bot Deploy] Heroku wallet deploy error:", e.message));
+        await m(
+          `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
+          [result.appName, result.appUrl, reference]
+        );
+        console.log(`[Bot Deploy] ✓ Wallet order ${reference} deployed — ${result.appUrl}`);
+      }).catch(async (e: any) => {
+        console.error("[Bot Deploy] ✗ Wallet deploy failed for order", reference, ":", e.message);
+        await m(
+          `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE reference = ?`,
+          ["Heroku deploy failed: " + e.message.slice(0, 200), reference]
+        );
+      });
 
       const created = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
       res.json({ success: true, reference, order: fmtOrder(created[0]) });
@@ -488,13 +518,18 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
         if (bots.length) {
           deployBotToHeroku(order, bots[0]).then(async (result) => {
-            if (result) {
-              await m(
-                `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE id = ?`,
-                [result.appName, result.appUrl, id]
-              );
-            }
-          }).catch((e) => console.error("[Bot Deploy] Admin redeploy error:", e.message));
+            await m(
+              `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE id = ?`,
+              [result.appName, result.appUrl, id]
+            );
+            console.log(`[Bot Deploy] ✓ Admin redeploy id=${id} — ${result.appUrl}`);
+          }).catch(async (e: any) => {
+            console.error("[Bot Deploy] ✗ Admin redeploy failed id=", id, ":", e.message);
+            await m(
+              `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE id = ?`,
+              ["Heroku redeploy failed: " + e.message.slice(0, 200), id]
+            );
+          });
         }
       }
 
