@@ -2738,16 +2738,16 @@ function PromosTab() {
   const codes: any[] = data?.codes ?? [];
 
   const form = useForm({
-    defaultValues: { code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "subscriptions" },
+    defaultValues: { code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "all", applicablePlans: "" },
   });
 
   const createMutation = useMutation({
     mutationFn: (d: any) => authFetch("/api/admin/promo-codes", {
       method: "POST",
-      body: JSON.stringify({ ...d, discountValue: parseInt(d.discountValue), maxUses: d.maxUses ? parseInt(d.maxUses) : null, expiresAt: d.expiresAt || null, applicablePlans: null, applicableTo: d.applicableTo || "subscriptions" }),
+      body: JSON.stringify({ ...d, discountValue: parseInt(d.discountValue), maxUses: d.maxUses ? parseInt(d.maxUses) : null, expiresAt: d.expiresAt || null, applicablePlans: d.applicablePlans ? d.applicablePlans.split(",").map((s: string) => s.trim()).filter(Boolean) : null, applicableTo: d.applicableTo || "all" }),
     }),
     onSuccess: (d: any) => {
-      if (d.success) { toast({ title: "Promo code created!" }); form.reset({ code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "subscriptions" }); setShowAdd(false); refetch(); }
+      if (d.success) { toast({ title: "Promo code created!" }); form.reset({ code: "", label: "", discountType: "percent", discountValue: "", maxUses: "", expiresAt: "", applicableTo: "all", applicablePlans: "" }); setShowAdd(false); refetch(); }
       else toast({ title: "Error", description: d.error, variant: "destructive" });
     },
   });
@@ -2792,6 +2792,7 @@ function PromosTab() {
               </div>
               <div><label className="text-xs text-white/50 block mb-1">Discount Value</label><Input {...form.register("discountValue")} type="number" placeholder="20" className={inputCls} /></div>
               <div><label className="text-xs text-white/50 block mb-1">Max Uses (blank = unlimited)</label><Input {...form.register("maxUses")} type="number" placeholder="Unlimited" className={inputCls} /></div>
+              <div><label className="text-xs text-white/50 block mb-1">Restrict to Plan IDs (comma-separated, blank = any plan)</label><Input {...form.register("applicablePlans")} placeholder="e.g. basic,pro,enterprise" className={inputCls} /></div>
               <div><label className="text-xs text-white/50 block mb-1">Expires At (optional)</label><Input {...form.register("expiresAt")} type="date" className={inputCls} /></div>
               <div><label className="text-xs text-white/50 block mb-1">Applies To</label>
                 <select {...form.register("applicableTo")} className="w-full h-9 rounded-lg glass border border-white/10 bg-background/50 text-white/80 px-3 text-sm">
@@ -2841,7 +2842,8 @@ function PromosTab() {
                     <div className="flex gap-1 mt-1">
                       {promo.applicableTo === "bots" && <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded px-1.5 py-0.5">Bots only</span>}
                       {promo.applicableTo === "all" && <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded px-1.5 py-0.5">All services</span>}
-                      {(!promo.applicableTo || promo.applicableTo === "subscriptions") && <span className="text-xs bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded px-1.5 py-0.5">Subscriptions</span>}
+                      {(!promo.applicableTo || promo.applicableTo === "subscriptions") && <span className="text-xs bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded px-1.5 py-0.5">Subscriptions only</span>}
+                      {promo.applicablePlans && promo.applicablePlans.length > 0 && <span className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded px-1.5 py-0.5">Plans: {promo.applicablePlans.join(", ")}</span>}
                     </div>
                   </div>
                 </div>
