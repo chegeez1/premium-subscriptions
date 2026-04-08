@@ -641,6 +641,17 @@ export default function Store() {
               </Button>
             );
           })}
+          {/* WhatsApp Bots tab */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setLocation("/bots")}
+            data-testid="filter-bots"
+            className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 hover:border-emerald-400/60 bg-emerald-500/5 transition-all"
+          >
+            <Bot className="w-3.5 h-3.5 mr-1.5" />
+            WhatsApp Bots
+          </Button>
         </div>
       </section>
 
