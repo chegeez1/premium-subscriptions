@@ -10,19 +10,20 @@ function parseFeatures(f: string | null | undefined): string[] {
   try { return JSON.parse(f ?? "[]"); } catch { return []; }
 }
 
-function fmtBot(b: any) {
+function fmtBot(b: Record<string, any>) {
   return {
     ...b,
     features: parseFeatures(b.features),
-    requiresSessionId: dbType === "pg" ? !!b.requires_session_id : !!b.requires_session_id,
-    requiresDbUrl: dbType === "pg" ? !!b.requires_db_url : !!b.requires_db_url,
+    requiresSessionId: !!b.requires_session_id,
+    requiresDbUrl: !!b.requires_db_url,
+    active: !!b.active,
     repoUrl: b.repo_url ?? b.repoUrl,
     imageUrl: b.image_url ?? b.imageUrl,
     createdAt: b.created_at ?? b.createdAt,
   };
 }
 
-function fmtOrder(o: any) {
+function fmtOrder(o: Record<string, any>) {
   return {
     ...o,
     botId: o.bot_id ?? o.botId,
@@ -39,7 +40,6 @@ function fmtOrder(o: any) {
   };
 }
 
-// ── Parameterized query helper (SQLite uses ?, PG uses $1, $2...) ─────────────
 function buildQuery(template: string, params: any[]): { query: string; params: any[] } {
   if (dbType === "pg") {
     let i = 1;
@@ -59,33 +59,21 @@ async function m(template: string, params: any[] = []): Promise<void> {
   return runMutation(query, p);
 }
 
-// ── Timestamps ────────────────────────────────────────────────────────────────
-const NOW = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-
 export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
 
   // ── Public: list active bots ────────────────────────────────────────────────
   app.get("/api/bots", async (_req, res) => {
     try {
-      const rows = await q("SELECT * FROM bots WHERE active = ? ORDER BY created_at DESC", [dbType === "pg" ? true : 1]);
+      const activeVal = dbType === "pg" ? true : 1;
+      const rows = await q("SELECT * FROM bots WHERE active = ? ORDER BY created_at DESC", [activeVal]);
       res.json({ success: true, bots: rows.map(fmtBot) });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
   });
 
-  // ── Public: get single bot ──────────────────────────────────────────────────
-  app.get("/api/bots/:id([0-9]+)", async (req, res) => {
-    try {
-      const rows = await q("SELECT * FROM bots WHERE id = ?", [parseInt(req.params.id)]);
-      if (!rows.length) return res.status(404).json({ success: false, error: "Bot not found" });
-      res.json({ success: true, bot: fmtBot(rows[0]) });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
   // ── Public: initialize bot order + Paystack payment ────────────────────────
+  // NOTE: order routes MUST be registered before /:botId to avoid conflicts
   app.post("/api/bots/order/initialize", async (req, res) => {
     try {
       const { botId, customerName, customerEmail, customerPhone, sessionId, dbUrl, mode, timezone } = req.body;
@@ -139,7 +127,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const secretKey = getPaystackSecretKey();
       if (!secretKey) {
         const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-        await m("UPDATE bot_orders SET status = 'paid', paystack_reference = ?, updated_at = " + updNow + " WHERE reference = ?", [reference, reference]);
+        await m(`UPDATE bot_orders SET status = 'paid', paystack_reference = ?, updated_at = ${updNow} WHERE reference = ?`, [reference, reference]);
         const updated = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
         return res.json({ success: true, order: fmtOrder(updated[0]) });
       }
@@ -150,11 +138,65 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const data = await verifyRes.json() as any;
       if (data.data?.status === "success") {
         const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-        await m("UPDATE bot_orders SET status = 'paid', paystack_reference = ?, updated_at = " + updNow + " WHERE reference = ?", [reference, reference]);
+        await m(`UPDATE bot_orders SET status = 'paid', paystack_reference = ?, updated_at = ${updNow} WHERE reference = ?`, [reference, reference]);
         const updated = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
         return res.json({ success: true, order: fmtOrder(updated[0]) });
       }
       res.status(400).json({ success: false, error: "Payment not confirmed", paystackStatus: data.data?.status });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ── Wallet pay: full bot order payment via wallet credits ──────────────────
+  app.post("/api/bots/order/wallet-pay", async (req: any, res) => {
+    try {
+      const { botId, customerName, customerEmail, customerPhone, sessionId, dbUrl, mode, timezone } = req.body;
+      const token = ((req.headers.authorization as string) || "").replace("Bearer ", "").trim();
+      if (!token) return res.status(401).json({ success: false, error: "Not authenticated" });
+      if (!botId || !customerName || !customerEmail || !customerPhone) {
+        return res.status(400).json({ success: false, error: "Missing required fields" });
+      }
+
+      // Verify customer session token
+      const now = new Date().toISOString();
+      const sessions = await q(
+        "SELECT customer_id FROM customer_sessions WHERE token = ? AND expires_at > ? LIMIT 1",
+        [token, now]
+      );
+      if (!sessions.length) return res.status(401).json({ success: false, error: "Session expired or invalid" });
+      const customerId = sessions[0].customer_id;
+
+      const bots = await q("SELECT * FROM bots WHERE id = ?", [parseInt(botId)]);
+      if (!bots.length) return res.status(404).json({ success: false, error: "Bot not found" });
+      const bot = bots[0];
+
+      const wallets = await q("SELECT balance FROM wallets WHERE customer_id = ?", [customerId]);
+      const walletBalance = wallets.length ? Number(wallets[0].balance) : 0;
+
+      if (walletBalance < bot.price) {
+        return res.status(400).json({
+          success: false,
+          error: `Insufficient wallet balance. You have KES ${walletBalance}, need KES ${bot.price}.`,
+        });
+      }
+
+      const reference = generateReference();
+      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+
+      await m(`UPDATE wallets SET balance = balance - ?, updated_at = ${updNow} WHERE customer_id = ?`, [bot.price, customerId]);
+
+      await m(
+        "INSERT INTO wallet_transactions (customer_id, type, amount, description, reference) VALUES (?, 'debit', ?, ?, ?)",
+        [customerId, bot.price, `Bot deployment: ${bot.name}`, reference]
+      );
+
+      await m(
+        "INSERT INTO bot_orders (reference, bot_id, bot_name, customer_name, customer_email, customer_phone, session_id, db_url, mode, timezone, amount, status, paystack_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', 'wallet')",
+        [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", bot.price]
+      );
+
+      res.json({ success: true, reference, order: { reference, status: "paid", botName: bot.name, amount: bot.price } });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -166,6 +208,20 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const rows = await q("SELECT * FROM bot_orders WHERE reference = ?", [req.params.reference]);
       if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
       res.json({ success: true, order: fmtOrder(rows[0]) });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ── Public: get single bot by ID ────────────────────────────────────────────
+  // Keep after /order/* routes so "order" isn't treated as a botId
+  app.get("/api/bots/:botId", async (req, res) => {
+    try {
+      const id = parseInt(req.params.botId);
+      if (isNaN(id)) return res.status(404).json({ success: false, error: "Bot not found" });
+      const rows = await q("SELECT * FROM bots WHERE id = ?", [id]);
+      if (!rows.length) return res.status(404).json({ success: false, error: "Bot not found" });
+      res.json({ success: true, bot: fmtBot(rows[0]) });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -204,9 +260,9 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   });
 
   // ── Admin: update bot ───────────────────────────────────────────────────────
-  app.put("/api/admin/bots/:id", adminAuthMiddleware, async (req, res) => {
+  app.put("/api/admin/bots/:botId", adminAuthMiddleware, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.botId);
       const { name, description, repoUrl, imageUrl, price, features, requiresSessionId, requiresDbUrl, active, category } = req.body;
       const sets: string[] = [];
       const vals: any[] = [];
@@ -231,9 +287,9 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   });
 
   // ── Admin: delete bot ───────────────────────────────────────────────────────
-  app.delete("/api/admin/bots/:id", adminAuthMiddleware, async (req, res) => {
+  app.delete("/api/admin/bots/:botId", adminAuthMiddleware, async (req, res) => {
     try {
-      await m("DELETE FROM bots WHERE id = ?", [parseInt(req.params.id)]);
+      await m("DELETE FROM bots WHERE id = ?", [parseInt(req.params.botId)]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -257,9 +313,9 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   });
 
   // ── Admin: update bot order status ─────────────────────────────────────────
-  app.patch("/api/admin/bot-orders/:id/status", adminAuthMiddleware, async (req, res) => {
+  app.patch("/api/admin/bot-orders/:orderId/status", adminAuthMiddleware, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.orderId);
       const { status, deploymentNotes } = req.body;
       const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
       await m(
@@ -272,60 +328,4 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       res.status(500).json({ success: false, error: err.message });
     }
   });
-  // ── Wallet pay: full bot order payment via wallet credits ──────────────────
-  app.post("/api/bots/order/wallet-pay", async (req: any, res) => {
-    try {
-      const { botId, customerName, customerEmail, customerPhone, sessionId, dbUrl, mode, timezone } = req.body;
-      const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
-      if (!token) return res.status(401).json({ success: false, error: "Not authenticated" });
-      if (!botId || !customerName || !customerEmail || !customerPhone) {
-        return res.status(400).json({ success: false, error: "Missing required fields" });
-      }
-
-      // Verify customer token
-      const now = dbType === "pg" ? new Date().toISOString() : new Date().toISOString();
-      const sessions = await q(
-        "SELECT customer_id FROM customer_sessions WHERE token = ? AND expires_at > ? LIMIT 1",
-        [token, now]
-      );
-      if (!sessions.length) return res.status(401).json({ success: false, error: "Session expired or invalid" });
-      const customerId = sessions[0].customer_id;
-
-      // Get bot
-      const bots = await q("SELECT * FROM bots WHERE id = ?", [parseInt(botId)]);
-      if (!bots.length) return res.status(404).json({ success: false, error: "Bot not found" });
-      const bot = bots[0];
-
-      // Get wallet balance
-      const wallets = await q("SELECT balance FROM wallets WHERE customer_id = ?", [customerId]);
-      const walletBalance = wallets.length ? wallets[0].balance : 0;
-
-      if (walletBalance < bot.price) {
-        return res.status(400).json({ success: false, error: `Insufficient wallet balance. You have KES ${walletBalance}, need KES ${bot.price}.` });
-      }
-
-      const reference = generateReference();
-
-      // Debit wallet
-      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-      await m(`UPDATE wallets SET balance = balance - ?, updated_at = ${updNow} WHERE customer_id = ?`, [bot.price, customerId]);
-
-      // Record wallet transaction
-      await m(
-        "INSERT INTO wallet_transactions (customer_id, type, amount, description, reference) VALUES (?, 'debit', ?, ?, ?)",
-        [customerId, bot.price, `Bot deployment: ${bot.name}`, reference]
-      );
-
-      // Create order as paid
-      await m(
-        "INSERT INTO bot_orders (reference, bot_id, bot_name, customer_name, customer_email, customer_phone, session_id, db_url, mode, timezone, amount, status, paystack_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', 'wallet')",
-        [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", bot.price]
-      );
-
-      res.json({ success: true, reference, order: { reference, status: "paid", botName: bot.name, amount: bot.price } });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
 }
