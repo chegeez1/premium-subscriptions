@@ -197,15 +197,15 @@ export default function BotCheckout() {
         return;
       }
       if (walletCoversAll) {
-        walletMutation.mutate({ botId, ...form });
+        walletMutation.mutate({ botId, ...form, promoCode: promoResult?.valid ? promoResult.code : undefined });
       } else if (walletCoversPartial) {
-        initMutation.mutate({ botId, ...form, walletAmountToUse: walletBalance });
+        initMutation.mutate({ botId, ...form, walletAmountToUse: walletBalance, promoCode: promoResult?.valid ? promoResult.code : undefined });
       } else {
         setStep("form");
         toast({ title: "Insufficient wallet balance", description: "Please top up your wallet or switch to Paystack.", variant: "destructive" });
       }
     } else {
-      initMutation.mutate({ botId, ...form });
+      initMutation.mutate({ botId, ...form, promoCode: promoResult?.valid ? promoResult.code : undefined });
     }
   }
 
