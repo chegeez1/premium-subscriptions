@@ -100,7 +100,7 @@ export default function Checkout() {
     if (!promoInput.trim() || !selectedPlan) return;
     setPromoLoading(true); setPromoError("");
     try {
-      const raw = await apiRequest("POST", "/api/payment/validate-promo", { code: promoInput.trim(), planId, amount: selectedPlan.price });
+      const raw = await apiRequest("POST", "/api/payment/validate-promo", { code: promoInput.trim(), planId, context: "subscription", amount: selectedPlan.price });
       const res = await raw.json();
       if (res.success) {
         setAppliedPromo({ code: res.promo.code, discountAmount: res.discountAmount, finalAmount: res.finalAmount, label: res.promo.label, discountType: res.promo.discountType, discountValue: res.promo.discountValue });
