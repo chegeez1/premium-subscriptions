@@ -478,4 +478,146 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       res.status(500).json({ success: false, error: err.message });
     }
   });
+  // ── Admin: Heroku bot management ────────────────────────────────────────────
+
+  async function getHerokuAppName(orderId: number): Promise<string | null> {
+    const rows = await q("SELECT render_service_id FROM bot_orders WHERE id = ?", [orderId]);
+    return rows[0]?.render_service_id ?? null;
+  }
+
+  // Reboot: restart all running dynos
+  app.post("/api/admin/bot-orders/:orderId/heroku/reboot", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const apiKey = getHerokuApiKey();
+      const appName = await getHerokuAppName(id);
+      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked to this order" });
+      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
+      const r = await fetch(`https://api.heroku.com/apps/${appName}/dynos`, {
+        method: "DELETE",
+        headers: herokuHeaders(apiKey),
+      });
+      const data = await r.json().catch(() => ({})) as any;
+      console.log(`[Heroku] Rebooted ${appName}`);
+      res.json({ success: r.ok, message: r.ok ? "Bot rebooted" : data?.message });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Stop: scale all formations to 0
+  app.post("/api/admin/bot-orders/:orderId/heroku/stop", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const apiKey = getHerokuApiKey();
+      const appName = await getHerokuAppName(id);
+      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
+      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
+      const fRes = await fetch(`https://api.heroku.com/apps/${appName}/formation`, { headers: herokuHeaders(apiKey) });
+      const formations = await fRes.json() as any[];
+      const updates = formations.map((f: any) => ({ type: f.type, quantity: 0 }));
+      if (updates.length) {
+        await fetch(`https://api.heroku.com/apps/${appName}/formation`, {
+          method: "PATCH", headers: herokuHeaders(apiKey),
+          body: JSON.stringify({ updates }),
+        });
+      }
+      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      await m(`UPDATE bot_orders SET status = 'stopped', updated_at = ${updNow} WHERE id = ?`, [id]);
+      console.log(`[Heroku] Stopped ${appName}`);
+      res.json({ success: true, message: "Bot stopped" });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Resume: scale all formations back to 1
+  app.post("/api/admin/bot-orders/:orderId/heroku/resume", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const apiKey = getHerokuApiKey();
+      const appName = await getHerokuAppName(id);
+      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
+      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
+      const fRes = await fetch(`https://api.heroku.com/apps/${appName}/formation`, { headers: herokuHeaders(apiKey) });
+      const formations = await fRes.json() as any[];
+      const updates = formations.length
+        ? formations.map((f: any) => ({ type: f.type, quantity: 1 }))
+        : [{ type: "worker", quantity: 1 }];
+      await fetch(`https://api.heroku.com/apps/${appName}/formation`, {
+        method: "PATCH", headers: herokuHeaders(apiKey),
+        body: JSON.stringify({ updates }),
+      });
+      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      await m(`UPDATE bot_orders SET status = 'deployed', updated_at = ${updNow} WHERE id = ?`, [id]);
+      console.log(`[Heroku] Resumed ${appName}`);
+      res.json({ success: true, message: "Bot resumed" });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Maintenance mode toggle
+  app.patch("/api/admin/bot-orders/:orderId/heroku/maintenance", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const { enabled } = req.body;
+      const apiKey = getHerokuApiKey();
+      const appName = await getHerokuAppName(id);
+      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
+      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
+      const r = await fetch(`https://api.heroku.com/apps/${appName}`, {
+        method: "PATCH", headers: herokuHeaders(apiKey),
+        body: JSON.stringify({ maintenance: !!enabled }),
+      });
+      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      if (enabled) {
+        await m(`UPDATE bot_orders SET status = 'suspended', updated_at = ${updNow} WHERE id = ?`, [id]);
+      } else {
+        await m(`UPDATE bot_orders SET status = 'deployed', updated_at = ${updNow} WHERE id = ?`, [id]);
+      }
+      console.log(`[Heroku] Maintenance ${enabled ? "ON" : "OFF"} for ${appName}`);
+      res.json({ success: r.ok, message: enabled ? "Bot suspended (maintenance on)" : "Bot unsuspended" });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Get config vars
+  app.get("/api/admin/bot-orders/:orderId/heroku/config-vars", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const apiKey = getHerokuApiKey();
+      const appName = await getHerokuAppName(id);
+      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
+      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
+      const r = await fetch(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: herokuHeaders(apiKey) });
+      const data = await r.json() as any;
+      res.json({ success: r.ok, configVars: data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Update config vars
+  app.patch("/api/admin/bot-orders/:orderId/heroku/config-vars", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const { configVars } = req.body;
+      const apiKey = getHerokuApiKey();
+      const appName = await getHerokuAppName(id);
+      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
+      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
+      const r = await fetch(`https://api.heroku.com/apps/${appName}/config-vars`, {
+        method: "PATCH", headers: herokuHeaders(apiKey),
+        body: JSON.stringify(configVars),
+      });
+      const data = await r.json() as any;
+      res.json({ success: r.ok, configVars: data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+
 }

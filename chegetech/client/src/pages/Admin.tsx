@@ -7703,49 +7703,139 @@ function BotOrdersAdminTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [notes, setNotes] = useState("");
   const [newStatus, setNewStatus] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [herokuStatus, setHerokuStatus] = useState<any>(null);
+  const [herokuLoading, setHerokuLoading] = useState(false);
+  const [configVars, setConfigVars] = useState<Record<string, string>>({});
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configEditing, setConfigEditing] = useState(false);
+  const [configDraft, setConfigDraft] = useState<{ key: string; value: string }[]>([]);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<{ success: boolean; orders: any[] }>({
     queryKey: ["/api/admin/bot-orders"],
     queryFn: () => fetch("/api/admin/bot-orders", { headers: authHeaders() as any }).then((r) => r.json()),
-    refetchInterval: 60000,
+    refetchInterval: 30000,
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, status, deploymentNotes }: { id: number; status: string; deploymentNotes: string }) =>
+    mutationFn: ({ id, status, deploymentNotes, redeploy }: any) =>
       fetch(`/api/admin/bot-orders/${id}/status`, {
         method: "PATCH",
         headers: { ...authHeaders() as any, "Content-Type": "application/json" },
-        body: JSON.stringify({ status, deploymentNotes }),
+        body: JSON.stringify({ status, deploymentNotes, redeploy }),
       }).then((r) => r.json()),
     onSuccess: (data) => {
       if (data.success) {
         toast({ title: "Order updated" });
         queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
-        setSelectedOrder(null);
+        setSelectedOrder((o: any) => o ? { ...o, status: newStatus, deploymentNotes: notes } : null);
       } else { toast({ title: "Error", description: data.error, variant: "destructive" }); }
     },
   });
 
+  const herokuAction = async (orderId: number, action: string, body?: any) => {
+    setActionLoading(action);
+    try {
+      let url = `/api/admin/bot-orders/${orderId}/heroku/${action}`;
+      const method = action === "config-vars" && body ? "PATCH" : action.startsWith("config") ? "GET" : "POST";
+      if (action === "maintenance") {
+        url = `/api/admin/bot-orders/${orderId}/heroku/maintenance`;
+      }
+      const res = await fetch(url, {
+        method: body ? (action === "maintenance" ? "PATCH" : "POST") : "POST",
+        headers: { ...authHeaders() as any, "Content-Type": "application/json" },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const data = await res.json();
+      if (data.success !== false) {
+        toast({ title: data.message || "Done" });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
+      } else {
+        toast({ title: "Heroku Error", description: data.error, variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const loadHerokuStatus = async (order: any) => {
+    if (!order.herokuAppName) return;
+    setHerokuLoading(true);
+    try {
+      const r = await fetch(`/api/admin/bot-orders/${order.id}/heroku-status`, { headers: authHeaders() as any });
+      const d = await r.json();
+      setHerokuStatus(d);
+    } catch { setHerokuStatus(null); }
+    setHerokuLoading(false);
+  };
+
+  const loadConfigVars = async (order: any) => {
+    if (!order.herokuAppName) return;
+    setConfigLoading(true);
+    try {
+      const r = await fetch(`/api/admin/bot-orders/${order.id}/heroku/config-vars`, { headers: authHeaders() as any });
+      const d = await r.json();
+      if (d.success && d.configVars) {
+        setConfigVars(d.configVars);
+        setConfigDraft(Object.entries(d.configVars).map(([key, value]) => ({ key, value: value as string })));
+      }
+    } catch {}
+    setConfigLoading(false);
+    setConfigEditing(true);
+  };
+
+  const saveConfigVars = async (order: any) => {
+    const vars: Record<string, string> = {};
+    configDraft.forEach(({ key, value }) => { if (key.trim()) vars[key.trim()] = value; });
+    setActionLoading("config-save");
+    try {
+      const r = await fetch(`/api/admin/bot-orders/${order.id}/heroku/config-vars`, {
+        method: "PATCH",
+        headers: { ...authHeaders() as any, "Content-Type": "application/json" },
+        body: JSON.stringify({ configVars: vars }),
+      });
+      const d = await r.json();
+      if (d.success) { toast({ title: "Config vars updated — bot will restart" }); setConfigEditing(false); }
+      else toast({ title: "Error", description: d.error, variant: "destructive" });
+    } catch (e: any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
+    setActionLoading(null);
+  };
+
+  const selectOrder = (order: any) => {
+    setSelectedOrder(order);
+    setNewStatus(order.status);
+    setNotes(order.deploymentNotes || "");
+    setHerokuStatus(null);
+    setConfigEditing(false);
+    loadHerokuStatus(order);
+  };
+
   const STATUS_BADGES: Record<string, string> = {
-    pending: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
-    paid: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    pending:   "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+    paid:      "bg-blue-500/10 text-blue-400 border-blue-500/20",
     deploying: "bg-purple-500/10 text-purple-400 border-purple-500/20",
-    deployed: "bg-green-500/10 text-green-400 border-green-500/20",
-    failed: "bg-red-500/10 text-red-400 border-red-500/20",
+    deployed:  "bg-green-500/10 text-green-400 border-green-500/20",
+    stopped:   "bg-orange-500/10 text-orange-400 border-orange-500/20",
+    suspended: "bg-red-500/10 text-red-400 border-red-500/20",
+    failed:    "bg-red-500/10 text-red-400 border-red-500/20",
   };
 
   const allOrders = data?.orders || [];
-  const filtered = statusFilter === "all" ? allOrders : allOrders.filter((o) => o.status === statusFilter);
+  const filtered = statusFilter === "all" ? allOrders : allOrders.filter((o: any) => o.status === statusFilter);
+  const isDeployed = selectedOrder && (selectedOrder.herokuAppName || selectedOrder.herokuAppUrl);
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      {/* Header + filters */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-xl font-bold text-white">Bot Orders</h2>
-        <div className="flex gap-2 text-xs">
-          {["all", "pending", "paid", "deploying", "deployed", "failed"].map((s) => (
+        <div className="flex gap-2 flex-wrap text-xs">
+          {["all","pending","paid","deploying","deployed","stopped","suspended","failed"].map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1.5 rounded-full font-medium transition-all capitalize ${statusFilter === s ? "bg-green-600 text-white" : "bg-white/5 text-gray-400 hover:bg-white/10"}`}
             >{s}</button>
@@ -7753,49 +7843,211 @@ function BotOrdersAdminTab() {
         </div>
       </div>
 
+      {/* Management panel */}
       {selectedOrder && (
-        <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-5 space-y-4">
-          <div className="flex items-start justify-between">
+        <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-5 space-y-5">
+          {/* Title row */}
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="font-semibold text-white">{selectedOrder.botName}</h3>
-              <p className="text-xs text-gray-500">{selectedOrder.reference}</p>
+              <h3 className="font-semibold text-white text-base">{selectedOrder.botName}</h3>
+              <p className="text-xs text-gray-500 font-mono mt-0.5">{selectedOrder.reference}</p>
+              {selectedOrder.herokuAppUrl && (
+                <a href={selectedOrder.herokuAppUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-emerald-400 hover:underline mt-1 inline-block">
+                  {selectedOrder.herokuAppUrl}
+                </a>
+              )}
             </div>
-            <Button size="sm" variant="outline" onClick={() => setSelectedOrder(null)} className="border-white/10 text-gray-400 h-7 px-2"><X className="w-3 h-3" /></Button>
+            <Button size="sm" variant="outline" onClick={() => setSelectedOrder(null)} className="border-white/10 text-gray-400 h-7 px-2 shrink-0">
+              <X className="w-3 h-3" />
+            </Button>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+
+          {/* Customer info grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
             <div><p className="text-xs text-gray-500">Customer</p><p className="text-gray-200">{selectedOrder.customerName}</p></div>
             <div><p className="text-xs text-gray-500">Email</p><p className="text-gray-200 truncate">{selectedOrder.customerEmail}</p></div>
             <div><p className="text-xs text-gray-500">Phone</p><p className="text-gray-200">{selectedOrder.customerPhone}</p></div>
             <div><p className="text-xs text-gray-500">Amount</p><p className="text-gray-200 font-bold">KES {selectedOrder.amount}</p></div>
             <div><p className="text-xs text-gray-500">Mode</p><p className="text-gray-200 capitalize">{selectedOrder.mode}</p></div>
             <div><p className="text-xs text-gray-500">Timezone</p><p className="text-gray-200">{selectedOrder.timezone}</p></div>
+            {selectedOrder.sessionId && (
+              <div className="col-span-2"><p className="text-xs text-gray-500">Session ID</p>
+                <p className="text-gray-200 font-mono text-xs break-all">{selectedOrder.sessionId}</p></div>
+            )}
+            {selectedOrder.herokuAppName && (
+              <div><p className="text-xs text-gray-500">Heroku App</p><p className="text-emerald-400 text-xs">{selectedOrder.herokuAppName}</p></div>
+            )}
+            {selectedOrder.deployedAt && (
+              <div><p className="text-xs text-gray-500">Deployed</p><p className="text-gray-200 text-xs">{new Date(selectedOrder.deployedAt).toLocaleString()}</p></div>
+            )}
           </div>
-          {selectedOrder.sessionId && (
-            <div><p className="text-xs text-gray-500 mb-1">Session ID</p>
-              <code className="text-xs text-green-400 bg-black/30 px-2 py-1 rounded break-all block">{selectedOrder.sessionId}</code></div>
-          )}
-          {selectedOrder.dbUrl && (
-            <div><p className="text-xs text-gray-500 mb-1">Database URL</p>
-              <code className="text-xs text-blue-400 bg-black/30 px-2 py-1 rounded break-all block">{selectedOrder.dbUrl}</code></div>
-          )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div><label className="text-xs text-gray-400 mb-1 block">Update Status</label>
-              <select value={newStatus || selectedOrder.status} onChange={(e) => setNewStatus(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm">
-                <option value="pending">Pending</option><option value="paid">Paid</option>
-                <option value="deploying">Deploying</option><option value="deployed">Deployed</option>
-                <option value="failed">Failed</option>
-              </select>
+
+          {/* Heroku live status */}
+          {isDeployed && (
+            <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Live Status</p>
+                <button onClick={() => loadHerokuStatus(selectedOrder)} className="text-xs text-gray-500 hover:text-white flex items-center gap-1">
+                  <RefreshCw className={`w-3 h-3 ${herokuLoading ? "animate-spin" : ""}`} /> Refresh
+                </button>
+              </div>
+              {herokuLoading ? (
+                <div className="flex items-center gap-2 text-xs text-gray-500"><Loader2 className="w-3 h-3 animate-spin" /> Loading status...</div>
+              ) : herokuStatus?.deployed ? (
+                <div className="flex flex-wrap gap-4 text-xs">
+                  <div><span className="text-gray-500">App state: </span>
+                    <span className={herokuStatus.app?.maintenance ? "text-orange-400" : "text-green-400"}>
+                      {herokuStatus.app?.maintenance ? "Maintenance" : "Active"}
+                    </span>
+                  </div>
+                  {herokuStatus.latestBuild && (
+                    <div><span className="text-gray-500">Build: </span>
+                      <span className={herokuStatus.latestBuild.status === "succeeded" ? "text-green-400" : herokuStatus.latestBuild.status === "failed" ? "text-red-400" : "text-yellow-400"}>
+                        {herokuStatus.latestBuild.status}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">{herokuStatus?.message || "Status unavailable"}</p>
+              )}
             </div>
-            <div><label className="text-xs text-gray-400 mb-1 block">Notes (optional)</label>
-              <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Deployment notes..." className="bg-white/5 border-white/10 text-white text-sm" /></div>
+          )}
+
+          {/* Heroku action buttons */}
+          {isDeployed && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Bot Controls</p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm"
+                  onClick={() => herokuAction(selectedOrder.id, "reboot")}
+                  disabled={actionLoading === "reboot"}
+                  className="bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:bg-blue-600/30 h-8 px-3 text-xs">
+                  {actionLoading === "reboot" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RotateCcw className="w-3 h-3 mr-1" />}
+                  Reboot
+                </Button>
+                <Button size="sm"
+                  onClick={() => herokuAction(selectedOrder.id, "stop")}
+                  disabled={actionLoading === "stop"}
+                  className="bg-orange-600/20 border border-orange-500/30 text-orange-300 hover:bg-orange-600/30 h-8 px-3 text-xs">
+                  {actionLoading === "stop" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Power className="w-3 h-3 mr-1" />}
+                  Stop
+                </Button>
+                <Button size="sm"
+                  onClick={() => herokuAction(selectedOrder.id, "resume")}
+                  disabled={actionLoading === "resume"}
+                  className="bg-green-600/20 border border-green-500/30 text-green-300 hover:bg-green-600/30 h-8 px-3 text-xs">
+                  {actionLoading === "resume" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                  Resume
+                </Button>
+                <Button size="sm"
+                  onClick={() => herokuAction(selectedOrder.id, "maintenance", { enabled: true })}
+                  disabled={actionLoading === "maintenance"}
+                  className="bg-red-600/20 border border-red-500/30 text-red-300 hover:bg-red-600/30 h-8 px-3 text-xs">
+                  {actionLoading === "maintenance" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Shield className="w-3 h-3 mr-1" />}
+                  Suspend
+                </Button>
+                <Button size="sm"
+                  onClick={() => herokuAction(selectedOrder.id, "maintenance", { enabled: false })}
+                  disabled={actionLoading === "maintenance"}
+                  className="bg-purple-600/20 border border-purple-500/30 text-purple-300 hover:bg-purple-600/30 h-8 px-3 text-xs">
+                  {actionLoading === "maintenance" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Shield className="w-3 h-3 mr-1" />}
+                  Unsuspend
+                </Button>
+                <Button size="sm"
+                  onClick={() => updateMutation.mutate({ id: selectedOrder.id, status: newStatus, deploymentNotes: notes, redeploy: true })}
+                  disabled={updateMutation.isPending}
+                  className="bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-600/30 h-8 px-3 text-xs">
+                  {updateMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                  Redeploy
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Config Vars editor */}
+          {isDeployed && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Config Variables</p>
+                {!configEditing && (
+                  <Button size="sm" variant="outline" onClick={() => loadConfigVars(selectedOrder)}
+                    disabled={configLoading}
+                    className="border-white/10 text-gray-400 hover:text-white h-7 px-2 text-xs">
+                    {configLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Edit2 className="w-3 h-3 mr-1" />}
+                    Edit Vars
+                  </Button>
+                )}
+              </div>
+              {configEditing && (
+                <div className="space-y-2 bg-black/20 border border-white/5 rounded-xl p-3">
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {configDraft.map((entry, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <Input
+                          value={entry.key}
+                          onChange={(e) => setConfigDraft(d => d.map((x, i) => i === idx ? { ...x, key: e.target.value } : x))}
+                          placeholder="KEY"
+                          className="h-7 text-xs font-mono bg-white/[0.03] border-white/10 text-gray-200 w-40 shrink-0"
+                        />
+                        <Input
+                          value={entry.value}
+                          onChange={(e) => setConfigDraft(d => d.map((x, i) => i === idx ? { ...x, value: e.target.value } : x))}
+                          placeholder="value"
+                          className="h-7 text-xs font-mono bg-white/[0.03] border-white/10 text-gray-200 flex-1"
+                        />
+                        <button onClick={() => setConfigDraft(d => d.filter((_, i) => i !== idx))}
+                          className="text-gray-600 hover:text-red-400 shrink-0"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <Button size="sm" variant="outline" onClick={() => setConfigDraft(d => [...d, { key: "", value: "" }])}
+                      className="border-white/10 text-gray-400 hover:text-white h-7 px-2 text-xs">
+                      <Plus className="w-3 h-3 mr-1" /> Add Var
+                    </Button>
+                    <Button size="sm" onClick={() => saveConfigVars(selectedOrder)} disabled={actionLoading === "config-save"}
+                      className="bg-green-600 hover:bg-green-500 text-white h-7 px-3 text-xs">
+                      {actionLoading === "config-save" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Save className="w-3 h-3 mr-1" />}
+                      Save & Apply
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setConfigEditing(false)}
+                      className="border-white/10 text-gray-400 h-7 px-2 text-xs">Cancel</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Status + notes update */}
+          <div className="border-t border-white/5 pt-4 space-y-3">
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Update Order Status</p>
+            <div className="flex gap-2 flex-wrap">
+              {["pending","paid","deploying","deployed","stopped","suspended","failed"].map((s) => (
+                <button key={s} onClick={() => setNewStatus(s)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium capitalize transition-all ${newStatus === s ? "bg-green-600 text-white" : "bg-white/5 text-gray-400 hover:bg-white/10"}`}>
+                  {s}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={notes} onChange={(e) => setNotes(e.target.value)}
+              placeholder="Deployment notes (optional)"
+              rows={2}
+              className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-green-500/50"
+            />
+            <Button size="sm" onClick={() => updateMutation.mutate({ id: selectedOrder.id, status: newStatus, deploymentNotes: notes })}
+              disabled={updateMutation.isPending}
+              className="bg-green-600 hover:bg-green-500 text-white h-8 px-4 text-xs">
+              {updateMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Save className="w-3 h-3 mr-1" />}
+              Save Changes
+            </Button>
           </div>
-          <Button onClick={() => updateMutation.mutate({ id: selectedOrder.id, status: newStatus || selectedOrder.status, deploymentNotes: notes })} disabled={updateMutation.isPending} className="bg-green-600 hover:bg-green-700 text-white">
-            {updateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />} Update Order
-          </Button>
         </div>
       )}
 
+      {/* Orders table */}
       {isLoading ? (
         <div className="text-center py-10"><Loader2 className="w-6 h-6 animate-spin text-green-400 mx-auto" /></div>
       ) : (
@@ -7803,17 +8055,18 @@ function BotOrdersAdminTab() {
           <Table>
             <TableHeader>
               <TableRow className="border-white/5">
-                <TableHead className="text-gray-400">Order</TableHead>
+                <TableHead className="text-gray-400">Reference</TableHead>
                 <TableHead className="text-gray-400">Customer</TableHead>
                 <TableHead className="text-gray-400">Bot</TableHead>
                 <TableHead className="text-gray-400">Amount</TableHead>
                 <TableHead className="text-gray-400">Status</TableHead>
+                <TableHead className="text-gray-400">Heroku</TableHead>
                 <TableHead className="text-gray-400">Date</TableHead>
                 <TableHead className="text-gray-400">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((order) => (
+              {filtered.map((order: any) => (
                 <TableRow key={order.id} className="border-white/5 hover:bg-white/[0.02]">
                   <TableCell className="text-gray-400 text-xs font-mono">{order.reference}</TableCell>
                   <TableCell>
@@ -7821,19 +8074,31 @@ function BotOrdersAdminTab() {
                       <p className="text-gray-500 text-xs">{order.customerEmail}</p></div>
                   </TableCell>
                   <TableCell className="text-white text-sm">{order.botName}</TableCell>
-                  <TableCell className="text-white font-semibold">KES {order.amount}</TableCell>
-                  <TableCell><Badge className={`text-xs border ${STATUS_BADGES[order.status] || ""}`}>{order.status}</Badge></TableCell>
+                  <TableCell className="text-white font-semibold text-sm">KES {order.amount}</TableCell>
+                  <TableCell>
+                    <Badge className={`text-xs border ${STATUS_BADGES[order.status] || "bg-gray-500/10 text-gray-400"}`}>
+                      {order.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {order.herokuAppName ? (
+                      <span className="text-xs text-emerald-400 font-mono">{order.herokuAppName}</span>
+                    ) : (
+                      <span className="text-xs text-gray-600">—</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-gray-400 text-xs">{new Date(order.createdAt).toLocaleDateString()}</TableCell>
                   <TableCell>
-                    <Button size="sm" variant="outline" onClick={() => { setSelectedOrder(order); setNewStatus(order.status); setNotes(order.deploymentNotes || ""); }}
+                    <Button size="sm" variant="outline"
+                      onClick={() => selectOrder(order)}
                       className="border-white/10 text-gray-400 hover:text-white h-7 px-2 text-xs">
-                      <Edit2 className="w-3 h-3 mr-1" /> Manage
+                      <Settings className="w-3 h-3 mr-1" /> Manage
                     </Button>
                   </TableCell>
                 </TableRow>
               ))}
               {!filtered.length && (
-                <TableRow><TableCell colSpan={7} className="text-center text-gray-500 py-8">No orders found.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-gray-500 py-8">No orders found.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
