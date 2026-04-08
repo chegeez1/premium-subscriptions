@@ -1945,6 +1945,7 @@ function DashboardTab() {
   });
   const stats = statsData?.transactions;
   const accStats = statsData?.accounts;
+  const botStats = statsData?.bots;
   const daily: Array<{ date: string; revenue: number; orders: number }> = analyticsData?.daily ?? [];
   const topPlans: Array<{ planName: string; revenue: number; orders: number }> = analyticsData?.topPlans ?? [];
   const maxRevenue = Math.max(...daily.map((d) => d.revenue), 1);
@@ -1970,6 +1971,11 @@ function DashboardTab() {
             <GlassStatCard title="Total Orders" value={stats?.total ?? 0} icon={ArrowLeftRight} gradient="from-indigo-500 to-blue-600" glow="rgba(99,102,241,0.3)" />
             <GlassStatCard title="Emails Sent" value={stats?.emailsSent ?? 0} icon={Mail} gradient="from-violet-500 to-purple-600" glow="rgba(139,92,246,0.3)" />
             <GlassStatCard title="Active Accounts" value={accStats?.totalAccounts ?? 0} icon={Package} gradient="from-cyan-500 to-blue-500" glow="rgba(6,182,212,0.3)" />
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+            <GlassStatCard title="Bot Orders" value={botStats?.total ?? 0} icon={Bot} gradient="from-green-500 to-emerald-600" glow="rgba(34,197,94,0.3)" />
+            <GlassStatCard title="Bot Revenue" value={`KES ${(botStats?.revenue || 0).toLocaleString()}`} icon={TrendingUp} gradient="from-lime-500 to-green-600" glow="rgba(132,204,22,0.3)" />
+            <GlassStatCard title="Bots Deployed" value={botStats?.deployed ?? 0} icon={Zap} gradient="from-teal-500 to-cyan-600" glow="rgba(20,184,166,0.3)" />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
             {[
