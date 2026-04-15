@@ -7956,6 +7956,32 @@ function BotStoreAdminTab() {
 }
 
 // ─── Bot Orders Admin Tab ─────────────────────────────────────────────────────
+function VpsServerSelector({ value, onChange }) {
+  const { data } = useQuery({
+    queryKey: ["/api/admin/vps"],
+    queryFn: () => fetch("/api/admin/vps", { headers: authHeaders() }).then(r => r.json()),
+  });
+  const servers = data?.servers || [];
+  return (
+    <div>
+      <label className="text-xs text-white/50 mb-1.5 block">Select VPS Server</label>
+      {servers.length === 0 ? (
+        <p className="text-xs text-amber-400 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">No VPS servers added. Go to VPS Manager tab first.</p>
+      ) : (
+        <div className="grid gap-2">
+          {servers.map((s) => (
+            <button key={s.id} onClick={() => onChange(s.id)}
+              className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-all ${value === s.id ? "bg-violet-600/20 border-violet-500/40 text-violet-200" : "bg-white/[0.03] border-white/8 text-white/70 hover:bg-white/5"}`}>
+              <span className="font-medium">{s.label}</span>
+              <span className="text-xs text-white/40 ml-2">{s.username}@{s.host}:{s.port}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BotOrdersAdminTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -7970,6 +7996,11 @@ function BotOrdersAdminTab() {
   const [configEditing, setConfigEditing] = useState(false);
   const [configDraft, setConfigDraft] = useState<{ key: string; value: string }[]>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [vpsDeployOpen, setVpsDeployOpen] = useState(false);
+  const [vpsDeployVpsId, setVpsDeployVpsId] = useState("");
+  const [vpsDeployLoading, setVpsDeployLoading] = useState(false);
+  const [vpsDeployLog, setVpsDeployLog] = useState("");
+  const [vpsDeployStatus, setVpsDeployStatus] = useState<"idle"|"success"|"failed">("idle");
 
   const { data, isLoading } = useQuery<{ success: boolean; orders: any[] }>({
     queryKey: ["/api/admin/bot-orders"],
@@ -8019,6 +8050,35 @@ function BotOrdersAdminTab() {
       setActionLoading(null);
     }
   };
+
+  async function deployViaVps() {
+    if (!selectedOrder || !vpsDeployVpsId) return;
+    setVpsDeployLoading(true);
+    setVpsDeployLog("");
+    setVpsDeployStatus("idle");
+    try {
+      const res = await fetch(`/api/admin/bot-orders/${selectedOrder.id}/deploy-vps`, {
+        method: "POST",
+        headers: { ...authHeaders() as any, "Content-Type": "application/json" },
+        body: JSON.stringify({ vpsId: vpsDeployVpsId }),
+      });
+      const data = await res.json();
+      setVpsDeployLog(data.log || data.error || "No output");
+      setVpsDeployStatus(data.success ? "success" : "failed");
+      if (data.success) {
+        toast({ title: "Bot deployed!", description: "Bot is running on your VPS" });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
+        setSelectedOrder((o: any) => o ? { ...o, status: "deployed" } : null);
+      } else {
+        toast({ title: "Deploy failed", description: data.error || "Check the log below", variant: "destructive" });
+      }
+    } catch (e: any) {
+      setVpsDeployLog(e.message);
+      setVpsDeployStatus("failed");
+    } finally {
+      setVpsDeployLoading(false);
+    }
+  }
 
   const loadHerokuStatus = async (order: any) => {
     if (!order.herokuAppName) return;
@@ -8088,6 +8148,34 @@ function BotOrdersAdminTab() {
 
   return (
     <div className="space-y-5">
+      {/* VPS Deploy Modal */}
+      {vpsDeployOpen && selectedOrder && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,.8)" }} onClick={(e) => { if (e.target === e.currentTarget) setVpsDeployOpen(false); }}>
+          <div className="w-full max-w-lg rounded-2xl border border-white/10 p-6 space-y-4" style={{ background: "#0f0e1c", boxShadow: "0 25px 50px rgba(0,0,0,.5)" }}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white text-base flex items-center gap-2">
+                <Server className="w-4 h-4 text-violet-400" />Deploy via VPS — {selectedOrder.botName}
+              </h3>
+              <button onClick={() => setVpsDeployOpen(false)} className="text-white/30 hover:text-white">✕</button>
+            </div>
+            <p className="text-xs text-white/50">SSH into your VPS, clone the bot repo, install dependencies automatically, then start the bot.</p>
+            <VpsServerSelector value={vpsDeployVpsId} onChange={setVpsDeployVpsId} />
+            {vpsDeployLog && (
+              <div className={`rounded-xl p-3 font-mono text-xs whitespace-pre-wrap overflow-auto max-h-56 border ${vpsDeployStatus === "success" ? "bg-emerald-900/30 text-emerald-300 border-emerald-500/20" : vpsDeployStatus === "failed" ? "bg-red-900/30 text-red-300 border-red-500/20" : "bg-white/5 text-white/70 border-white/10"}`}>
+                {vpsDeployLog}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-1">
+              <Button size="sm" variant="outline" onClick={() => setVpsDeployOpen(false)} className="border-white/10 text-white/60 h-8">Cancel</Button>
+              <Button size="sm" onClick={deployViaVps} disabled={!vpsDeployVpsId || vpsDeployLoading}
+                className="bg-violet-600 hover:bg-violet-700 text-white h-8 px-4">
+                {vpsDeployLoading ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" />Deploying...</> : <><Zap className="w-3 h-3 mr-1.5" />Deploy Now</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header + filters */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-xl font-bold text-white">Bot Orders</h2>
@@ -8204,6 +8292,11 @@ function BotOrdersAdminTab() {
                   className="bg-red-600/20 border border-red-500/30 text-red-300 hover:bg-red-600/30 h-8 px-3 text-xs">
                   {actionLoading === "maintenance" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Shield className="w-3 h-3 mr-1" />}
                   Suspend
+                </Button>
+                <Button size="sm"
+                  onClick={() => { setVpsDeployOpen(true); setVpsDeployLog(""); setVpsDeployStatus("idle"); }}
+                  className="bg-violet-600/20 border border-violet-500/30 text-violet-300 hover:bg-violet-600/30 h-8 px-3 text-xs">
+                  <Server className="w-3 h-3 mr-1" />Deploy via VPS
                 </Button>
                 <Button size="sm"
                   onClick={() => herokuAction(selectedOrder.id, "maintenance", { enabled: false })}
