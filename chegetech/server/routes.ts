@@ -570,6 +570,25 @@ async function deliverAccount(transaction: any): Promise<{ success: boolean; err
     console.error("[referral] Error processing referral reward:", refErr.message);
   }
 
+  // ─── Loyalty credit (every 3rd subscription purchase → KES 50 bonus) ─────
+  try {
+    const allCustOrders = await storage.getTransactionsByEmail(transaction.customerEmail);
+    const completedSubOrders = allCustOrders.filter((o: any) => o.status === "success");
+    const orderCount = completedSubOrders.length;
+    if (orderCount > 0 && orderCount % 3 === 0) {
+      const loyaltyKey = `loyalty_credit_${transaction.customerEmail}_${orderCount}`;
+      if (!dbSettingsGet(loyaltyKey)) {
+        dbSettingsSet(loyaltyKey, new Date().toISOString());
+        const loyaltyCust = await storage.getCustomerByEmail(transaction.customerEmail);
+        if (loyaltyCust) {
+          await storage.creditWallet(loyaltyCust.id, 50, `🎉 Loyalty reward — ${orderCount} purchase milestone`, transaction.reference);
+        }
+      }
+    }
+  } catch (loyaltyErr: any) {
+    console.error("[loyalty] Error:", loyaltyErr.message);
+  }
+
   // ─── Reseller profit split ────────────────────────────────────────
   // Margin is computed from the locked transaction.amount (what the customer
   // actually paid) vs the base plan price, so mutating reseller prices after
@@ -1462,6 +1481,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Admin: Revenue Analytics (last 30 days) ──────────────────────────────
+  app.get("/api/admin/analytics", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const days: { date: string; revenue: number; orders: number; botRevenue: number }[] = [];
+      const now = new Date();
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().slice(0, 10);
+        const nextD = new Date(d);
+        nextD.setDate(nextD.getDate() + 1);
+        let subRevenue = 0, subOrders = 0, botRev = 0;
+        try {
+          const txRows = await runQuery(
+            `SELECT COALESCE(SUM(amount),0) as revenue, COUNT(*) as orders FROM transactions WHERE status='success' AND created_at >= $1 AND created_at < $2`,
+            [d.toISOString(), nextD.toISOString()]
+          );
+          subRevenue = Number(txRows[0]?.revenue || 0);
+          subOrders = Number(txRows[0]?.orders || 0);
+        } catch (_) {}
+        try {
+          const botRows = await runQuery(
+            `SELECT COALESCE(SUM(amount),0) as revenue FROM bot_orders WHERE status IN ('paid','deployed','stopped','suspended','deploy_failed') AND created_at >= $1 AND created_at < $2`,
+            [d.toISOString(), nextD.toISOString()]
+          );
+          botRev = Number(botRows[0]?.revenue || 0);
+        } catch (_) {}
+        days.push({ date: dateStr, revenue: subRevenue + botRev, orders: subOrders, botRevenue: botRev });
+      }
+      res.json({ success: true, days });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ─── Admin: Ratings ───────────────────────────────────────────────────────
   app.get("/api/admin/ratings", adminAuthMiddleware, async (_req, res) => {
     try {
@@ -2113,6 +2167,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Customer: Get my bot orders ─────────────────────────────────────────
+  app.get("/api/customer/my-bots", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const rows = await runQuery(
+        `SELECT bo.id, bo.bot_id, bo.status, bo.amount, bo.heroku_app_name, bo.session_id, bo.created_at, b.name as bot_name, b.image_url as bot_image, b.features as bot_features FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.customer_email = $1 ORDER BY bo.created_at DESC`,
+        [req.customer.email]
+      );
+      res.json({ success: true, bots: rows });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ─── Customer: Get my API keys ────────────────────────────────────────────
   app.get("/api/customer/api-keys", customerAuthMiddleware, async (req: any, res) => {
     try {
@@ -2404,6 +2471,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ═══════════════════════════════════════════════════════════════════════════
 
   // ─── Admin: Get all customers ─────────────────────────────────────────────
+  app.post("/api/admin/customers/bulk", adminAuthMiddleware, requirePermission("customers"), async (req, res) => {
+    try {
+      const { action, ids, emailSubject, emailBody } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0)
+        return res.status(400).json({ success: false, error: "No customers selected" });
+      let affected = 0;
+      if (action === "suspend") {
+        for (const id of ids) {
+          const c = await storage.getCustomerById(id);
+          if (c && !c.suspended) { await storage.updateCustomer(id, { suspended: true }); affected++; }
+        }
+      } else if (action === "unsuspend") {
+        for (const id of ids) {
+          const c = await storage.getCustomerById(id);
+          if (c && c.suspended) { await storage.updateCustomer(id, { suspended: false }); affected++; }
+        }
+      } else if (action === "delete") {
+        for (const id of ids) { await storage.deleteCustomer(id); affected++; }
+      } else if (action === "email" && emailSubject && emailBody) {
+        const custs = await Promise.all(ids.map((id: number) => storage.getCustomerById(id)));
+        const emails = custs.filter(Boolean).map((c: any) => c.email);
+        await sendBulkEmail(emails, emailSubject, emailBody);
+        affected = emails.length;
+      } else {
+        return res.status(400).json({ success: false, error: "Invalid action" });
+      }
+      res.json({ success: true, affected });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get("/api/admin/customers", adminAuthMiddleware, requirePermission("customers"), async (_req, res) => {
     try {
       const all = await storage.getAllCustomers();
