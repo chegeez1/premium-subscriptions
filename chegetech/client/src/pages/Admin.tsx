@@ -1,3 +1,4 @@
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import React, { useState, useEffect, useRef, useCallback, Component } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -24,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -93,6 +94,116 @@ async function plainFetch(url: string, body: any) {
 // ═══════════════════════════════════════════════════════════════
 const SENSITIVE_TABS: Tab[] = ["settings", "subadmins"];
 
+// ─── Analytics Tab ─────────────────────────────────────────────────────────
+function AnalyticsTab() {
+  const { toast } = useToast();
+  const [range, setRange] = useState<"7"|"14"|"30">("30");
+
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/analytics"],
+    queryFn: () => authFetch("/api/admin/analytics"),
+    staleTime: 60000,
+  });
+
+  const days: any[] = data?.days ?? [];
+  const filtered = range === "30" ? days : range === "14" ? days.slice(-14) : days.slice(-7);
+
+  const totalRevenue = filtered.reduce((s: number, d: any) => s + (d.revenue || 0), 0);
+  const totalOrders = filtered.reduce((s: number, d: any) => s + (d.orders || 0), 0);
+  const totalBots = filtered.reduce((s: number, d: any) => s + (d.botRevenue || 0), 0);
+  const avgPerDay = filtered.length ? Math.round(totalRevenue / filtered.length) : 0;
+
+  const chartData = filtered.map((d: any) => ({
+    date: d.date?.slice(5) ?? "",
+    Revenue: d.revenue || 0,
+    Subscriptions: (d.revenue || 0) - (d.botRevenue || 0),
+    Bots: d.botRevenue || 0,
+    Orders: d.orders || 0,
+  }));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-white">Revenue Analytics</h1>
+          <p className="text-xs text-white/40 mt-0.5">Track daily revenue and order trends</p>
+        </div>
+        <div className="flex gap-1">
+          {(["7","14","30"] as const).map(r => (
+            <button key={r} onClick={() => setRange(r)}
+              className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${range === r ? "bg-indigo-600 text-white" : "bg-white/5 text-white/60 hover:bg-white/10"}`}>
+              {r}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: "Total Revenue", value: `KES ${totalRevenue.toLocaleString()}`, color: "from-indigo-600 to-violet-600" },
+          { label: "Total Orders", value: totalOrders.toLocaleString(), color: "from-emerald-600 to-teal-600" },
+          { label: "Bot Revenue", value: `KES ${totalBots.toLocaleString()}`, color: "from-blue-600 to-cyan-600" },
+          { label: "Avg / Day", value: `KES ${avgPerDay.toLocaleString()}`, color: "from-orange-600 to-amber-600" },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="rounded-2xl p-4 border border-white/8 bg-white/3">
+            <p className="text-xs text-white/40 mb-1">{label}</p>
+            <p className={`text-xl font-bold bg-gradient-to-r ${color} bg-clip-text text-transparent`}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Revenue Chart */}
+      <div className="rounded-2xl border border-white/8 bg-white/3 p-5">
+        <h2 className="text-sm font-semibold text-white mb-4">Daily Revenue (KES)</h2>
+        {isLoading ? (
+          <div className="flex items-center justify-center h-48 text-white/30 text-sm">Loading...</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+              <defs>
+                <linearGradient id="colorSub" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="colorBot" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <XAxis dataKey="date" tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ background: "#1e1b4b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", fontSize: "12px" }} />
+              <Legend wrapperStyle={{ fontSize: "12px", color: "rgba(255,255,255,0.6)" }} />
+              <Area type="monotone" dataKey="Subscriptions" stroke="#6366f1" strokeWidth={2} fill="url(#colorSub)" />
+              <Area type="monotone" dataKey="Bots" stroke="#10b981" strokeWidth={2} fill="url(#colorBot)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Orders Bar Chart */}
+      <div className="rounded-2xl border border-white/8 bg-white/3 p-5">
+        <h2 className="text-sm font-semibold text-white mb-4">Daily Orders</h2>
+        {isLoading ? (
+          <div className="flex items-center justify-center h-48 text-white/30 text-sm">Loading...</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <XAxis dataKey="date" tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ background: "#1e1b4b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", fontSize: "12px" }} />
+              <Bar dataKey="Orders" fill="#6366f1" radius={[4,4,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Admin() {
   const [token, setTokenState] = useState<string | null>(() => getToken());
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
@@ -138,6 +249,7 @@ export default function Admin() {
 
   const allTabs: { id: Tab; label: string; icon: any; superOnly?: boolean; alwaysVisible?: boolean }[] = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "analytics", label: "Analytics", icon: TrendingUp },
     { id: "plans", label: "Plans & Offers", icon: Tags },
     { id: "accounts", label: "Accounts", icon: Package },
     { id: "promos", label: "Promo Codes", icon: BadgePercent },
@@ -270,6 +382,7 @@ export default function Admin() {
       <main className="relative z-10 flex-1 overflow-y-auto">
         <div className="p-6">
           {activeTab === "dashboard" && <DashboardTab />}
+          {activeTab === "analytics" && <AnalyticsTab />}
           {activeTab === "plans" && <PlansTab />}
           {activeTab === "accounts" && <AccountsTab />}
           {activeTab === "promos" && <PromosTab />}
@@ -3987,6 +4100,11 @@ function CustomersTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkAction, setBulkAction] = useState<"suspend"|"unsuspend"|"delete"|"email">( "suspend");
+  const [bulkEmailSubject, setBulkEmailSubject] = useState("");
+  const [bulkEmailBody, setBulkEmailBody] = useState("");
+  const [bulkLoading, setBulkLoading] = useState(false);
   const [avatarTargetId, setAvatarTargetId] = useState<number | null>(null);
   const adminAvatarInputRef = useRef<HTMLInputElement>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -4136,8 +4254,50 @@ function CustomersTab() {
     !search || c.email.toLowerCase().includes(search.toLowerCase()) || (c.name || "").toLowerCase().includes(search.toLowerCase())
   );
 
+  async function executeBulkAction() {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    try {
+      const d = await authFetch("/api/admin/customers/bulk", {
+        method: "POST",
+        body: JSON.stringify({ action: bulkAction, ids: Array.from(selectedIds), emailSubject: bulkEmailSubject, emailBody: bulkEmailBody })
+      });
+      if (d.success) {
+        toast({ title: "Bulk action completed", description: `${d.affected} customer(s) affected` });
+        setSelectedIds(new Set());
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
+      } else { toast({ title: "Error", description: d.error, variant: "destructive" }); }
+    } catch { toast({ title: "Error", description: "Bulk action failed", variant: "destructive" }); }
+    finally { setBulkLoading(false); }
+  }
+
   return (
     <>
+      {selectedIds.size > 0 && (
+        <div className="mb-4 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex flex-wrap items-center gap-3">
+          <span className="text-indigo-300 text-sm font-medium">{selectedIds.size} selected</span>
+          <select value={bulkAction} onChange={e => setBulkAction(e.target.value as any)}
+            className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white">
+            <option value="suspend">Suspend</option>
+            <option value="unsuspend">Unsuspend</option>
+            <option value="delete">Delete</option>
+            <option value="email">Send Email</option>
+          </select>
+          {bulkAction === "email" && (
+            <>
+              <input value={bulkEmailSubject} onChange={e => setBulkEmailSubject(e.target.value)}
+                placeholder="Subject" className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white w-40" />
+              <input value={bulkEmailBody} onChange={e => setBulkEmailBody(e.target.value)}
+                placeholder="Message" className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white w-48" />
+            </>
+          )}
+          <button onClick={executeBulkAction} disabled={bulkLoading}
+            className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium disabled:opacity-50">
+            {bulkLoading ? "Processing..." : "Apply"}
+          </button>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs text-white/40 hover:text-white">Clear</button>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-white">Customers</h1>
@@ -4189,6 +4349,11 @@ function CustomersTab() {
               {customers.map((c: any) => (
                 <React.Fragment key={c.id}>
                 <TableRow className="border-white/5 hover:bg-white/3" data-testid={`row-customer-${c.id}`}>
+                  <TableCell className="w-8">
+                    <input type="checkbox" checked={selectedIds.has(c.id)}
+                      onChange={e => setSelectedIds(prev => { const n = new Set(prev); e.target.checked ? n.add(c.id) : n.delete(c.id); return n; })}
+                      className="accent-indigo-500 w-4 h-4 rounded cursor-pointer" />
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-indigo-600/20 flex items-center justify-center shrink-0 overflow-hidden">
