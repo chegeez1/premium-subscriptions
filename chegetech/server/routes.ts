@@ -3650,6 +3650,77 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Admin: Deploy bot order to VPS via SSH ──────────────────────────────
+  app.post("/api/admin/bot-orders/:id/deploy-vps", adminAuthMiddleware, async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.id);
+      const { vpsId } = req.body;
+      if (!vpsId) return res.status(400).json({ success: false, error: "vpsId is required" });
+
+      // Get bot order + repo URL
+      const orderRows = await runQuery(
+        `SELECT bo.*, b.repo_url as bot_repo_url, b.name as bot_name FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.id = $1`,
+        [orderId]
+      );
+      if (!orderRows.length) return res.status(404).json({ success: false, error: "Order not found" });
+      const order = orderRows[0];
+      if (!order.bot_repo_url) return res.status(400).json({ success: false, error: "Bot has no GitHub repo URL configured" });
+
+      const server = vpsManager.getById(vpsId);
+      if (!server) return res.status(404).json({ success: false, error: "VPS server not found" });
+
+      // Mark as deploying
+      await runMutation(`UPDATE bot_orders SET status = 'deploying', updated_at = NOW() WHERE id = $1`, [orderId]);
+
+      const appDir = `/opt/chegetech_bots/order_${orderId}`;
+      const sessionId = (order.session_id || "").replace(/'/g, "");
+
+      const steps: [string, string][] = [
+        ["Create bot directory", `mkdir -p ${appDir}`],
+        ["Check Node.js", `which node || (curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt-get install -y nodejs 2>/dev/null)`],
+        ["Install pm2", `which pm2 2>/dev/null || sudo npm install -g pm2 2>/dev/null || npm install -g pm2`],
+        ["Clone/update repo", `if [ -d "${appDir}/.git" ]; then git -C ${appDir} fetch origin && git -C ${appDir} reset --hard origin/HEAD; else git clone ${order.bot_repo_url} ${appDir}; fi`],
+        ["Install dependencies", `cd ${appDir} && npm install --omit=dev 2>&1 | tail -5`],
+        ["Write .env", `printf 'SESSION_ID=%s\nNODE_ENV=production\n' '${sessionId}' > ${appDir}/.env`],
+        ["Stop old process", `pm2 delete order_${orderId} 2>/dev/null; true`],
+        ["Start bot", `cd ${appDir} && (pm2 start . --name order_${orderId} 2>/dev/null || pm2 start index.js --name order_${orderId} 2>/dev/null || nohup node index.js >> ${appDir}/bot.log 2>&1 &)`],
+        ["Save pm2 list", `pm2 save 2>/dev/null; true`],
+      ];
+
+      const log: string[] = [];
+      let success = true;
+
+      for (const [label, cmd] of steps) {
+        try {
+          const result = await vpsManager.execCommand(server, cmd);
+          const out = [result.stdout, result.stderr ? `[stderr]: ${result.stderr.slice(0, 300)}` : ""].filter(Boolean).join("\n");
+          log.push(`[${label}]\n${out || "(no output)"}`);
+          if (result.code !== 0 && !label.includes("old process") && !label.includes("pm2 list") && !label.includes("pm2") && !label.includes("Check")) {
+            success = false;
+            log.push(`❌ Step failed (exit code ${result.code})`);
+            break;
+          }
+        } catch (err: any) {
+          log.push(`[${label}]\n[ERROR]: ${err.message}`);
+          if (!label.includes("old process") && !label.includes("pm2 list") && !label.includes("pm2")) {
+            success = false;
+            break;
+          }
+        }
+      }
+
+      const fullLog = log.join("\n\n---\n\n").slice(0, 3000);
+      await runMutation(
+        `UPDATE bot_orders SET status = $1, deployment_notes = $2, updated_at = NOW() WHERE id = $3`,
+        [success ? "deployed" : "deploy_failed", fullLog, orderId]
+      );
+
+      res.json({ success, log: fullLog, status: success ? "deployed" : "deploy_failed" });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ─── Customer: Wallet ────────────────────────────────────────────────
   app.get("/api/customer/wallet", customerAuthMiddleware, async (req: any, res) => {
     try {
