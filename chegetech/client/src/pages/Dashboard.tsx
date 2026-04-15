@@ -33,7 +33,7 @@ async function customerFetch(url: string, opts: RequestInit = {}) {
   return res.json();
 }
 
-type DashTab = "orders" | "wallet" | "referral" | "payment-history" | "receipts" | "support" | "apikeys" | "security" | "profile" | "requests";
+type DashTab = "orders" | "my-bots" | "wallet" | "referral" | "payment-history" | "receipts" | "support" | "apikeys" | "security" | "profile" | "requests";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   success: { label: "Completed", color: "text-emerald-400", icon: CheckCircle },
@@ -167,6 +167,12 @@ export default function Dashboard() {
     queryKey: ["/api/customer/orders"],
     queryFn: () => customerFetch("/api/customer/orders"),
     enabled: tab === "orders" || tab === "receipts",
+  });
+
+  const { data: myBotsData, isLoading: myBotsLoading } = useQuery<any>({
+    queryKey: ["/api/customer/my-bots"],
+    queryFn: () => customerFetch("/api/customer/my-bots"),
+    enabled: tab === "my-bots",
   });
 
   const { data: announcementsData } = useQuery<any>({
@@ -806,6 +812,7 @@ export default function Dashboard() {
         <div className="flex gap-2 mb-6 p-1.5 rounded-xl border border-white/10 w-fit flex-wrap" style={{ background: "rgba(255,255,255,.04)" }}>
           {([
             { id: "orders", label: "My Products", icon: Package },
+            { id: "my-bots", label: "My Bots", icon: Bot },
             { id: "wallet", label: "Wallet", icon: Wallet },
             { id: "referral", label: "Referral", icon: Gift },
             { id: "receipts", label: "Receipts", icon: Download },
@@ -1041,6 +1048,85 @@ export default function Dashboard() {
         )}
 
         {/* WALLET TAB */}
+        {/* MY BOTS TAB */}
+        {tab === "my-bots" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold text-white">My Bots</h2>
+              <span className="text-xs text-white/40">{(myBotsData?.bots ?? []).length} deployed</span>
+            </div>
+            {myBotsLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+              </div>
+            ) : (myBotsData?.bots ?? []).length === 0 ? (
+              <div className="text-center py-16 rounded-2xl border border-white/8" style={{ background: "rgba(255,255,255,.02)" }}>
+                <Bot className="w-10 h-10 text-white/20 mx-auto mb-3" />
+                <p className="text-white/40 text-sm">No bots deployed yet</p>
+                <a href="/bots" className="inline-block mt-4 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
+                  Browse Bots
+                </a>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {(myBotsData?.bots ?? []).map((bot: any) => {
+                  const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
+                    deployed: { label: "Running", color: "text-emerald-400", bg: "bg-emerald-500/10" },
+                    paid: { label: "Pending Deploy", color: "text-amber-400", bg: "bg-amber-500/10" },
+                    deploy_failed: { label: "Deploy Failed", color: "text-red-400", bg: "bg-red-500/10" },
+                    stopped: { label: "Stopped", color: "text-gray-400", bg: "bg-gray-500/10" },
+                    suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
+                  };
+                  const s = statusConfig[bot.status] ?? { label: bot.status, color: "text-white/40", bg: "bg-white/5" };
+                  const features = (() => { try { return JSON.parse(bot.bot_features || "[]"); } catch { return []; } })();
+                  return (
+                    <div key={bot.id} className="rounded-2xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 flex items-center justify-center shrink-0">
+                            <Bot className="w-5 h-5 text-indigo-400" />
+                          </div>
+                          <div>
+                            <p className="font-semibold text-white text-sm">{bot.bot_name || "WhatsApp Bot"}</p>
+                            <p className="text-xs text-white/40 mt-0.5">Deployed {new Date(bot.created_at).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${s.bg} ${s.color}`}>{s.label}</span>
+                      </div>
+                      {bot.heroku_app_name && (
+                        <div className="mt-3 flex items-center gap-2 text-xs text-white/40">
+                          <span className="font-mono bg-white/5 px-2 py-1 rounded-lg">{bot.heroku_app_name}</span>
+                        </div>
+                      )}
+                      {features.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {features.slice(0, 4).map((f: string) => (
+                            <span key={f} className="px-2 py-0.5 rounded-full text-[10px] bg-white/5 text-white/50">{f}</span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-3 flex gap-2">
+                        {bot.status === "deploy_failed" || bot.status === "stopped" ? (
+                          <a href="/bots" className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">
+                            Redeploy / Renew
+                          </a>
+                        ) : bot.status === "deployed" ? (
+                          <span className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 font-medium">
+                            ✓ Bot is live
+                          </span>
+                        ) : null}
+                        <a href="/bots" className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 font-medium transition-colors">
+                          Get Another Bot
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === "wallet" && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-white">My Wallet</h2>
