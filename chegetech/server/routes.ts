@@ -726,6 +726,100 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   });
 
+  // ─── Plan Previews (custom uploaded media) ────────────────────────────────
+  const previewUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 8 * 1024 * 1024 }, // 8 MB
+    fileFilter: (_req, file, cb) => {
+      const ok = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|quicktime|ogg))$/.test(file.mimetype);
+      if (!ok) return cb(new Error("Only image (png/jpg/gif/webp) or video (mp4/webm) files allowed"));
+      cb(null, true);
+    },
+  });
+
+  // Public: get preview for a plan (returns base64 data URL for inline rendering)
+  app.get("/api/plans/:planId/preview", async (req, res) => {
+    try {
+      const planId = String(req.params.planId || "").trim();
+      if (!planId) return res.status(400).json({ success: false, error: "planId required" });
+      const rows = await runQuery(
+        `SELECT media_type, mime_type, media_data, file_name, size_bytes, updated_at FROM plan_previews WHERE plan_id = $1 LIMIT 1`,
+        [planId]
+      );
+      if (!rows || rows.length === 0) return res.json({ success: true, preview: null });
+      const r = rows[0];
+      res.json({
+        success: true,
+        preview: {
+          mediaType: r.media_type,
+          mimeType: r.mime_type,
+          dataUrl: `data:${r.mime_type};base64,${r.media_data}`,
+          fileName: r.file_name,
+          sizeBytes: r.size_bytes,
+          updatedAt: r.updated_at,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Admin: upload preview for a plan
+  app.post("/api/admin/plans/:planId/preview", adminAuthMiddleware, previewUpload.single("file"), async (req: any, res) => {
+    try {
+      const planId = String(req.params.planId || "").trim();
+      const file = req.file;
+      if (!planId) return res.status(400).json({ success: false, error: "planId required" });
+      if (!file) return res.status(400).json({ success: false, error: "file required" });
+      const mediaType = file.mimetype.startsWith("video/") ? "video" : "image";
+      const base64 = file.buffer.toString("base64");
+
+      // Upsert
+      await runMutation(
+        `INSERT INTO plan_previews (plan_id, media_type, mime_type, media_data, file_name, size_bytes, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW()::text)
+         ON CONFLICT (plan_id) DO UPDATE SET
+           media_type = EXCLUDED.media_type,
+           mime_type  = EXCLUDED.mime_type,
+           media_data = EXCLUDED.media_data,
+           file_name  = EXCLUDED.file_name,
+           size_bytes = EXCLUDED.size_bytes,
+           updated_at = NOW()::text`,
+        [planId, mediaType, file.mimetype, base64, file.originalname || "preview", file.size]
+      );
+
+      try { logAdminAction({ adminEmail: req.admin?.email || "admin", action: "plan_preview_upload", target: planId, details: `${mediaType} ${file.size} bytes` }); } catch {}
+      res.json({ success: true, planId, mediaType, mimeType: file.mimetype, sizeBytes: file.size });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
+  // Admin: list all plan previews (metadata only — no base64 to keep it light)
+  app.get("/api/admin/plans/previews", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const rows = await runQuery(
+        `SELECT plan_id, media_type, mime_type, file_name, size_bytes, updated_at FROM plan_previews ORDER BY updated_at DESC`,
+        []
+      );
+      res.json({ success: true, previews: rows });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Admin: delete preview
+  app.delete("/api/admin/plans/:planId/preview", adminAuthMiddleware, async (req: any, res) => {
+    try {
+      const planId = String(req.params.planId || "").trim();
+      await runMutation(`DELETE FROM plan_previews WHERE plan_id = $1`, [planId]);
+      try { logAdminAction({ adminEmail: req.admin?.email || "admin", action: "plan_preview_delete", target: planId, details: "" }); } catch {}
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ─── Public: Plans ────────────────────────────────────────────────────────
   app.get("/api/plans", (_req, res) => {
     res.json({ success: true, categories: buildPlansResponse() });
