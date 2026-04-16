@@ -290,6 +290,16 @@ export async function initializeDatabase() {
           created_at TEXT DEFAULT (NOW()::text)
         );
 
+        CREATE TABLE IF NOT EXISTS plan_previews (
+          plan_id TEXT PRIMARY KEY,
+          media_type TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          media_data TEXT NOT NULL,
+          file_name TEXT,
+          size_bytes INTEGER DEFAULT 0,
+          updated_at TEXT DEFAULT (NOW()::text)
+        );
+
         CREATE TABLE IF NOT EXISTS bot_orders (
           id SERIAL PRIMARY KEY,
           reference TEXT UNIQUE NOT NULL,
