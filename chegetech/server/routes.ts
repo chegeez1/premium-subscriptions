@@ -2258,11 +2258,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.json({ success: true, message: "If this email exists, a reset code has been sent" });
       }
 
-      const code = generateVerificationCode();
-      const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-      await storage.updateCustomer(customer.id, { passwordResetCode: code, passwordResetExpires: expires });
-      res.json({ success: true, message: "Reset code sent to your email" });
-      sendPasswordResetEmail(email, code, customer.name || undefined).catch(() => {});
+      const resetToken = crypto.randomBytes(32).toString("hex");
+      const expires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      await storage.updateCustomer(customer.id, { passwordResetCode: resetToken, passwordResetExpires: expires });
+      res.json({ success: true, message: "Password reset link sent to your email", resetMode: "link" });
+      sendPasswordResetLinkEmail(email, resetToken, customer.name || undefined).catch((err) => {
+        console.error("[email] reset link send failed:", err?.message);
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2271,9 +2273,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Customer: Reset Password ─────────────────────────────────────────────
   app.post("/api/auth/reset-password", async (req, res) => {
     try {
-      const { email, code, newPassword } = req.body;
-      if (!email || !code || !newPassword) {
-        return res.status(400).json({ success: false, error: "Email, code, and new password are required" });
+      const { email, code, token: tokenParam, newPassword } = req.body;
+      const submitted = ((tokenParam || code) || "").toString().trim();
+      if (!email || !submitted || !newPassword) {
+        return res.status(400).json({ success: false, error: "Email, token, and new password are required" });
       }
       if (newPassword.length < 6) {
         return res.status(400).json({ success: false, error: "Password must be at least 6 characters" });
@@ -2283,8 +2286,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!customer || !customer.passwordResetCode) {
         return res.status(400).json({ success: false, error: "Invalid or expired reset code" });
       }
-      if (customer.passwordResetCode !== code) {
-        return res.status(400).json({ success: false, error: "Invalid reset code" });
+      if (customer.passwordResetCode !== submitted) {
+        return res.status(400).json({ success: false, error: "Invalid or expired reset link" });
       }
       if (customer.passwordResetExpires && new Date(customer.passwordResetExpires) < new Date()) {
         return res.status(400).json({ success: false, error: "Reset code has expired. Please request a new one." });
