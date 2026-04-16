@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { runQuery, runMutation, dbType } from "./storage";
 import { getPaystackSecretKey, getPaystackPublicKey, getHerokuApiKey } from "./secrets";
 import { promoManager } from "./promo";
+import { customerAuthMiddleware } from "./auth";
 
 function generateReference(): string {
   return `CTB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -708,5 +709,133 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     }
   });
 
+
+
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ── CUSTOMER bot management (own bots only) ────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  async function getOwnedBotOrder(req: any, orderId: number) {
+    if (!req.customer?.email) return null;
+    const rows = await q("SELECT * FROM bot_orders WHERE id = ? AND customer_email = ?", [orderId, req.customer.email]);
+    return rows[0] || null;
+  }
+
+  // Get full status (Heroku app + latest build) for an owned bot
+  app.get("/api/customer/bots/:orderId/status", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const order = await getOwnedBotOrder(req, id);
+      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+      const appName = order.render_service_id;
+      if (!appName) return res.json({ success: true, deployed: false, status: order.status, message: "Not yet deployed" });
+      const apiKey = getHerokuApiKey();
+      if (!apiKey) return res.json({ success: true, deployed: true, status: order.status, message: "Live monitoring unavailable" });
+      try {
+        const [appRes, dynoRes] = await Promise.all([
+          fetch(`https://api.heroku.com/apps/${appName}`, { headers: herokuHeaders(apiKey) }),
+          fetch(`https://api.heroku.com/apps/${appName}/dynos`, { headers: herokuHeaders(apiKey) }),
+        ]);
+        const [appData, dynoData] = await Promise.all([appRes.json(), dynoRes.json()]) as [any, any];
+        res.json({
+          success: true,
+          deployed: true,
+          status: order.status,
+          appName,
+          appUrl: order.render_service_url || (appData?.web_url ?? null),
+          dynos: Array.isArray(dynoData) ? dynoData.map((d: any) => ({
+            type: d.type, state: d.state, updated_at: d.updated_at, command: d.command,
+          })) : [],
+          createdAt: appData?.created_at,
+          maintenance: appData?.maintenance,
+        });
+      } catch (e: any) {
+        res.json({ success: true, deployed: true, status: order.status, error: e.message });
+      }
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  // Tail logs for an owned bot (returns last 200 lines)
+  app.get("/api/customer/bots/:orderId/logs", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const order = await getOwnedBotOrder(req, id);
+      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+      const appName = order.render_service_id;
+      if (!appName) return res.json({ success: true, logs: "Bot is not yet deployed.", lines: [] });
+      const apiKey = getHerokuApiKey();
+      if (!apiKey) return res.json({ success: true, logs: "Live logs unavailable (HEROKU_API_KEY not configured).", lines: [] });
+      try {
+        const sessRes = await fetch(`https://api.heroku.com/apps/${appName}/log-sessions`, {
+          method: "POST",
+          headers: { ...herokuHeaders(apiKey), "Content-Type": "application/json" },
+          body: JSON.stringify({ lines: 200, source: "app", tail: false }),
+        });
+        const sess = await sessRes.json() as any;
+        if (!sess?.logplex_url) return res.json({ success: true, logs: "Could not open log session.", lines: [] });
+        const logRes = await fetch(sess.logplex_url);
+        const text = await logRes.text();
+        const lines = text.split("\n").filter(Boolean).slice(-200);
+        res.json({ success: true, logs: lines.join("\n"), lines });
+      } catch (e: any) {
+        res.json({ success: true, logs: `Failed to fetch logs: ${e.message}`, lines: [] });
+      }
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  // Restart owned bot
+  app.post("/api/customer/bots/:orderId/restart", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const order = await getOwnedBotOrder(req, id);
+      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+      const appName = order.render_service_id;
+      if (!appName) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
+      const apiKey = getHerokuApiKey();
+      if (!apiKey) return res.status(500).json({ success: false, error: "Live controls unavailable" });
+      const r = await fetch(`https://api.heroku.com/apps/${appName}/dynos`, { method: "DELETE", headers: herokuHeaders(apiKey) });
+      res.json({ success: r.ok, message: r.ok ? "Bot restarted" : "Restart failed" });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  // Stop owned bot (scale formation to 0)
+  app.post("/api/customer/bots/:orderId/stop", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const order = await getOwnedBotOrder(req, id);
+      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+      const appName = order.render_service_id;
+      if (!appName) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
+      const apiKey = getHerokuApiKey();
+      if (!apiKey) return res.status(500).json({ success: false, error: "Live controls unavailable" });
+      const r = await fetch(`https://api.heroku.com/apps/${appName}/formation`, {
+        method: "PATCH",
+        headers: { ...herokuHeaders(apiKey), "Content-Type": "application/json" },
+        body: JSON.stringify({ updates: [{ type: "worker", quantity: 0 }, { type: "web", quantity: 0 }] }),
+      });
+      try { await q("UPDATE bot_orders SET status = ? WHERE id = ?", ["stopped", id]); } catch {}
+      res.json({ success: r.ok, message: r.ok ? "Bot stopped" : "Stop failed" });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  // Start (resume) owned bot
+  app.post("/api/customer/bots/:orderId/start", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.orderId);
+      const order = await getOwnedBotOrder(req, id);
+      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+      const appName = order.render_service_id;
+      if (!appName) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
+      const apiKey = getHerokuApiKey();
+      if (!apiKey) return res.status(500).json({ success: false, error: "Live controls unavailable" });
+      const r = await fetch(`https://api.heroku.com/apps/${appName}/formation`, {
+        method: "PATCH",
+        headers: { ...herokuHeaders(apiKey), "Content-Type": "application/json" },
+        body: JSON.stringify({ updates: [{ type: "worker", quantity: 1 }] }),
+      });
+      try { await q("UPDATE bot_orders SET status = ? WHERE id = ?", ["deployed", id]); } catch {}
+      res.json({ success: r.ok, message: r.ok ? "Bot started" : "Start failed" });
+    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+  });
 
 }
