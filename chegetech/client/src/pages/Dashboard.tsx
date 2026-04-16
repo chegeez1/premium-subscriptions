@@ -10,7 +10,8 @@ import {
   Wallet, Link2, History, TrendingUp, Gift, ArrowUpCircle, ArrowDownCircle,
   MessageCircle, Send, PlusCircle, Ticket,
   Bell, BellDot, ShoppingCart, TrendingDown, Star, Sparkles,
-  MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy, ThumbsUp
+  MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy, ThumbsUp,
+  Bot, Play, Square, RotateCw, FileText, Server
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
