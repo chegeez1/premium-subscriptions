@@ -33,14 +33,18 @@ export default function AdminPlanPreviews() {
   async function load() {
     setLoading(true);
     try {
-      const [pRes, prRes] = await Promise.all([
+      const [pRes, prRes, botsRes] = await Promise.all([
         fetch("/api/plans").then(r => r.json()),
         fetch("/api/admin/plans/previews", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+        fetch("/api/admin/bots", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()).catch(() => ({ success: false })),
       ]);
       if (pRes.success) {
         const flat: PlanRow[] = [];
         for (const cat of pRes.categories || []) {
           for (const p of cat.plans || []) flat.push({ id: p.planId, name: p.name, price: p.price, category: cat.category });
+        }
+        if (botsRes?.success && Array.isArray(botsRes.bots)) {
+          for (const b of botsRes.bots) flat.push({ id: `bot:${b.id}`, name: `🤖 ${b.name}`, price: b.price || 0, category: "WhatsApp Bots" });
         }
         setPlans(flat);
       }
