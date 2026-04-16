@@ -86,10 +86,7 @@ export default function Auth() {
       });
       const data = await res.json();
       if (data.success) {
-        toast({ title: "Code resent!", description: "Check your inbox and spam folder" });
-        startCooldown();
-      } else {
-        toast({ title: "Resend failed", description: data.error, variant: "destructive" });
+        toast({ title: "Link resent!", description: "Check your inbox for a new verification link" });
       }
     } catch {
       toast({ title: "Error", description: "Connection failed", variant: "destructive" });
@@ -107,10 +104,7 @@ export default function Auth() {
       });
       const data = await res.json();
       if (data.success) {
-        toast({ title: "Code resent!", description: "Check your email for a new reset code" });
-        startCooldown();
-      } else {
-        toast({ title: "Resend failed", description: data.error, variant: "destructive" });
+        toast({ title: "Link resent!", description: "Check your inbox for a new verification link" });
       }
     } catch {
       toast({ title: "Error", description: "Connection failed", variant: "destructive" });
@@ -174,7 +168,7 @@ export default function Auth() {
       const data = await res.json();
       if (data.success) {
         setMode("verify");
-        toast({ title: "Check your email!", description: "We sent a 6-digit verification code" });
+        toast({ title: "Check your email!", description: "Click the verification link we sent you" });
       } else {
         toast({ title: "Registration failed", description: data.error, variant: "destructive" });
       }
@@ -351,31 +345,21 @@ export default function Auth() {
 
           {/* VERIFY FORM */}
           {mode === "verify" && (
-            <form onSubmit={handleVerify} className="space-y-4">
-              <div className="rounded-xl p-3 text-center text-xs text-white/50" style={{ background: "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.2)" }}>
-                A 6-digit code was sent to <span className="text-indigo-300 font-semibold">{email}</span>.<br />
-                <span className="text-white/35">Check your inbox and spam folder.</span>
+            <div className="space-y-4">
+              <div className="rounded-xl p-5 text-center" style={{ background: "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.2)" }}>
+                <div className="w-14 h-14 rounded-full bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center mx-auto mb-3">
+                  <Mail className="w-6 h-6 text-indigo-300" />
+                </div>
+                <p className="text-white font-semibold text-sm mb-1">Check your inbox</p>
+                <p className="text-white/60 text-xs leading-relaxed">
+                  We sent a verification link to{" "}
+                  <span className="text-indigo-300 font-semibold">{email}</span>.<br />
+                  Click the button in the email to confirm your account.
+                </p>
+                <p className="text-white/35 text-[11px] mt-3">Don't see it? Check your spam folder.</p>
               </div>
-              <div>
-                <label className="text-xs text-white/60 block mb-1.5">Verification Code</label>
-                <NeonInput
-                  icon={<ShieldCheck className="w-4 h-4" />}
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="1  2  3  4  5  6"
-                  value={verifyCode}
-                  onChange={(e) => {
-                    const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
-                    setVerifyCode(digits);
-                  }}
-                  maxLength={6}
-                  testId="input-verify-code"
-                />
-              </div>
-              <NeonButton type="submit" loading={loading} testId="button-verify">
-                Verify Email
-              </NeonButton>
-              <p className="text-center text-white/30 text-xs">
+
+              <p className="text-center text-white/40 text-xs">
                 Didn't get it?{" "}
                 <button
                   type="button"
@@ -384,14 +368,15 @@ export default function Auth() {
                   className="text-indigo-400 font-bold hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="button-resend-verify"
                 >
-                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
+                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend link"}
                 </button>
                 {" "}· valid for 30 min
               </p>
+
               <button type="button" onClick={() => switchMode("login")} className="w-full text-center text-white/40 text-sm hover:text-white/70 transition-colors mt-2">
-                Back to login
+                <ArrowLeft className="w-3.5 h-3.5 inline mr-1" />Back to login
               </button>
-            </form>
+            </div>
           )}
 
           {/* FORGOT PASSWORD FORM */}
