@@ -2326,6 +2326,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── Customer: Order history ──────────────────────────────────────────────
+  app.get("/api/customer/me", customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const c = await storage.getCustomerById(req.customer.id);
+      if (!c) return res.status(404).json({ success: false, error: "Customer not found" });
+      const { passwordHash, verificationCode, passwordResetCode, passwordResetExpires, ...safe } = c as any;
+      res.json({ success: true, customer: safe });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get("/api/customer/orders", customerAuthMiddleware, async (req: any, res) => {
     try {
       // Auto-fail any pending transactions older than 30 minutes
