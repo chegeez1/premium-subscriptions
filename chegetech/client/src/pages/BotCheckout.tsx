@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import ServicePreview from "@/components/ServicePreview";
 import { useToast } from "@/hooks/use-toast";
 
 declare global { interface Window { PaystackPop: any; } }
@@ -259,6 +260,10 @@ export default function BotCheckout() {
               </li>
             ))}
           </ul>
+        </div>
+
+        <div className="mb-6">
+          <ServicePreview planId={"bot:" + botId} />
         </div>
 
         {/* Form */}
