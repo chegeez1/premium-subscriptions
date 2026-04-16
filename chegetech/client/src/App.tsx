@@ -10,6 +10,7 @@ import Checkout from "@/pages/Checkout";
 import CartCheckout from "@/pages/CartCheckout";
 import PaymentSuccess from "@/pages/PaymentSuccess";
 import Admin from "@/pages/Admin";
+import AdminPlanPreviews from "@/pages/AdminPlanPreviews";
 import Auth from "@/pages/Auth";
 import Dashboard from "@/pages/Dashboard";
 import NotFound from "@/pages/not-found";
@@ -101,6 +102,7 @@ function Router() {
         <Route path="/payment/success" component={PaymentSuccess} />
         <Route path="/auth" component={Auth} />
         <Route path="/dashboard" component={Dashboard} />
+        <Route path="/admin/plan-previews" component={AdminPlanPreviews} />
         <Route path="/admin" component={Admin} />
         <Route path="/track" component={Track} />
         <Route path="/docs" component={Docs} />
