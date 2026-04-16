@@ -15,6 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import ServicePreview from "@/components/ServicePreview";
 
 const checkoutSchema = z.object({
   email: z.string().email("Enter a valid email address"),
@@ -330,6 +331,8 @@ export default function Checkout() {
                 ))}
               </div>
             </div>
+
+            <ServicePreview planId={planId} />
 
             <div className="glass-card rounded-2xl p-4 space-y-3">
               {[
