@@ -6,7 +6,7 @@ import { Eye, EyeOff, Mail, Lock, User, ShieldCheck, ArrowLeft, Loader2, KeyRoun
 function setCustomerToken(t: string) { localStorage.setItem("customer_token", t); }
 function setCustomerData(c: any) { localStorage.setItem("customer_data", JSON.stringify(c)); }
 
-type Mode = "login" | "signup" | "verify" | "forgot" | "reset";
+type Mode = "login" | "signup" | "verify" | "forgot" | "forgotSent" | "reset";
 
 export default function Auth() {
   const [mode, setMode] = useState<Mode>("login");
@@ -216,8 +216,8 @@ export default function Auth() {
       });
       const data = await res.json();
       if (data.success) {
-        setMode("reset");
-        toast({ title: "Reset code sent!", description: "Check your email for a 6-digit code" });
+        setMode("forgotSent");
+        toast({ title: "Reset link sent!", description: "Check your inbox for a password reset link" });
       } else {
         toast({ title: "Failed", description: data.error, variant: "destructive" });
       }
@@ -258,6 +258,7 @@ export default function Auth() {
     signup: "Create Account",
     verify: "Verify Email",
     forgot: "Forgot Password",
+    forgotSent: "Check your email",
     reset: "Reset Password",
   };
 
@@ -265,7 +266,8 @@ export default function Auth() {
     login: "Sign in to your Chege Tech account",
     signup: "Join Chege Tech for exclusive access",
     verify: `Enter the code sent to ${email}`,
-    forgot: "Enter your email to receive a reset code",
+    forgot: "Enter your email to get a reset link",
+    forgotSent: "Reset link sent to your inbox",
     reset: `Enter the code sent to ${email}`,
   };
 
@@ -373,6 +375,27 @@ export default function Auth() {
                 {" "}· valid for 30 min
               </p>
 
+              <button type="button" onClick={() => switchMode("login")} className="w-full text-center text-white/40 text-sm hover:text-white/70 transition-colors mt-2">
+                <ArrowLeft className="w-3.5 h-3.5 inline mr-1" />Back to login
+              </button>
+            </div>
+          )}
+
+          {/* FORGOT PASSWORD: link sent confirmation */}
+          {mode === "forgotSent" && (
+            <div className="space-y-4">
+              <div className="rounded-xl p-5 text-center" style={{ background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.2)" }}>
+                <div className="w-14 h-14 rounded-full bg-red-500/20 border border-red-400/40 flex items-center justify-center mx-auto mb-3">
+                  <Mail className="w-6 h-6 text-red-300" />
+                </div>
+                <p className="text-white font-semibold text-sm mb-1">Check your inbox</p>
+                <p className="text-white/60 text-xs leading-relaxed">
+                  We sent a password reset link to{" "}
+                  <span className="text-red-300 font-semibold">{email}</span>.<br />
+                  Click the button in the email to choose a new password.
+                </p>
+                <p className="text-white/35 text-[11px] mt-3">Don't see it? Check your spam folder. Link expires in 30 min.</p>
+              </div>
               <button type="button" onClick={() => switchMode("login")} className="w-full text-center text-white/40 text-sm hover:text-white/70 transition-colors mt-2">
                 <ArrowLeft className="w-3.5 h-3.5 inline mr-1" />Back to login
               </button>
