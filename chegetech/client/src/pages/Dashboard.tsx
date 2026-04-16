@@ -11,7 +11,7 @@ import {
   MessageCircle, Send, PlusCircle, Ticket,
   Bell, BellDot, ShoppingCart, TrendingDown, Star, Sparkles,
   MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy, ThumbsUp,
-  Bot, Play, Square, RotateCw, FileText, Server
+  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -169,6 +169,78 @@ export default function Dashboard() {
     queryFn: () => customerFetch("/api/customer/orders"),
     enabled: tab === "orders" || tab === "receipts",
   });
+
+  const { data: meData, refetch: refetchMe } = useQuery<any>({
+    queryKey: ["/api/customer/me"],
+    queryFn: () => customerFetch("/api/customer/me"),
+    staleTime: 60_000,
+  });
+  const me = meData?.customer ?? getCustomerData();
+  const isUnverified = !!me && me.emailVerified === false;
+
+  const [resending, setResending] = useState(false);
+  const [resentOk, setResentOk] = useState(false);
+  async function resendVerificationLink() {
+    if (!me?.email || resending) return;
+    setResending(true);
+    try {
+      const r = await fetch("/api/auth/resend-verification", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: me.email }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        setResentOk(true);
+        toast({ title: "Verification link sent", description: "Check your inbox" });
+        setTimeout(() => setResentOk(false), 8000);
+      } else {
+        toast({ title: "Failed to resend", description: d.error, variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Network error", variant: "destructive" });
+    } finally { setResending(false); }
+  }
+
+  // ─── Bot management dialog state ───────────────────────────────────────
+  const [manageBotId, setManageBotId] = useState<number | null>(null);
+  const [botStatus, setBotStatus] = useState<any>(null);
+  const [botLogs, setBotLogs] = useState<string>("");
+  const [botBusy, setBotBusy] = useState<string | null>(null);
+  const [botStatusLoading, setBotStatusLoading] = useState(false);
+  const [botLogsLoading, setBotLogsLoading] = useState(false);
+
+  async function loadBotStatus(orderId: number) {
+    setBotStatusLoading(true);
+    try {
+      const d = await customerFetch(`/api/customer/bots/${orderId}/status`);
+      setBotStatus(d);
+    } finally { setBotStatusLoading(false); }
+  }
+  async function loadBotLogs(orderId: number) {
+    setBotLogsLoading(true);
+    try {
+      const d = await customerFetch(`/api/customer/bots/${orderId}/logs`);
+      setBotLogs(d?.logs || "(no logs)");
+    } finally { setBotLogsLoading(false); }
+  }
+  async function botAction(orderId: number, action: "restart" | "stop" | "start") {
+    setBotBusy(action);
+    try {
+      const d = await customerFetch(`/api/customer/bots/${orderId}/${action}`, { method: "POST" });
+      toast({ title: d.success ? d.message : (d.error || "Failed"), variant: d.success ? "default" : "destructive" });
+      if (d.success) await loadBotStatus(orderId);
+    } finally { setBotBusy(null); }
+  }
+  function openManageBot(orderId: number) {
+    setManageBotId(orderId);
+    setBotStatus(null); setBotLogs("");
+    loadBotStatus(orderId);
+    loadBotLogs(orderId);
+  }
+  function closeManageBot() {
+    setManageBotId(null);
+    setBotStatus(null); setBotLogs("");
+  }
 
   const { data: myBotsData, isLoading: myBotsLoading } = useQuery<any>({
     queryKey: ["/api/customer/my-bots"],
@@ -680,7 +752,25 @@ export default function Dashboard() {
   const inputCls = "bg-white/5 border-white/10 text-white placeholder:text-white/25 focus:border-indigo-500/50";
 
   return (
-    <div className="min-h-screen relative overflow-hidden" style={{
+    {isUnverified && (
+        <div className="fixed top-0 inset-x-0 z-50 bg-gradient-to-r from-amber-500/95 to-orange-500/95 backdrop-blur-sm text-white px-4 py-2.5 shadow-lg border-b border-amber-300/30" data-testid="banner-unverified">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-center gap-3 text-sm">
+            <Mail className="w-4 h-4 shrink-0" />
+            <span className="font-medium">Your email isn't verified yet.</span>
+            <span className="text-white/85 hidden sm:inline">Some features may be limited.</span>
+            <button
+              onClick={resendVerificationLink}
+              disabled={resending || resentOk}
+              data-testid="button-resend-verify-banner"
+              className="px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 disabled:opacity-50 text-xs font-bold border border-white/30 flex items-center gap-1.5"
+            >
+              {resending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              {resentOk ? "Link sent ✓" : resending ? "Sending..." : "Resend verification link"}
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="min-h-screen relative overflow-hidden" style={{
       background: "radial-gradient(900px 700px at 15% 25%, rgba(99,102,241,.15), transparent 55%), radial-gradient(700px 600px at 85% 80%, rgba(168,85,247,.12), transparent 55%), linear-gradient(140deg, #0b1020, #0d0724)"
     }}>
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
@@ -1160,6 +1250,9 @@ export default function Dashboard() {
                             ✓ Bot is live
                           </span>
                         ) : null}
+                        <button onClick={() => openManageBot(bot.id)} className="text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 font-medium transition-colors flex items-center gap-1.5" data-testid={`button-manage-bot-${bot.id}`}>
+                          <Server className="w-3 h-3" />Manage
+                        </button>
                         <a href="/bots" className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 font-medium transition-colors">
                           Get Another Bot
                         </a>
@@ -2454,6 +2547,89 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-    </div>
-  );
+
+      {/* ── Bot Management Dialog ───────────────────────────────────── */}
+      {manageBotId !== null && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={closeManageBot} data-testid="dialog-manage-bot">
+          <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-zinc-950 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between px-5 py-3 bg-zinc-950/95 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <Server className="w-4 h-4 text-indigo-400" />
+                <h3 className="text-white font-bold text-sm">Manage Bot</h3>
+              </div>
+              <button onClick={closeManageBot} className="text-white/40 hover:text-white p-1" data-testid="button-close-manage"><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {/* Status card */}
+              <div className="rounded-xl border border-white/10 bg-white/3 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs uppercase tracking-wide text-white/50 font-bold">Live Status</p>
+                  <button onClick={() => loadBotStatus(manageBotId!)} disabled={botStatusLoading} className="text-xs text-indigo-300 hover:text-indigo-200 disabled:opacity-50" data-testid="button-refresh-status">
+                    {botStatusLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Refresh"}
+                  </button>
+                </div>
+                {botStatusLoading && !botStatus ? (
+                  <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+                ) : !botStatus?.success ? (
+                  <p className="text-white/40 text-sm">Couldn't load status</p>
+                ) : !botStatus.deployed ? (
+                  <p className="text-amber-300 text-sm">{botStatus.message || "Not yet deployed"}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {botStatus.appName && (
+                      <div className="text-xs text-white/60"><span className="text-white/40">App:</span> <span className="font-mono text-indigo-300">{botStatus.appName}</span></div>
+                    )}
+                    {botStatus.dynos?.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {botStatus.dynos.map((d: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-1.5">
+                            <span className="text-xs text-white/70 font-mono">{d.type}</span>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${d.state === "up" ? "bg-emerald-500/15 text-emerald-300" : d.state === "starting" ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300"}`}>
+                              {d.state}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-white/40">No active workers</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Controls */}
+              <div className="grid grid-cols-3 gap-2">
+                <button onClick={() => botAction(manageBotId!, "restart")} disabled={!!botBusy} className="px-3 py-2 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-200 text-xs font-bold disabled:opacity-50 flex items-center justify-center gap-1.5" data-testid="button-bot-restart">
+                  {botBusy === "restart" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCw className="w-3 h-3" />}Restart
+                </button>
+                <button onClick={() => botAction(manageBotId!, "stop")} disabled={!!botBusy} className="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-200 text-xs font-bold disabled:opacity-50 flex items-center justify-center gap-1.5" data-testid="button-bot-stop">
+                  {botBusy === "stop" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}Stop
+                </button>
+                <button onClick={() => botAction(manageBotId!, "start")} disabled={!!botBusy} className="px-3 py-2 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 text-xs font-bold disabled:opacity-50 flex items-center justify-center gap-1.5" data-testid="button-bot-start">
+                  {botBusy === "start" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}Start
+                </button>
+              </div>
+
+              {/* Logs */}
+              <div className="rounded-xl border border-white/10 bg-black/60 overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-white/3">
+                  <div className="flex items-center gap-1.5">
+                    <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                    <p className="text-xs text-white/70 font-bold uppercase tracking-wide">Logs (last 200)</p>
+                  </div>
+                  <button onClick={() => loadBotLogs(manageBotId!)} disabled={botLogsLoading} className="text-xs text-indigo-300 hover:text-indigo-200 disabled:opacity-50" data-testid="button-refresh-logs">
+                    {botLogsLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Refresh"}
+                  </button>
+                </div>
+                <pre className="text-[10.5px] text-emerald-300/90 p-3 max-h-72 overflow-auto font-mono leading-relaxed whitespace-pre-wrap break-words" data-testid="text-bot-logs">
+{botLogsLoading && !botLogs ? "Loading logs..." : botLogs || "(no logs yet)"}
+                </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+    );
 }
