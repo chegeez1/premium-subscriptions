@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Play, Music, Briefcase, Shield, Gamepad2, Tv, Headphones,
   Sparkles, Trophy, Star, Mic, Globe, BookOpen, Palette,
@@ -271,6 +272,52 @@ function pickTheme(planId: string): PreviewTheme | null {
 }
 
 export default function ServicePreview({ planId }: { planId: string }) {
+  const [custom, setCustom] = useState<{ mediaType: "image" | "video"; mimeType: string; dataUrl: string } | null>(null);
+  const [loadingCustom, setLoadingCustom] = useState(true);
+
+  useEffect(() => {
+    let cancel = false;
+    setLoadingCustom(true);
+    setCustom(null);
+    if (!planId) { setLoadingCustom(false); return; }
+    fetch(`/api/plans/${encodeURIComponent(planId)}/preview`)
+      .then(r => r.json())
+      .then(j => { if (!cancel && j?.success && j.preview) setCustom(j.preview); })
+      .catch(() => {})
+      .finally(() => { if (!cancel) setLoadingCustom(false); });
+    return () => { cancel = true; };
+  }, [planId]);
+
+  // Custom uploaded media takes priority over built-in themed preview
+  if (custom) {
+    return (
+      <div data-testid="service-preview-custom" className="relative overflow-hidden rounded-2xl border border-white/10 bg-black">
+        {custom.mediaType === "video" ? (
+          <video
+            src={custom.dataUrl}
+            className="w-full h-auto max-h-[420px] object-cover"
+            autoPlay loop muted playsInline controls
+            data-testid="custom-preview-video"
+          />
+        ) : (
+          <img
+            src={custom.dataUrl}
+            alt="Plan preview"
+            className="w-full h-auto max-h-[420px] object-cover"
+            data-testid="custom-preview-image"
+          />
+        )}
+        <div className="absolute top-2 right-2 flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full bg-white/10 backdrop-blur border border-white/20 text-white/80">
+          <Sparkles className="w-3 h-3" />
+          PREVIEW
+        </div>
+      </div>
+    );
+  }
+
+  // While checking for custom preview, render nothing to avoid flicker
+  if (loadingCustom) return null;
+
   const theme = pickTheme(planId);
   if (!theme) return null;
   const { Icon } = theme;
