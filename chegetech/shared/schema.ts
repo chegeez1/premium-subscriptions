@@ -198,3 +198,15 @@ export type Bot = typeof bots.$inferSelect;
 export type InsertBot = typeof bots.$inferInsert;
 export type BotOrder = typeof botOrders.$inferSelect;
 export type InsertBotOrder = typeof botOrders.$inferInsert;
+
+export const planPreviews = sqliteTable("plan_previews", {
+  planId: text("plan_id").primaryKey(),
+  mediaType: text("media_type").notNull(), // 'image' | 'video'
+  mimeType: text("mime_type").notNull(),
+  mediaData: text("media_data").notNull(), // base64
+  fileName: text("file_name"),
+  sizeBytes: integer("size_bytes").default(0),
+  updatedAt: text("updated_at").default(sql`(datetime('now'))`),
+});
+
+export type PlanPreview = typeof planPreviews.$inferSelect;
