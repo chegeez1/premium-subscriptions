@@ -13,6 +13,7 @@ import Admin from "@/pages/Admin";
 import AdminPlanPreviews from "@/pages/AdminPlanPreviews";
 import Auth from "@/pages/Auth";
 import VerifyEmail from "@/pages/VerifyEmail";
+import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
 import NotFound from "@/pages/not-found";
 import Docs from "@/pages/Docs";
@@ -25,7 +26,7 @@ import ChatWidget from "@/components/ChatWidget";
 import CookieConsent from "@/components/CookieConsent";
 
 const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy", "/track", "/bots"];
-const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email"];
+const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password"];
 const NO_COOKIE_PATHS = ["/admin"];
 
 function Router() {
@@ -103,6 +104,7 @@ function Router() {
         <Route path="/payment/success" component={PaymentSuccess} />
         <Route path="/auth" component={Auth} />
         <Route path="/verify-email" component={VerifyEmail} />
+        <Route path="/reset-password" component={ResetPassword} />
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/admin/plan-previews" component={AdminPlanPreviews} />
         <Route path="/admin" component={Admin} />
