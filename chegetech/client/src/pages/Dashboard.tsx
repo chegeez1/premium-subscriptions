@@ -173,7 +173,7 @@ export default function Dashboard() {
   const { data: myBotsData, isLoading: myBotsLoading } = useQuery<any>({
     queryKey: ["/api/customer/my-bots"],
     queryFn: () => customerFetch("/api/customer/my-bots"),
-    enabled: tab === "my-bots",
+    enabled: tab === "my-bots" || tab === "orders",
   });
 
   const { data: announcementsData } = useQuery<any>({
@@ -845,13 +845,13 @@ export default function Dashboard() {
           <div className="space-y-4">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-lg font-bold text-white">Purchase History</h2>
-              <Badge className="bg-white/10 text-white/60 border-white/10">{orders.length} orders</Badge>
+              <Badge className="bg-white/10 text-white/60 border-white/10">{orders.length + ((myBotsData?.bots ?? []).length)} orders</Badge>
             </div>
             {ordersLoading ? (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
               </div>
-            ) : orders.length === 0 ? (
+            ) : orders.length === 0 && (myBotsData?.bots ?? []).length === 0 ? (
               <div className="text-center py-16 rounded-2xl border border-white/8" style={{ background: "rgba(255,255,255,.03)" }}>
                 <ShoppingBag className="w-10 h-10 text-white/20 mx-auto mb-3" />
                 <p className="text-white/40 font-medium">No orders yet</p>
@@ -1045,6 +1045,50 @@ export default function Dashboard() {
                 </div>
               );
             })()}
+            {/* Bot Purchases inside My Products */}
+            {(myBotsData?.bots ?? []).length > 0 && (
+              <div className="space-y-3 mt-3">
+                {(myBotsData?.bots ?? []).map((bot: any) => {
+                  const statusMap: Record<string, { label: string; color: string; icon: any }> = {
+                    paid:          { label: "Paid",        color: "text-emerald-400", icon: CheckCircle },
+                    deployed:      { label: "Deployed",    color: "text-emerald-400", icon: CheckCircle },
+                    pending:       { label: "Pending",     color: "text-amber-400",   icon: Clock },
+                    deploying:     { label: "Deploying",   color: "text-amber-400",   icon: Clock },
+                    failed:        { label: "Failed",      color: "text-red-400",     icon: XCircle },
+                    deploy_failed: { label: "Failed",      color: "text-red-400",     icon: XCircle },
+                    stopped:       { label: "Stopped",     color: "text-white/40",    icon: XCircle },
+                    suspended:     { label: "Suspended",   color: "text-red-400",     icon: XCircle },
+                  };
+                  const sc = statusMap[bot.status] ?? { label: bot.status || "Unknown", color: "text-white/40", icon: Clock };
+                  const SIcon = sc.icon;
+                  return (
+                    <div key={`bot-${bot.id}`} data-testid={`card-bot-order-${bot.id}`} className="rounded-xl border border-white/8 overflow-hidden" style={{ background: "rgba(255,255,255,.04)", backdropFilter: "blur(12px)" }}>
+                      <div className="p-4 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: "rgba(99,102,241,.2)" }}>
+                            <Bot className="w-4 h-4 text-indigo-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-white text-sm truncate">{bot.bot_name || "WhatsApp Bot"}</p>
+                            <p className="text-xs text-white/40 font-mono">Bot Order #{bot.id}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <div className="text-right hidden sm:block">
+                            <p className="text-sm font-bold text-indigo-300">KES {Number(bot.amount || 0).toLocaleString()}</p>
+                            <p className="text-xs text-white/30">{bot.created_at ? new Date(bot.created_at).toLocaleDateString() : ""}</p>
+                          </div>
+                          <div className={`flex items-center gap-1 text-xs font-semibold ${sc.color}`}>
+                            <SIcon className="w-3.5 h-3.5" />
+                            {sc.label}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
