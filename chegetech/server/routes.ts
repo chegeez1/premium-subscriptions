@@ -92,32 +92,40 @@ function getReqIp(req: any): string {
   return (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
 }
 
-async function sendVerificationEmail(email: string, code: string, name?: string): Promise<void> {
+function buildVerificationLink(email: string, token: string): string {
+  const base = (getAppConfig().customDomain && `https://${getAppConfig().customDomain}`)
+    || (getAppConfig().appDomain && `https://${getAppConfig().appDomain}`)
+    || "https://streamvault-premium.site";
+  return `${base}/api/auth/verify-link?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
+}
+
+async function sendVerificationEmail(email: string, token: string, name?: string): Promise<void> {
   const { Resend } = await import("resend");
   const key = getResendApiKey();
   if (!key || key.startsWith("re_xxx") || key === "re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") {
-    console.warn("[email][OTP] RESEND_API_KEY is missing or still a placeholder — OTP email NOT sent. Go to Admin → Settings → Credentials and enter your real Resend API key.");
+    console.warn("[email][verify] RESEND_API_KEY is missing or still a placeholder — verification email NOT sent.");
     return;
   }
   const resend = new Resend(key);
   const fromAddr = getResendOtpFrom() || getResendFrom() || "onboarding@resend.dev";
   const from = `StreamVault Premium <${fromAddr}>`;
+  const link = buildVerificationLink(email, token);
   const html = `<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
-  <div style="max-width:500px;margin:40px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
+  <div style="max-width:520px;margin:40px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
     <div style="background:linear-gradient(135deg,#4169E1 0%,#7C3AED 100%);padding:32px;text-align:center;">
       <h1 style="color:#fff;margin:0 0 6px;font-size:24px;font-weight:700;">Verify Your Email</h1>
       <p style="color:rgba(255,255,255,.85);margin:0;font-size:14px;">Chege Tech · StreamVault Premium</p>
     </div>
-    <div style="padding:32px;text-align:center;">
+    <div style="padding:32px 32px 24px;text-align:center;">
       <p style="font-size:15px;color:#333;margin:0 0 8px;">Hi <strong>${name || "there"}</strong>, welcome!</p>
-      <p style="font-size:14px;color:#555;margin:0 0 28px;">Use the code below to verify your email address. It expires in <strong>30 minutes</strong>.</p>
-      <div style="background:#f0f4ff;border:2px dashed #4169E1;border-radius:12px;padding:20px 32px;display:inline-block;margin-bottom:28px;">
-        <p style="font-size:40px;font-weight:900;letter-spacing:10px;color:#4169E1;margin:0;font-family:monospace;">${code}</p>
-      </div>
-      <p style="font-size:13px;color:#888;margin:0;">Do not share this code with anyone. If you didn't sign up, ignore this email.</p>
+      <p style="font-size:14px;color:#555;margin:0 0 28px;">Click the button below to confirm your email address. The link expires in <strong>30 minutes</strong>.</p>
+      <a href="${link}" target="_blank" rel="noopener" style="display:inline-block;background:linear-gradient(135deg,#4169E1 0%,#7C3AED 100%);color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:15px 42px;border-radius:10px;letter-spacing:.3px;box-shadow:0 4px 14px rgba(65,105,225,.35);">Verify My Email</a>
+      <p style="font-size:12px;color:#888;margin:24px 0 6px;">Or copy and paste this link into your browser:</p>
+      <p style="font-size:11px;color:#4169E1;margin:0 0 8px;word-break:break-all;font-family:monospace;">${link}</p>
+      <p style="font-size:12px;color:#aaa;margin:18px 0 0;">If you didn't sign up, you can safely ignore this email.</p>
     </div>
     <div style="background:#f8faff;padding:16px;text-align:center;border-top:1px solid #eee;">
       <p style="font-size:12px;color:#aaa;margin:0;">&copy; ${new Date().getFullYear()} Chege Tech. All rights reserved.</p>
@@ -125,7 +133,7 @@ async function sendVerificationEmail(email: string, code: string, name?: string)
   </div>
 </body>
 </html>`;
-  const { error } = await resend.emails.send({ from, to: email, subject: "Your Chege Tech Verification Code", html });
+  const { error } = await resend.emails.send({ from, to: email, subject: "Verify your Chege Tech email", html });
   if (error) throw new Error(error.message);
 }
 
@@ -2003,7 +2011,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const passwordHash = await bcrypt.hash(password, 10);
-      const verificationCode = generateVerificationCode();
+      const verificationCode = crypto.randomBytes(32).toString("hex");
       const verificationExpiresDate = new Date(Date.now() + 30 * 60 * 1000);
       const verificationExpires = verificationExpiresDate.toISOString();
 
@@ -2020,7 +2028,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
 
-      res.json({ success: true, message: "Verification code sent to your email" });
+      res.json({ success: true, message: "Verification link sent to your email", verificationMode: "link" });
       sendVerificationEmail(email, verificationCode, name).catch((err) => {
         console.error("[email] Failed to send verification code to", email, err?.message);
       });
@@ -2037,10 +2045,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const customer = await storage.getCustomerByEmail(email);
       if (!customer) return res.status(404).json({ success: false, error: "Account not found" });
       if (customer.emailVerified) return res.status(400).json({ success: false, error: "Email already verified" });
-      const verificationCode = generateVerificationCode();
+      const verificationCode = crypto.randomBytes(32).toString("hex");
       const verificationExpires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
       await storage.updateCustomer(customer.id, { verificationCode, verificationExpires });
-      res.json({ success: true, message: "Verification code resent" });
+      res.json({ success: true, message: "Verification link resent", verificationMode: "link" });
       sendVerificationEmail(email, verificationCode, customer.name || undefined).catch((err) => {
         console.error("[email] Failed to resend verification code to", email, err?.message);
       });
@@ -2050,14 +2058,77 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── Customer: Verify email ───────────────────────────────────────────────
+  // ─── Customer: Verify email via link (clicked from email) ───────────────────
+  app.get("/api/auth/verify-link", async (req, res) => {
+    const escapeHtml = (s: string) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+    const sitePrefix = (() => {
+      const cfg = getAppConfig();
+      if (cfg.customDomain) return `https://${cfg.customDomain}`;
+      if (cfg.appDomain) return `https://${cfg.appDomain}`;
+      return "";
+    })();
+    const renderPage = (opts: { ok: boolean; title: string; body: string; cta?: { label: string; href: string } }) => {
+      const color = opts.ok ? "#10B981" : "#EF4444";
+      const icon = opts.ok ? "✓" : "✕";
+      const cta = opts.cta ? `<a href="${opts.cta.href}" style="display:inline-block;margin-top:18px;background:linear-gradient(135deg,#4169E1 0%,#7C3AED 100%);color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 28px;border-radius:8px;">${escapeHtml(opts.cta.label)}</a>` : "";
+      return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${escapeHtml(opts.title)}</title></head><body style="margin:0;padding:0;background:#0a0a14;font-family:-apple-system,'Segoe UI',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;"><div style="max-width:440px;width:90%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:40px 28px;text-align:center;backdrop-filter:blur(12px);"><div style="width:64px;height:64px;border-radius:50%;background:${color}22;border:2px solid ${color};color:${color};font-size:32px;font-weight:bold;display:inline-flex;align-items:center;justify-content:center;margin:0 auto 20px;">${icon}</div><h1 style="color:#fff;margin:0 0 10px;font-size:22px;font-weight:700;">${escapeHtml(opts.title)}</h1><p style="color:rgba(255,255,255,.65);margin:0;font-size:14px;line-height:1.5;">${opts.body}</p>${cta}</div></body></html>`;
+    };
+
+    try {
+      const tokenParam = String((req.query.token ?? "")).trim();
+      const emailParam = String((req.query.email ?? "")).trim();
+      if (!tokenParam || !emailParam) {
+        return res.status(400).type("html").send(renderPage({ ok: false, title: "Invalid link", body: "This verification link is missing required parameters.", cta: { label: "Back to sign in", href: `${sitePrefix}/auth` } }));
+      }
+      const customer = await storage.getCustomerByEmail(emailParam);
+      if (!customer) {
+        return res.status(404).type("html").send(renderPage({ ok: false, title: "Account not found", body: "We couldn't find an account for this email.", cta: { label: "Sign up", href: `${sitePrefix}/auth` } }));
+      }
+      if (customer.emailVerified) {
+        return res.status(200).type("html").send(renderPage({ ok: true, title: "Already verified", body: "Your email has already been confirmed. You can sign in now.", cta: { label: "Go to sign in", href: `${sitePrefix}/auth` } }));
+      }
+      if (customer.verificationCode !== tokenParam) {
+        return res.status(400).type("html").send(renderPage({ ok: false, title: "Invalid link", body: "This verification link is invalid. Please request a new one.", cta: { label: "Resend link", href: `${sitePrefix}/auth` } }));
+      }
+      if (customer.verificationExpires && new Date(customer.verificationExpires) < new Date()) {
+        return res.status(400).type("html").send(renderPage({ ok: false, title: "Link expired", body: "This verification link has expired. Please request a new one.", cta: { label: "Resend link", href: `${sitePrefix}/auth` } }));
+      }
+
+      await storage.updateCustomer(customer.id, { emailVerified: true, verificationCode: null, verificationExpires: null });
+
+      const sessionToken = uuidv4();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const ua = req.headers["user-agent"] || "";
+      await storage.createCustomerSession(customer.id, sessionToken, expiresAt, {
+        ip: getReqIp(req), userAgent: ua, deviceName: parseDeviceName(ua),
+      });
+
+      res.cookie("customer_token", sessionToken, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: "/",
+      });
+
+      notifyNewCustomer({ name: customer.name || "", email: customer.email }).catch(() => {});
+
+      // Redirect to a frontend success page (it will pick up the cookie via /api/auth/me)
+      return res.redirect(`${sitePrefix}/verify-email?status=success`);
+    } catch (err: any) {
+      console.error("[verify-link]", err);
+      return res.status(500).type("html").send(renderPage({ ok: false, title: "Something went wrong", body: escapeHtml(err.message || "Try again later."), cta: { label: "Back to sign in", href: `${sitePrefix}/auth` } }));
+    }
+  });
+
   app.post("/api/auth/verify-email", async (req, res) => {
     try {
-      const { email, code } = req.body;
-      const trimmedCode = (code || "").toString().trim();
+      const { email, code, token: tokenParam } = req.body;
+      const submitted = ((tokenParam || code) || "").toString().trim();
       const customer = await storage.getCustomerByEmail(email);
       if (!customer) return res.status(404).json({ success: false, error: "Account not found" });
       if (customer.emailVerified) return res.status(400).json({ success: false, error: "Email already verified" });
-      if (!trimmedCode || customer.verificationCode !== trimmedCode) return res.status(400).json({ success: false, error: "Invalid verification code" });
+      if (!submitted || customer.verificationCode !== submitted) return res.status(400).json({ success: false, error: "Invalid or expired verification link" });
       if (customer.verificationExpires && new Date(customer.verificationExpires) < new Date()) {
         return res.status(400).json({ success: false, error: "Verification code has expired. Click resend to get a new one." });
       }
