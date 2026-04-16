@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from "uuid";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { storage, dbSettingsGet, dbSettingsSet, getDb, dbType, runQuery } from "./storage";
+import { storage, dbSettingsGet, dbSettingsSet, getDb, dbType, runQuery, runMutation } from "./storage";
 import { accountManager } from "./accounts";
 import { sendAccountEmail, sendPasswordResetEmail, sendSuspensionEmail, sendUnsuspensionEmail, sendBulkEmail } from "./email";
 import { sendTelegramMessage, notifyNewOrder, notifyNewCustomer, notifyPaymentFailed, isTelegramConfigured, notifySupportEscalation } from "./telegram";
@@ -2160,6 +2160,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Customer: Order history ──────────────────────────────────────────────
   app.get("/api/customer/orders", customerAuthMiddleware, async (req: any, res) => {
     try {
+      // Auto-fail any pending transactions older than 30 minutes
+      try { await storage.cancelExpiredTransactions(30); } catch (e) { console.warn("cancelExpiredTransactions:", e); }
       const orders = await storage.getTransactionsByEmail(req.customer.email);
       res.json({ success: true, orders });
     } catch (err: any) {
@@ -2170,6 +2172,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Customer: Get my bot orders ─────────────────────────────────────────
   app.get("/api/customer/my-bots", customerAuthMiddleware, async (req: any, res) => {
     try {
+      // Auto-fail any pending bot orders older than 30 minutes
+      try {
+        await runMutation(
+          `UPDATE bot_orders SET status = 'failed', updated_at = NOW() WHERE customer_email = $1 AND status = 'pending' AND created_at < NOW() - INTERVAL '30 minutes'`,
+          [req.customer.email]
+        );
+      } catch (e) { console.warn("auto-fail bot_orders:", e); }
       const rows = await runQuery(
         `SELECT bo.id, bo.bot_id, bo.status, bo.amount, bo.session_id, bo.created_at, b.name as bot_name, b.image_url as bot_image, b.features as bot_features FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.customer_email = $1 ORDER BY bo.created_at DESC`,
         [req.customer.email]
