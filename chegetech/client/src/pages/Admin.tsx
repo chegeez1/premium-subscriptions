@@ -8051,26 +8051,26 @@ const [bulkVpsId, setBulkVpsId] = useState("");
     }
   };
 
-const doBulkAction = async (actionType: string) => {
-  setBulkLoading(actionType); setBulkResult(null);
-  try {
-    const url = actionType === "restart-all" ? "/api/admin/bots/bulk/restart-all"
-      : actionType === "suspend-expired" ? "/api/admin/bots/bulk/suspend-expired"
-      : `/api/admin/bots/bulk/restart-vps/${bulkVpsId}`;
-    if (actionType === "restart-vps" && !bulkVpsId) { setBulkResult("Enter a VPS ID first"); setBulkLoading(null); return; }
-    const r = await fetch(url, { method: "POST", headers: authHeaders() as any });
-    const d = await r.json();
-    if (d.success) {
-      const msg = actionType === "restart-all" ? `Restarted ${d.restarted}/${d.total} bots`
-        : actionType === "suspend-expired" ? `Suspended ${d.suspended} expired bots`
-        : `Restarted ${d.restarted}/${d.total} bots on VPS`;
-      setBulkResult(msg);
-      toast({ title: msg });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
-    } else { setBulkResult("Error: " + (d.error || "Unknown")); }
-  } catch (e: any) { setBulkResult("Error: " + e.message); }
-  finally { setBulkLoading(null); }
-};
+  const doBulkAction = async (actionType: string) => {
+    setBulkLoading(actionType); setBulkResult(null);
+    try {
+      const url = actionType === "restart-all" ? "/api/admin/bots/bulk/restart-all"
+        : actionType === "suspend-expired" ? "/api/admin/bots/bulk/suspend-expired"
+        : `/api/admin/bots/bulk/restart-vps/${bulkVpsId}`;
+      if (actionType === "restart-vps" && !bulkVpsId) { setBulkResult("Enter a VPS ID first"); setBulkLoading(null); return; }
+      const r = await fetch(url, { method: "POST", headers: authHeaders() as any });
+      const d = await r.json();
+      if (d.success) {
+        const msg = actionType === "restart-all" ? `Restarted ${d.restarted}/${d.total} bots`
+          : actionType === "suspend-expired" ? `Suspended ${d.suspended} expired bots`
+          : `Restarted ${d.restarted}/${d.total} bots on VPS`;
+        setBulkResult(msg);
+        toast({ title: msg });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
+      } else { setBulkResult("Error: " + (d.error || "Unknown")); }
+    } catch (e: any) { setBulkResult("Error: " + e.message); }
+    finally { setBulkLoading(null); }
+  };
 
   async function deployViaVps() {
     if (!selectedOrder || !vpsDeployVpsId) return;
