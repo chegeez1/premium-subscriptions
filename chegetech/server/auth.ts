@@ -207,3 +207,24 @@ export function requirePermission(...perms: string[]) {
     next();
   };
 }
+
+  export async function customerAuthMiddleware(req: any, res: any, next: any) {
+    // Cookie-first: read HttpOnly cookie set on login; fall back to Bearer header for API clients
+    const token: string =
+      req.cookies?.customer_token ||
+      (req.headers.authorization ? req.headers.authorization.replace("Bearer ", "") : "");
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    if (!_storageRef) return res.status(500).json({ error: "Server not ready" });
+    const session = await _storageRef.getCustomerSession(token);
+    if (!session) return res.status(401).json({ error: "Unauthorized" });
+    if (new Date(session.expiresAt) < new Date()) {
+      await _storageRef.deleteCustomerSession(token);
+      return res.status(401).json({ error: "Session expired" });
+    }
+    const customer = await _storageRef.getCustomerById(session.customerId);
+    if (!customer) return res.status(401).json({ error: "Unauthorized" });
+    if (customer.suspended) return res.status(403).json({ error: "Account suspended. Contact support." });
+    req.customer = customer;
+    next();
+  }
+  
