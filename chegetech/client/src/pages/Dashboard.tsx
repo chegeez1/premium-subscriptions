@@ -752,6 +752,7 @@ export default function Dashboard() {
   const inputCls = "bg-white/5 border-white/10 text-white placeholder:text-white/25 focus:border-indigo-500/50";
 
   return (
+    <>
     {isUnverified && (
         <div className="fixed top-0 inset-x-0 z-50 bg-gradient-to-r from-amber-500/95 to-orange-500/95 backdrop-blur-sm text-white px-4 py-2.5 shadow-lg border-b border-amber-300/30" data-testid="banner-unverified">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-center gap-3 text-sm">
@@ -2631,5 +2632,6 @@ export default function Dashboard() {
         </div>
       )}
       </div>
+    </>
     );
 }
