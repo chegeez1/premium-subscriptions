@@ -1210,6 +1210,8 @@ export default function Dashboard() {
                     deployed: { label: "Running", color: "text-emerald-400", bg: "bg-emerald-500/10" },
                     paid: { label: "Pending Deploy", color: "text-amber-400", bg: "bg-amber-500/10" },
                     deploy_failed: { label: "Deploy Failed", color: "text-red-400", bg: "bg-red-500/10" },
+                    configuring: { label: "Configuring", color: "text-blue-400", bg: "bg-blue-500/10" },
+                    deploying: { label: "Deploying", color: "text-indigo-400", bg: "bg-indigo-500/10" },
                     stopped: { label: "Stopped", color: "text-gray-400", bg: "bg-gray-500/10" },
                     suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
                   };
@@ -1229,9 +1231,10 @@ export default function Dashboard() {
                         </div>
                         <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${s.bg} ${s.color}`}>{s.label}</span>
                       </div>
-                      {bot.heroku_app_name && (
+                      {bot.pm2_name && (
                         <div className="mt-3 flex items-center gap-2 text-xs text-white/40">
-                          <span className="font-mono bg-white/5 px-2 py-1 rounded-lg">{bot.heroku_app_name}</span>
+                          <span className="text-white/30">PM2:</span>
+                          <span className="font-mono bg-white/5 px-2 py-1 rounded-lg text-indigo-300">{bot.pm2_name}</span>
                         </div>
                       )}
                       {features.length > 0 && (
@@ -2578,23 +2581,15 @@ export default function Dashboard() {
                   <p className="text-amber-300 text-sm">{botStatus.message || "Not yet deployed"}</p>
                 ) : (
                   <div className="space-y-2">
-                    {botStatus.appName && (
-                      <div className="text-xs text-white/60"><span className="text-white/40">App:</span> <span className="font-mono text-indigo-300">{botStatus.appName}</span></div>
+                    {botStatus.pm2Name && (
+                      <div className="text-xs text-white/60"><span className="text-white/40">PM2:</span> <span className="font-mono text-indigo-300">{botStatus.pm2Name}</span></div>
                     )}
-                    {botStatus.dynos?.length > 0 ? (
-                      <div className="space-y-1.5">
-                        {botStatus.dynos.map((d: any, i: number) => (
-                          <div key={i} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-1.5">
-                            <span className="text-xs text-white/70 font-mono">{d.type}</span>
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${d.state === "up" ? "bg-emerald-500/15 text-emerald-300" : d.state === "starting" ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300"}`}>
-                              {d.state}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-white/40">No active workers</p>
-                    )}
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-white/40">Status:</span>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${botStatus.pm2Status === "online" ? "bg-emerald-500/15 text-emerald-300" : botStatus.pm2Status === "stopped" ? "bg-gray-500/15 text-gray-300" : "bg-amber-500/15 text-amber-300"}`}>
+                        {botStatus.pm2Status ?? "unknown"}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
