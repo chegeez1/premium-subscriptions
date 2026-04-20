@@ -11,7 +11,7 @@ import {
   MessageCircle, Send, PlusCircle, Ticket,
   Bell, BellDot, ShoppingCart, TrendingDown, Star, Sparkles,
   MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy, ThumbsUp,
-  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal
+  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal, Edit3, RefreshCw
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -207,7 +207,11 @@ export default function Dashboard() {
   const [botLogs, setBotLogs] = useState<string>("");
   const [botBusy, setBotBusy] = useState<string | null>(null);
   const [botStatusLoading, setBotStatusLoading] = useState(false);
-  const [botLogsLoading, setBotLogsLoading] = useState(false);
+    const [botLogsLoading, setBotLogsLoading] = useState(false);
+    const [botEnvVars, setBotEnvVars] = useState<Record<string, string>>({});
+    const [botEnvEditing, setBotEnvEditing] = useState(false);
+    const [botEnvSaving, setBotEnvSaving] = useState(false);
+    const [botEnvLoading, setBotEnvLoading] = useState(false);
 
   async function loadBotStatus(orderId: number) {
     setBotStatusLoading(true);
@@ -231,15 +235,25 @@ export default function Dashboard() {
       if (d.success) await loadBotStatus(orderId);
     } finally { setBotBusy(null); }
   }
+  async function loadBotEnvVars(orderId: number) {
+    setBotEnvLoading(true);
+    try {
+      const r = await customerFetch(`/api/customer/bots/${orderId}/env-vars`);
+      if (r.success) setBotEnvVars(r.envVars || {});
+    } catch (e) { console.warn("loadBotEnvVars:", e); }
+    finally { setBotEnvLoading(false); }
+  }
+
   function openManageBot(orderId: number) {
     setManageBotId(orderId);
-    setBotStatus(null); setBotLogs("");
+    setBotStatus(null); setBotLogs(""); setBotEnvVars({}); setBotEnvEditing(false);
     loadBotStatus(orderId);
     loadBotLogs(orderId);
+    loadBotEnvVars(orderId);
   }
   function closeManageBot() {
     setManageBotId(null);
-    setBotStatus(null); setBotLogs("");
+    setBotStatus(null); setBotLogs(""); setBotEnvVars({}); setBotEnvEditing(false);
   }
 
   const { data: myBotsData, isLoading: myBotsLoading } = useQuery<any>({
@@ -1211,6 +1225,7 @@ export default function Dashboard() {
                     paid: { label: "Pending Deploy", color: "text-amber-400", bg: "bg-amber-500/10" },
                     deploy_failed: { label: "Deploy Failed", color: "text-red-400", bg: "bg-red-500/10" },
                     configuring: { label: "Configuring", color: "text-blue-400", bg: "bg-blue-500/10" },
+    suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
                     deploying: { label: "Deploying", color: "text-indigo-400", bg: "bg-indigo-500/10" },
                     stopped: { label: "Stopped", color: "text-gray-400", bg: "bg-gray-500/10" },
                     suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
@@ -1237,6 +1252,28 @@ export default function Dashboard() {
                           <span className="font-mono bg-white/5 px-2 py-1 rounded-lg text-indigo-300">{bot.pm2_name}</span>
                         </div>
                       )}
+                      {bot.expires_at && bot.status === "deployed" && (() => {
+                        const daysLeft = Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000);
+                        if (daysLeft > 14) return null;
+                        const color = daysLeft <= 0 ? "text-red-400 bg-red-500/10 border-red-500/20" : daysLeft <= 3 ? "text-red-400 bg-red-500/10 border-red-500/20" : daysLeft <= 7 ? "text-amber-400 bg-amber-500/10 border-amber-500/20" : "text-indigo-400 bg-indigo-500/10 border-indigo-500/20";
+                        const label = daysLeft <= 0 ? "Expired" : `Expires in ${daysLeft}d`;
+                        return (
+                          <div className={`mt-2 flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border w-fit ${color}`}>
+                            <Bell className="w-3 h-3" />
+                            {label}
+                          </div>
+                        );
+                      })()}
+                      {bot.expires_at && bot.status === "deployed" && (() => {
+                        const daysLeft = Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000);
+                        if (daysLeft > 7 || daysLeft <= 0) return null;
+                        return (
+                          <div className="mt-2 flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-300">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            <span>Your bot expires in <strong>{daysLeft} day{daysLeft !== 1 ? 's' : ''}</strong>. Renew to keep it running.</span>
+                          </div>
+                        );
+                      })()}
                       {features.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1.5">
                           {features.slice(0, 4).map((f: string) => (
@@ -2621,6 +2658,70 @@ export default function Dashboard() {
                 <pre className="text-[10.5px] text-emerald-300/90 p-3 max-h-72 overflow-auto font-mono leading-relaxed whitespace-pre-wrap break-words" data-testid="text-bot-logs">
 {botLogsLoading && !botLogs ? "Loading logs..." : botLogs || "(no logs yet)"}
                 </pre>
+              </div>
+
+              {/* ── Env Vars Editor ─────────────────────────────────────────────── */}
+              <div className="rounded-xl border border-white/10 bg-white/3 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
+                    <span className="text-xs font-semibold text-white/80">Environment Variables</span>
+                  </div>
+                  {!botEnvEditing && (
+                    <button onClick={() => setBotEnvEditing(true)} className="text-xs text-indigo-300 hover:text-indigo-200 flex items-center gap-1">
+                      <Edit3 className="w-3 h-3" /> Edit
+                    </button>
+                  )}
+                </div>
+                {botEnvLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-white/40 py-2"><Loader2 className="w-3 h-3 animate-spin" /> Loading env vars…</div>
+                ) : Object.keys(botEnvVars).length === 0 ? (
+                  <p className="text-xs text-white/30 py-1">No env vars stored.</p>
+                ) : botEnvEditing ? (
+                  <div className="space-y-2">
+                    {Object.entries(botEnvVars).map(([k, v]) => (
+                      <div key={k} className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono text-white/40 w-36 shrink-0 truncate">{k}</span>
+                        <input
+                          className="flex-1 text-xs bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-white/80 font-mono focus:outline-none focus:border-indigo-500/50"
+                          value={v}
+                          onChange={e => setBotEnvVars(prev => ({ ...prev, [k]: e.target.value }))}
+                        />
+                      </div>
+                    ))}
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        disabled={botEnvSaving}
+                        onClick={async () => {
+                          setBotEnvSaving(true);
+                          try {
+                            const r = await customerFetch(`/api/customer/bots/${manageBotId}/env-vars`, {
+                              method: "PATCH",
+                              body: JSON.stringify({ envVars: botEnvVars }),
+                            });
+                            if (r.success) { setBotEnvEditing(false); toast({ title: "Env vars saved & bot restarted" }); }
+                            else toast({ title: "Failed to save", description: r.error, variant: "destructive" });
+                          } catch (e: any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
+                          finally { setBotEnvSaving(false); }
+                        }}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {botEnvSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                        {botEnvSaving ? "Saving…" : "Save & Restart"}
+                      </button>
+                      <button onClick={() => { setBotEnvEditing(false); loadBotEnvVars(manageBotId!); }} className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {Object.entries(botEnvVars).map(([k]) => (
+                      <div key={k} className="flex items-center gap-2 text-xs">
+                        <span className="font-mono text-white/50 text-[10px]">{k}</span>
+                        <span className="text-white/20 text-[10px]">= ••••••••</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
