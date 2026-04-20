@@ -1,8 +1,9 @@
 import type { Express } from "express";
 import { runQuery, runMutation, dbType } from "./storage";
-import { getPaystackSecretKey, getPaystackPublicKey, getHerokuApiKey } from "./secrets";
+import { getPaystackSecretKey, getPaystackPublicKey } from "./secrets";
 import { promoManager } from "./promo";
 import { customerAuthMiddleware } from "./auth";
+import { vpsManager } from "./vps-manager";
 
 function generateReference(): string {
   return `CTB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -64,101 +65,58 @@ async function m(template: string, params: any[] = []): Promise<void> {
   return runMutation(query, p);
 }
 
-// ── Heroku headers helper ─────────────────────────────────────────────────────
-function herokuHeaders(apiKey: string) {
-  return {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-    Accept: "application/vnd.heroku+json; version=3",
-  };
-}
-
-// ── Auto-deploy bot to Heroku ─────────────────────────────────────────────────
-async function deployBotToHeroku(
-  order: Record<string, any>,
-  bot: Record<string, any>
-): Promise<{ appName: string; appUrl: string } | null> {
-  const apiKey = getHerokuApiKey();
-  if (!apiKey) {
-    console.log("[Bot Deploy] HEROKU_API_KEY not set — skipping auto-deploy");
-    return null;
-  }
-
-  try {
-    // 1. Build app name: gifted-md-abc123 (Heroku max 30 chars, lowercase, no underscores)
-    const slug = bot.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const suffix = Date.now().toString(36).slice(-5);
-    const appName = `${slug}-${suffix}`.slice(0, 30);
-
-    // 2. Create Heroku app
-    const createRes = await fetch("https://api.heroku.com/apps", {
-      method: "POST",
-      headers: herokuHeaders(apiKey),
-      body: JSON.stringify({ name: appName, region: "us" }),
-    });
-    const app = await createRes.json() as any;
-    if (!app.name) {
-      console.error("[Bot Deploy] App creation failed:", JSON.stringify(app).slice(0, 300));
+// ── Deploy bot to VPS via SSH + PM2 ─────────────────────────────────────────
+  async function deployBotToVps(
+    order: Record<string, any>,
+    bot: Record<string, any>,
+    envVars: Record<string, string>
+  ): Promise<{ pm2Name: string; vpsServerId: string } | null> {
+    const servers = vpsManager.getAll();
+    if (servers.length === 0) {
+      console.log("[Bot Deploy] No VPS servers configured — skipping deploy");
       return null;
     }
-    console.log(`[Bot Deploy] Heroku app created: ${app.name}`);
+    const server = servers[0];
+    const ref = order.reference;
+    const pm2Name = `bot-${ref}`;
+    const botDir = `/opt/bots/${pm2Name}`;
+    const repoUrl = (bot.repo_url || bot.repoUrl || "").replace(/\.git$/, "");
+    if (!repoUrl) throw new Error("Bot has no repoUrl configured");
 
-    // 3. Set config vars (env variables)
-    const configVars: Record<string, string> = {};
-    if (order.session_id) configVars["SESSION_ID"] = order.session_id;
-    if (order.db_url) configVars["DATABASE_URL"] = order.db_url;
-    configVars["MODE"] = order.mode || "public";
-    configVars["TZ"] = order.timezone || "Africa/Nairobi";
-    configVars["BOT_NAME"] = bot.name;
-    configVars["OWNER_NUMBER"] = order.customer_phone || "";
+    // Build .env content line by line
+    const envLines = Object.entries(envVars)
+      .map(([k, v]) => `${k}=${String(v).replace(/\r?\n/g, "\\n")}`)
+      .join("\n");
 
-    await fetch(`https://api.heroku.com/apps/${app.name}/config-vars`, {
-      method: "PATCH",
-      headers: herokuHeaders(apiKey),
-      body: JSON.stringify(configVars),
-    });
+    console.log(`[Bot Deploy] Deploying ${pm2Name} on ${server.host}`);
 
-    // 4. Trigger build from GitHub tarball (works for public repos)
-    // Try main branch first, fall back to master
-    const repoBase = bot.repo_url.replace(/\.git$/, "").replace(/\/$/, "");
-    let tarballUrl = `${repoBase}/archive/refs/heads/main.tar.gz`;
-    // Try main branch, fall back to master if build fails
-    let buildRes = await fetch(`https://api.heroku.com/apps/${app.name}/builds`, {
-      method: "POST",
-      headers: herokuHeaders(apiKey),
-      body: JSON.stringify({ source_blob: { url: tarballUrl, version: "main" } }),
-    });
-    let build = await buildRes.json() as any;
+    // 1. Clone or pull repo
+    await vpsManager.execCommand(server,
+      `mkdir -p ${botDir} && (git -C ${botDir} pull --ff-only 2>/dev/null || git clone ${repoUrl} ${botDir})`
+    );
+    console.log(`[Bot Deploy] ✓ Repo ready at ${botDir}`);
 
-    // If main branch failed (404 tarball), try master
-    if (build.id && build.status === "failed") {
-      console.log("[Bot Deploy] main branch build failed, trying master...");
-      tarballUrl = `${repoBase}/archive/refs/heads/master.tar.gz`;
-      buildRes = await fetch(`https://api.heroku.com/apps/${app.name}/builds`, {
-        method: "POST",
-        headers: herokuHeaders(apiKey),
-        body: JSON.stringify({ source_blob: { url: tarballUrl, version: "master" } }),
-      });
-      build = await buildRes.json() as any;
-    }
+    // 2. Write .env file
+    await vpsManager.execCommand(server,
+      `printf '%s\\n' ${JSON.stringify(envLines)} > ${botDir}/.env`
+    );
+    console.log(`[Bot Deploy] ✓ .env written`);
 
-    if (build.id) {
-      console.log(`[Bot Deploy] ✓ Build triggered: ${build.id} status=${build.status ?? "pending"} app=${app.name}`);
-    } else {
-      const errMsg = JSON.stringify(build).slice(0, 300);
-      console.error(`[Bot Deploy] Build trigger failed: ${errMsg}`);
-      throw new Error("Build trigger failed: " + errMsg);
-    }
+    // 3. npm install
+    const { stdout: installOut } = await vpsManager.execCommand(server,
+      `cd ${botDir} && npm install --production 2>&1 | tail -3`
+    );
+    console.log(`[Bot Deploy] npm install: ${installOut.slice(0, 120)}`);
 
-    return {
-      appName: app.name,
-      appUrl: `https://${app.name}.herokuapp.com`,
-    };
-  } catch (err: any) {
-    console.error("[Bot Deploy] ✗ Heroku error:", err.message);
-    throw err; // Re-throw so callers can set deploy_failed status
+    // 4. Start with PM2
+    await vpsManager.execCommand(server,
+      `pm2 delete ${pm2Name} 2>/dev/null || true && cd ${botDir} && pm2 start . --name ${pm2Name} && pm2 save`
+    );
+    console.log(`[Bot Deploy] ✓ PM2 ${pm2Name} started`);
+
+    return { pm2Name, vpsServerId: server.id };
   }
-}
+
 
 export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
 
@@ -282,24 +240,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
       await m(`UPDATE bot_orders SET status = 'paid', paystack_reference = ?, updated_at = ${updNow} WHERE reference = ?`, [reference, reference]);
 
-      // Auto-deploy to Heroku (non-blocking)
-      const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
-      if (bots.length) {
-        const updatedOrder = (await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]))[0];
-        deployBotToHeroku(updatedOrder, bots[0]).then(async (result) => {
-          await m(
-            `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
-            [result.appName, result.appUrl, reference]
-          );
-          console.log(`[Bot Deploy] ✓ Order ${reference} deployed — ${result.appUrl}`);
-        }).catch(async (e: any) => {
-          console.error("[Bot Deploy] ✗ Deploy failed for order", reference, ":", e.message);
-          await m(
-            `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE reference = ?`,
-            ["Heroku deploy failed: " + e.message.slice(0, 200), reference]
-          );
-        });
-      }
+      // Deployment triggered after customer submits configuration form
 
       const updated = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
       res.json({ success: true, order: fmtOrder(updated[0]) });
@@ -369,24 +310,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", walletFinalAmount]
       );
 
-      // Auto-deploy to Heroku (non-blocking)
-      const orderForDeploy = {
-        session_id: sessionId || null, db_url: dbUrl || null,
-        mode: mode || "public", timezone: timezone || "Africa/Nairobi", customer_phone: customerPhone,
-      };
-      deployBotToHeroku(orderForDeploy, bot).then(async (result) => {
-        await m(
-          `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
-          [result.appName, result.appUrl, reference]
-        );
-        console.log(`[Bot Deploy] ✓ Wallet order ${reference} deployed — ${result.appUrl}`);
-      }).catch(async (e: any) => {
-        console.error("[Bot Deploy] ✗ Wallet deploy failed for order", reference, ":", e.message);
-        await m(
-          `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE reference = ?`,
-          ["Heroku deploy failed: " + e.message.slice(0, 200), reference]
-        );
-      });
+      // Deployment triggered after customer submits configuration form
 
       const created = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
       res.json({ success: true, reference, order: fmtOrder(created[0]) });
@@ -514,25 +438,28 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const rows = await q("SELECT * FROM bot_orders WHERE id = ?", [id]);
       const order = rows[0];
 
-      // Manual redeploy trigger
-      if (redeploy && order) {
-        const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
-        if (bots.length) {
-          deployBotToHeroku(order, bots[0]).then(async (result) => {
-            await m(
-              `UPDATE bot_orders SET status = 'deployed', render_service_id = ?, render_service_url = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE id = ?`,
-              [result.appName, result.appUrl, id]
-            );
-            console.log(`[Bot Deploy] ✓ Admin redeploy id=${id} — ${result.appUrl}`);
-          }).catch(async (e: any) => {
-            console.error("[Bot Deploy] ✗ Admin redeploy failed id=", id, ":", e.message);
-            await m(
-              `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE id = ?`,
-              ["Heroku redeploy failed: " + e.message.slice(0, 200), id]
-            );
-          });
+
+      // Manual redeploy via VPS/PM2 (non-blocking)
+        if (redeploy && order) {
+          const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
+          if (bots.length) {
+            const envVars = JSON.parse(order.env_vars || "{}");
+            deployBotToVps(order, bots[0], envVars).then(async (result) => {
+              if (result) {
+                await m(
+                  `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE id = ?`,
+                  [result.pm2Name, result.vpsServerId, id]
+                );
+              }
+            }).catch(async (e: any) => {
+              await m(
+                `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE id = ?`,
+                ["VPS redeploy failed: " + e.message.slice(0, 200), id]
+              );
+            });
+          }
         }
-      }
+
 
       res.json({ success: true, order: fmtOrder(order) });
     } catch (err: any) {
@@ -540,302 +467,285 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     }
   });
 
-  // ── Admin: check Heroku app status ──────────────────────────────────────────
-  app.get("/api/admin/bot-orders/:orderId/heroku-status", adminAuthMiddleware, async (req, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const rows = await q("SELECT * FROM bot_orders WHERE id = ?", [id]);
-      if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
+
+
+    // ── Admin: VPS bot status (PM2) ─────────────────────────────────────────────
+    app.get("/api/admin/bot-orders/:orderId/vps-status", adminAuthMiddleware, async (req, res) => {
+      try {
+        const id = parseInt(req.params.orderId);
+        const rows = await q("SELECT * FROM bot_orders WHERE id = ?", [id]);
+        if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
+        const order = rows[0];
+        const pm2Name = order.pm2_name;
+        if (!pm2Name) return res.json({ success: true, deployed: false, message: "Not yet deployed to VPS" });
+        const servers = vpsManager.getAll();
+        if (!servers.length) return res.json({ success: true, deployed: true, status: order.status, message: "No VPS configured" });
+        const server = servers.find((s: any) => s.id === order.vps_server_id) ?? servers[0];
+        try {
+          const { stdout } = await vpsManager.execCommand(server, `pm2 describe ${pm2Name} 2>&1 || echo 'NOT_FOUND'`);
+          const running = stdout.includes("online");
+          const stopped = stdout.includes("stopped");
+          const pm2Status = running ? "online" : stopped ? "stopped" : "unknown";
+          res.json({ success: true, deployed: true, status: order.status, pm2Name, pm2Status, raw: stdout.slice(0, 500) });
+        } catch (e: any) {
+          res.json({ success: true, deployed: true, status: order.status, pm2Name, pm2Status: "unknown", error: e.message });
+        }
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
+
+    // Admin VPS helper: get pm2Name + server for an order
+    async function getOrderVps(orderId: number) {
+      const rows = await q("SELECT * FROM bot_orders WHERE id = ?", [orderId]);
+      if (!rows.length) return null;
       const order = rows[0];
-      const appName = order.render_service_id;
-      if (!appName) return res.json({ success: true, deployed: false, message: "Not yet deployed to Heroku" });
-
-      const apiKey = getHerokuApiKey();
-      if (!apiKey) return res.json({ success: true, deployed: false, message: "HEROKU_API_KEY not set" });
-
-      const [appRes, buildRes] = await Promise.all([
-        fetch(`https://api.heroku.com/apps/${appName}`, { headers: herokuHeaders(apiKey) }),
-        fetch(`https://api.heroku.com/apps/${appName}/builds?limit=1`, { headers: herokuHeaders(apiKey) }),
-      ]);
-      const [appData, buildsData] = await Promise.all([appRes.json(), buildRes.json()]) as [any, any];
-      res.json({
-        success: true, deployed: true,
-        app: appData,
-        latestBuild: Array.isArray(buildsData) ? buildsData[0] : buildsData,
-        appUrl: order.render_service_url,
-      });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      const servers = vpsManager.getAll();
+      if (!order.pm2_name || !servers.length) return null;
+      const server = servers.find((s: any) => s.id === order.vps_server_id) ?? servers[0];
+      return { order, server, pm2Name: order.pm2_name as string };
     }
-  });
-  // ── Admin: Heroku bot management ────────────────────────────────────────────
 
-  async function getHerokuAppName(orderId: number): Promise<string | null> {
-    const rows = await q("SELECT render_service_id FROM bot_orders WHERE id = ?", [orderId]);
-    return rows[0]?.render_service_id ?? null;
-  }
+    // Reboot: pm2 restart
+    app.post("/api/admin/bot-orders/:orderId/vps/reboot", adminAuthMiddleware, async (req, res) => {
+      try {
+        const info = await getOrderVps(parseInt(req.params.orderId));
+        if (!info) return res.status(404).json({ success: false, error: "No VPS process linked to this order" });
+        await vpsManager.execCommand(info.server, `pm2 restart ${info.pm2Name}`);
+        res.json({ success: true, message: "Bot restarted" });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
 
-  // Reboot: restart all running dynos
-  app.post("/api/admin/bot-orders/:orderId/heroku/reboot", adminAuthMiddleware, async (req, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const apiKey = getHerokuApiKey();
-      const appName = await getHerokuAppName(id);
-      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked to this order" });
-      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
-      const r = await fetch(`https://api.heroku.com/apps/${appName}/dynos`, {
-        method: "DELETE",
-        headers: herokuHeaders(apiKey),
-      });
-      const data = await r.json().catch(() => ({})) as any;
-      console.log(`[Heroku] Rebooted ${appName}`);
-      res.json({ success: r.ok, message: r.ok ? "Bot rebooted" : data?.message });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
+    // Stop: pm2 stop
+    app.post("/api/admin/bot-orders/:orderId/vps/stop", adminAuthMiddleware, async (req, res) => {
+      try {
+        const id = parseInt(req.params.orderId);
+        const info = await getOrderVps(id);
+        if (!info) return res.status(404).json({ success: false, error: "No VPS process linked to this order" });
+        await vpsManager.execCommand(info.server, `pm2 stop ${info.pm2Name}`);
+        const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+        await m(`UPDATE bot_orders SET status = 'stopped', updated_at = ${updNow} WHERE id = ?`, [id]);
+        res.json({ success: true, message: "Bot stopped" });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
 
-  // Stop: scale all formations to 0
-  app.post("/api/admin/bot-orders/:orderId/heroku/stop", adminAuthMiddleware, async (req, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const apiKey = getHerokuApiKey();
-      const appName = await getHerokuAppName(id);
-      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
-      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
-      const fRes = await fetch(`https://api.heroku.com/apps/${appName}/formation`, { headers: herokuHeaders(apiKey) });
-      const formations = await fRes.json() as any[];
-      const updates = formations.map((f: any) => ({ type: f.type, quantity: 0 }));
-      if (updates.length) {
-        await fetch(`https://api.heroku.com/apps/${appName}/formation`, {
-          method: "PATCH", headers: herokuHeaders(apiKey),
-          body: JSON.stringify({ updates }),
-        });
-      }
-      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-      await m(`UPDATE bot_orders SET status = 'stopped', updated_at = ${updNow} WHERE id = ?`, [id]);
-      console.log(`[Heroku] Stopped ${appName}`);
-      res.json({ success: true, message: "Bot stopped" });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Resume: scale all formations back to 1
-  app.post("/api/admin/bot-orders/:orderId/heroku/resume", adminAuthMiddleware, async (req, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const apiKey = getHerokuApiKey();
-      const appName = await getHerokuAppName(id);
-      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
-      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
-      const fRes = await fetch(`https://api.heroku.com/apps/${appName}/formation`, { headers: herokuHeaders(apiKey) });
-      const formations = await fRes.json() as any[];
-      const updates = formations.length
-        ? formations.map((f: any) => ({ type: f.type, quantity: 1 }))
-        : [{ type: "worker", quantity: 1 }];
-      await fetch(`https://api.heroku.com/apps/${appName}/formation`, {
-        method: "PATCH", headers: herokuHeaders(apiKey),
-        body: JSON.stringify({ updates }),
-      });
-      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-      await m(`UPDATE bot_orders SET status = 'deployed', updated_at = ${updNow} WHERE id = ?`, [id]);
-      console.log(`[Heroku] Resumed ${appName}`);
-      res.json({ success: true, message: "Bot resumed" });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Maintenance mode toggle
-  app.patch("/api/admin/bot-orders/:orderId/heroku/maintenance", adminAuthMiddleware, async (req, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const { enabled } = req.body;
-      const apiKey = getHerokuApiKey();
-      const appName = await getHerokuAppName(id);
-      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
-      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
-      const r = await fetch(`https://api.heroku.com/apps/${appName}`, {
-        method: "PATCH", headers: herokuHeaders(apiKey),
-        body: JSON.stringify({ maintenance: !!enabled }),
-      });
-      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-      if (enabled) {
-        await m(`UPDATE bot_orders SET status = 'suspended', updated_at = ${updNow} WHERE id = ?`, [id]);
-      } else {
+    // Resume: pm2 start
+    app.post("/api/admin/bot-orders/:orderId/vps/resume", adminAuthMiddleware, async (req, res) => {
+      try {
+        const id = parseInt(req.params.orderId);
+        const info = await getOrderVps(id);
+        if (!info) return res.status(404).json({ success: false, error: "No VPS process linked to this order" });
+        await vpsManager.execCommand(info.server, `pm2 start ${info.pm2Name}`);
+        const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
         await m(`UPDATE bot_orders SET status = 'deployed', updated_at = ${updNow} WHERE id = ?`, [id]);
-      }
-      console.log(`[Heroku] Maintenance ${enabled ? "ON" : "OFF"} for ${appName}`);
-      res.json({ success: r.ok, message: enabled ? "Bot suspended (maintenance on)" : "Bot unsuspended" });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
+        res.json({ success: true, message: "Bot resumed" });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
 
-  // Get config vars
-  app.get("/api/admin/bot-orders/:orderId/heroku/config-vars", adminAuthMiddleware, async (req, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const apiKey = getHerokuApiKey();
-      const appName = await getHerokuAppName(id);
-      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
-      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
-      const r = await fetch(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: herokuHeaders(apiKey) });
-      const data = await r.json() as any;
-      res.json({ success: r.ok, configVars: data });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Update config vars
-  app.patch("/api/admin/bot-orders/:orderId/heroku/config-vars", adminAuthMiddleware, async (req, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const { configVars } = req.body;
-      const apiKey = getHerokuApiKey();
-      const appName = await getHerokuAppName(id);
-      if (!appName) return res.status(404).json({ success: false, error: "No Heroku app linked" });
-      if (!apiKey) return res.status(500).json({ success: false, error: "HEROKU_API_KEY not set" });
-      const r = await fetch(`https://api.heroku.com/apps/${appName}/config-vars`, {
-        method: "PATCH", headers: herokuHeaders(apiKey),
-        body: JSON.stringify(configVars),
-      });
-      const data = await r.json() as any;
-      res.json({ success: r.ok, configVars: data });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-
-
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // ── CUSTOMER bot management (own bots only) ────────────────────────────
-  // ═══════════════════════════════════════════════════════════════════════
-  async function getOwnedBotOrder(req: any, orderId: number) {
-    if (!req.customer?.email) return null;
-    const rows = await q("SELECT * FROM bot_orders WHERE id = ? AND customer_email = ?", [orderId, req.customer.email]);
-    return rows[0] || null;
-  }
-
-  // Get full status (Heroku app + latest build) for an owned bot
-  app.get("/api/customer/bots/:orderId/status", customerAuthMiddleware, async (req: any, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const order = await getOwnedBotOrder(req, id);
-      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
-      const appName = order.render_service_id;
-      if (!appName) return res.json({ success: true, deployed: false, status: order.status, message: "Not yet deployed" });
-      const apiKey = getHerokuApiKey();
-      if (!apiKey) return res.json({ success: true, deployed: true, status: order.status, message: "Live monitoring unavailable" });
+    // Get .env (config vars)
+    app.get("/api/admin/bot-orders/:orderId/vps/config-vars", adminAuthMiddleware, async (req, res) => {
       try {
-        const [appRes, dynoRes] = await Promise.all([
-          fetch(`https://api.heroku.com/apps/${appName}`, { headers: herokuHeaders(apiKey) }),
-          fetch(`https://api.heroku.com/apps/${appName}/dynos`, { headers: herokuHeaders(apiKey) }),
-        ]);
-        const [appData, dynoData] = await Promise.all([appRes.json(), dynoRes.json()]) as [any, any];
-        res.json({
-          success: true,
-          deployed: true,
-          status: order.status,
-          appName,
-          appUrl: order.render_service_url || (appData?.web_url ?? null),
-          dynos: Array.isArray(dynoData) ? dynoData.map((d: any) => ({
-            type: d.type, state: d.state, updated_at: d.updated_at, command: d.command,
-          })) : [],
-          createdAt: appData?.created_at,
-          maintenance: appData?.maintenance,
+        const info = await getOrderVps(parseInt(req.params.orderId));
+        if (!info) return res.status(404).json({ success: false, error: "No VPS process linked to this order" });
+        const botDir = `/opt/bots/${info.pm2Name}`;
+        const { stdout } = await vpsManager.execCommand(info.server, `cat ${botDir}/.env 2>/dev/null || echo ''`);
+        const configVars: Record<string, string> = {};
+        stdout.split("\n").forEach(line => {
+          const eq = line.indexOf("=");
+          if (eq > 0) configVars[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
         });
-      } catch (e: any) {
-        res.json({ success: true, deployed: true, status: order.status, error: e.message });
-      }
-    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
-  });
+        res.json({ success: true, configVars });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
 
-  // Tail logs for an owned bot (returns last 200 lines)
-  app.get("/api/customer/bots/:orderId/logs", customerAuthMiddleware, async (req: any, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const order = await getOwnedBotOrder(req, id);
-      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
-      const appName = order.render_service_id;
-      if (!appName) return res.json({ success: true, logs: "Bot is not yet deployed.", lines: [] });
-      const apiKey = getHerokuApiKey();
-      if (!apiKey) return res.json({ success: true, logs: "Live logs unavailable (HEROKU_API_KEY not configured).", lines: [] });
+    // Update .env (config vars) and restart
+    app.patch("/api/admin/bot-orders/:orderId/vps/config-vars", adminAuthMiddleware, async (req, res) => {
       try {
-        const sessRes = await fetch(`https://api.heroku.com/apps/${appName}/log-sessions`, {
-          method: "POST",
-          headers: { ...herokuHeaders(apiKey), "Content-Type": "application/json" },
-          body: JSON.stringify({ lines: 200, source: "app", tail: false }),
+        const info = await getOrderVps(parseInt(req.params.orderId));
+        if (!info) return res.status(404).json({ success: false, error: "No VPS process linked to this order" });
+        const { configVars } = req.body as { configVars: Record<string, string> };
+        const botDir = `/opt/bots/${info.pm2Name}`;
+        const envLines = Object.entries(configVars)
+          .map(([k, v]) => `${k}=${String(v).replace(/\r?\n/g, "\\n")}`)
+          .join("\n");
+        await vpsManager.execCommand(info.server, `printf '%s\n' ${JSON.stringify(envLines)} > ${botDir}/.env`);
+        await vpsManager.execCommand(info.server, `pm2 restart ${info.pm2Name}`);
+        const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+        await m(`UPDATE bot_orders SET env_vars = ?, updated_at = ${updNow} WHERE id = ?`, [JSON.stringify(configVars), info.order.id]);
+        res.json({ success: true, message: "Config updated and bot restarted" });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
+
+    // ── Public: fetch .env.example template for a bot ───────────────────────────
+    app.get("/api/bots/env-template/:botId", async (req, res) => {
+      try {
+        const botId = parseInt(req.params.botId);
+        const bots = await q("SELECT * FROM bots WHERE id = ?", [botId]);
+        if (!bots.length) return res.status(404).json({ success: false, error: "Bot not found" });
+        const repoUrl = (bots[0].repo_url || bots[0].repoUrl || "").replace(/\.git$/, "").replace(/\/$/, "");
+        if (!repoUrl) return res.json({ success: true, vars: [] });
+        const rawBase = repoUrl.replace("https://github.com/", "https://raw.githubusercontent.com/") + "/HEAD/.env.example";
+        const r = await fetch(rawBase);
+        if (!r.ok) return res.json({ success: true, vars: [] });
+        const text = await r.text();
+        const vars: Array<{ key: string; defaultValue: string; required: boolean }> = [];
+        for (const line of text.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          const eq = trimmed.indexOf("=");
+          if (eq < 0) continue;
+          const key = trimmed.slice(0, eq).trim();
+          const defaultValue = trimmed.slice(eq + 1).trim();
+          vars.push({ key, defaultValue, required: defaultValue === "" });
+        }
+        res.json({ success: true, vars });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
+
+    // ── Public: customer submits env vars and triggers deploy ───────────────────
+    app.post("/api/bots/order/:reference/configure", async (req, res) => {
+      try {
+        const { reference } = req.params;
+        const { envVars } = req.body as { envVars: Record<string, string> };
+        if (!envVars || typeof envVars !== "object") {
+          return res.status(400).json({ success: false, error: "envVars object required" });
+        }
+        const rows = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
+        if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
+        const order = rows[0];
+        if (!["paid", "deploy_failed", "configuring"].includes(order.status)) {
+          return res.status(400).json({ success: false, error: `Order status '${order.status}' cannot be configured` });
+        }
+        const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
+        if (!bots.length) return res.status(404).json({ success: false, error: "Bot not found" });
+
+        const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+        await m(
+          `UPDATE bot_orders SET status = 'configuring', env_vars = ?, updated_at = ${updNow} WHERE reference = ?`,
+          [JSON.stringify(envVars), reference]
+        );
+
+        const freshOrder = (await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]))[0];
+        deployBotToVps(freshOrder, bots[0], envVars).then(async (result) => {
+          if (result) {
+            await m(
+              `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
+              [result.pm2Name, result.vpsServerId, reference]
+            );
+            console.log(`[Bot Deploy] ✓ Order ${reference} deployed — PM2 ${result.pm2Name}`);
+          } else {
+            await m(
+              `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE reference = ?`,
+              ["No VPS servers configured", reference]
+            );
+          }
+        }).catch(async (e: any) => {
+          console.error("[Bot Deploy] ✗ Configure deploy failed:", e.message);
+          await m(
+            `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE reference = ?`,
+            ["VPS deploy failed: " + e.message.slice(0, 200), reference]
+          );
         });
-        const sess = await sessRes.json() as any;
-        if (!sess?.logplex_url) return res.json({ success: true, logs: "Could not open log session.", lines: [] });
-        const logRes = await fetch(sess.logplex_url);
-        const text = await logRes.text();
-        const lines = text.split("\n").filter(Boolean).slice(-200);
-        res.json({ success: true, logs: lines.join("\n"), lines });
-      } catch (e: any) {
-        res.json({ success: true, logs: `Failed to fetch logs: ${e.message}`, lines: [] });
-      }
-    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
-  });
 
-  // Restart owned bot
-  app.post("/api/customer/bots/:orderId/restart", customerAuthMiddleware, async (req: any, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const order = await getOwnedBotOrder(req, id);
-      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
-      const appName = order.render_service_id;
-      if (!appName) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
-      const apiKey = getHerokuApiKey();
-      if (!apiKey) return res.status(500).json({ success: false, error: "Live controls unavailable" });
-      const r = await fetch(`https://api.heroku.com/apps/${appName}/dynos`, { method: "DELETE", headers: herokuHeaders(apiKey) });
-      res.json({ success: r.ok, message: r.ok ? "Bot restarted" : "Restart failed" });
-    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
-  });
+        res.json({ success: true, message: "Configuration saved, deploying now" });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
 
-  // Stop owned bot (scale formation to 0)
-  app.post("/api/customer/bots/:orderId/stop", customerAuthMiddleware, async (req: any, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const order = await getOwnedBotOrder(req, id);
-      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
-      const appName = order.render_service_id;
-      if (!appName) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
-      const apiKey = getHerokuApiKey();
-      if (!apiKey) return res.status(500).json({ success: false, error: "Live controls unavailable" });
-      const r = await fetch(`https://api.heroku.com/apps/${appName}/formation`, {
-        method: "PATCH",
-        headers: { ...herokuHeaders(apiKey), "Content-Type": "application/json" },
-        body: JSON.stringify({ updates: [{ type: "worker", quantity: 0 }, { type: "web", quantity: 0 }] }),
-      });
-      try { await q("UPDATE bot_orders SET status = ? WHERE id = ?", ["stopped", id]); } catch {}
-      res.json({ success: r.ok, message: r.ok ? "Bot stopped" : "Stop failed" });
-    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
-  });
 
-  // Start (resume) owned bot
-  app.post("/api/customer/bots/:orderId/start", customerAuthMiddleware, async (req: any, res) => {
-    try {
-      const id = parseInt(req.params.orderId);
-      const order = await getOwnedBotOrder(req, id);
-      if (!order) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
-      const appName = order.render_service_id;
-      if (!appName) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
-      const apiKey = getHerokuApiKey();
-      if (!apiKey) return res.status(500).json({ success: false, error: "Live controls unavailable" });
-      const r = await fetch(`https://api.heroku.com/apps/${appName}/formation`, {
-        method: "PATCH",
-        headers: { ...herokuHeaders(apiKey), "Content-Type": "application/json" },
-        body: JSON.stringify({ updates: [{ type: "worker", quantity: 1 }] }),
-      });
-      try { await q("UPDATE bot_orders SET status = ? WHERE id = ?", ["deployed", id]); } catch {}
-      res.json({ success: r.ok, message: r.ok ? "Bot started" : "Start failed" });
-    } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
-  });
+    // ═══════════════════════════════════════════════════════════════════════
+    // ── CUSTOMER bot management (own bots only, VPS/PM2) ──────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    async function getOwnedBotOrder(req: any, orderId: number) {
+      if (!req.customer?.email) return null;
+      const rows = await q("SELECT * FROM bot_orders WHERE id = ? AND customer_email = ?", [orderId, req.customer.email]);
+      return rows[0] || null;
+    }
+
+    async function getCustomerVps(req: any, orderId: number) {
+      const order = await getOwnedBotOrder(req, orderId);
+      if (!order) return null;
+      const servers = vpsManager.getAll();
+      if (!order.pm2_name || !servers.length) return { order, server: null as any, pm2Name: null as string | null };
+      const server = servers.find((s: any) => s.id === order.vps_server_id) ?? servers[0];
+      return { order, server, pm2Name: order.pm2_name as string };
+    }
+
+    // Get PM2 status for an owned bot
+    app.get("/api/customer/bots/:orderId/status", customerAuthMiddleware, async (req: any, res) => {
+      try {
+        const info = await getCustomerVps(req, parseInt(req.params.orderId));
+        if (!info) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+        if (!info.pm2Name || !info.server) {
+          return res.json({ success: true, deployed: false, status: info.order.status, message: "Not yet deployed" });
+        }
+        try {
+          const { stdout } = await vpsManager.execCommand(info.server, `pm2 describe ${info.pm2Name} 2>&1 || echo 'NOT_FOUND'`);
+          const pm2Status = stdout.includes("online") ? "online" : stdout.includes("stopped") ? "stopped" : "unknown";
+          res.json({ success: true, deployed: true, status: info.order.status, pm2Name: info.pm2Name, pm2Status });
+        } catch (e: any) {
+          res.json({ success: true, deployed: true, status: info.order.status, pm2Name: info.pm2Name, pm2Status: "unknown", error: e.message });
+        }
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
+
+    // Tail PM2 logs for an owned bot
+    app.get("/api/customer/bots/:orderId/logs", customerAuthMiddleware, async (req: any, res) => {
+      try {
+        const info = await getCustomerVps(req, parseInt(req.params.orderId));
+        if (!info) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+        if (!info.pm2Name || !info.server) {
+          return res.json({ success: true, logs: "Bot is not yet deployed.", lines: [] });
+        }
+        try {
+          const { stdout } = await vpsManager.execCommand(info.server,
+            `pm2 logs ${info.pm2Name} --lines 200 --nostream --raw 2>&1 | tail -200`
+          );
+          const logLines = stdout.split("\n").filter(Boolean).slice(-200);
+          res.json({ success: true, logs: logLines.join("\n"), lines: logLines });
+        } catch (e: any) {
+          res.json({ success: true, logs: `Failed to fetch logs: ${e.message}`, lines: [] });
+        }
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
+
+    // Restart owned bot
+    app.post("/api/customer/bots/:orderId/restart", customerAuthMiddleware, async (req: any, res) => {
+      try {
+        const info = await getCustomerVps(req, parseInt(req.params.orderId));
+        if (!info) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+        if (!info.pm2Name || !info.server) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
+        await vpsManager.execCommand(info.server, `pm2 restart ${info.pm2Name}`);
+        res.json({ success: true, message: "Bot restarted" });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
+
+    // Stop owned bot
+    app.post("/api/customer/bots/:orderId/stop", customerAuthMiddleware, async (req: any, res) => {
+      try {
+        const id = parseInt(req.params.orderId);
+        const info = await getCustomerVps(req, id);
+        if (!info) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+        if (!info.pm2Name || !info.server) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
+        await vpsManager.execCommand(info.server, `pm2 stop ${info.pm2Name}`);
+        const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+        await m(`UPDATE bot_orders SET status = 'stopped', updated_at = ${updNow} WHERE id = ?`, [id]);
+        res.json({ success: true, message: "Bot stopped" });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
+
+    // Start owned bot
+    app.post("/api/customer/bots/:orderId/start", customerAuthMiddleware, async (req: any, res) => {
+      try {
+        const id = parseInt(req.params.orderId);
+        const info = await getCustomerVps(req, id);
+        if (!info) return res.status(404).json({ success: false, error: "Bot not found or not yours" });
+        if (!info.pm2Name || !info.server) return res.status(400).json({ success: false, error: "Bot is not yet deployed" });
+        await vpsManager.execCommand(info.server, `pm2 start ${info.pm2Name}`);
+        const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+        await m(`UPDATE bot_orders SET status = 'deployed', updated_at = ${updNow} WHERE id = ?`, [id]);
+        res.json({ success: true, message: "Bot started" });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
+  
+
 
 }
+
