@@ -2359,7 +2359,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         );
       } catch (e) { console.warn("auto-fail bot_orders:", e); }
       const rows = await runQuery(
-        `SELECT bo.id, bo.bot_id, bo.reference, bo.status, bo.amount, bo.session_id, bo.pm2_name, bo.created_at, b.name as bot_name, b.image_url as bot_image, b.features as bot_features FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.customer_email = $1 ORDER BY bo.created_at DESC`,
+        `SELECT bo.id, bo.bot_id, bo.reference, bo.status, bo.amount, bo.session_id, bo.pm2_name, bo.expires_at, bo.created_at, b.name as bot_name, b.image_url as bot_image, b.features as bot_features FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.customer_email = $1 ORDER BY bo.created_at DESC`,
         [req.customer.email]
       );
       res.json({ success: true, bots: rows });
