@@ -489,49 +489,45 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
     }
   }
 
-  
-  // ─── Every 15min: ping all deployed bots, record uptime to bot_pings ─────────
-
-  async function pingBotOrders() {
-    try {
-      const orders: any[] = await runQuery(
-        "SELECT * FROM bot_orders WHERE status = 'deployed' AND pm2_name IS NOT NULL AND vps_server_id IS NOT NULL"
-      ).catch(() => []);
-      if (!orders.length) return;
-      const servers = vpsManager.getAll();
-      const byVps: Record<string, any[]> = {};
-      for (const o of orders) (byVps[o.vps_server_id] = byVps[o.vps_server_id] || []).push(o);
-      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-      for (const [vpsId, vpsOrders] of Object.entries(byVps)) {
-        const server = servers.find((s: any) => s.id === vpsId);
-        if (!server) continue;
-        for (const order of vpsOrders) {
-          try {
-            const { stdout } = await vpsManager.execCommand(
-              server, `pm2 describe ${order.pm2_name} 2>/dev/null | grep -i status | head -1`
-            );
-            const pm2Status = stdout.toLowerCase().includes("online") ? "online"
-              : stdout.toLowerCase().includes("stopped") ? "stopped"
-              : stdout.toLowerCase().includes("errored") ? "errored" : "unknown";
-            await runMutation(
-              `INSERT INTO bot_pings (bot_order_id, pm2_status, checked_at) VALUES (?, ?, ${updNow})`,
-              [order.id, pm2Status]
-            ).catch(() => {});
-          } catch {
-            await runMutation(
-              `INSERT INTO bot_pings (bot_order_id, pm2_status, checked_at) VALUES (?, ?, ${updNow})`,
-              [order.id, "offline"]
-            ).catch(() => {});
-          }
+// ─── Every 15min: ping all deployed bots, record uptime to bot_pings ─────────
+async function pingBotOrders() {
+  try {
+    const orders: any[] = await runQuery(
+      "SELECT * FROM bot_orders WHERE status = 'deployed' AND pm2_name IS NOT NULL AND vps_server_id IS NOT NULL"
+    ).catch(() => []);
+    if (!orders.length) return;
+    const servers = vpsManager.getAll();
+    const byVps: Record<string, any[]> = {};
+    for (const o of orders) (byVps[o.vps_server_id] = byVps[o.vps_server_id] || []).push(o);
+    const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+    for (const [vpsId, vpsOrders] of Object.entries(byVps)) {
+      const server = servers.find((s: any) => s.id === vpsId);
+      if (!server) continue;
+      for (const order of vpsOrders) {
+        try {
+          const { stdout } = await vpsManager.execCommand(
+            server, `pm2 describe ${order.pm2_name} 2>/dev/null | grep -i status | head -1`
+          );
+          const pm2Status = stdout.toLowerCase().includes("online") ? "online"
+            : stdout.toLowerCase().includes("stopped") ? "stopped"
+            : stdout.toLowerCase().includes("errored") ? "errored" : "unknown";
+          await runMutation(
+            `INSERT INTO bot_pings (bot_order_id, pm2_status, checked_at) VALUES (?, ?, ${updNow})`,
+            [order.id, pm2Status]
+          ).catch(() => {});
+        } catch {
+          await runMutation(
+            `INSERT INTO bot_pings (bot_order_id, pm2_status, checked_at) VALUES (?, ?, ${updNow})`,
+            [order.id, "offline"]
+          ).catch(() => {});
         }
       }
-      // Trim old pings (keep 8 days)
-      const cutoff = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
-      await runMutation("DELETE FROM bot_pings WHERE checked_at < ?", [cutoff]).catch(() => {});
-    } catch (err: any) { console.error("[cron][bot-ping]", err.message); }
-  }
-
-  // ─── Start all crons ────────────────────────────────────────────────────────
+    }
+    // Trim old pings (keep 8 days)
+    const cutoff = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    await runMutation("DELETE FROM bot_pings WHERE checked_at < ?", [cutoff]).catch(() => {});
+  } catch (err: any) { console.error("[cron][bot-ping]", err.message); }
+}
 
 export function startCronJobs() {
   // Daily at 9am: check expiring subscriptions
