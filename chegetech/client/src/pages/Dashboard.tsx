@@ -216,11 +216,6 @@ export default function Dashboard() {
   const [terminalInput, setTerminalInput] = useState("");
   const [terminalRunning, setTerminalRunning] = useState(false);
   const [botUptimeMap, setBotUptimeMap] = useState<Record<number, any[]>>({});
-    const [botEnvVars, setBotEnvVars] = useState<Record<string, string>>({});
-    const [botEnvEditing, setBotEnvEditing] = useState(false);
-    const [botEnvSaving, setBotEnvSaving] = useState(false);
-    const [botEnvLoading, setBotEnvLoading] = useState(false);
-
   async function loadBotStatus(orderId: number) {
     setBotStatusLoading(true);
     try {
@@ -279,9 +274,6 @@ export default function Dashboard() {
     loadBotStatus(orderId); loadBotLogs(orderId); loadBotEnvVars(orderId); loadBotUptime(orderId);
   }
   function closeManageBot() {
-    setManageBotId(null);
-    setBotStatus(null); setBotLogs(""); setBotEnvVars({}); setBotEnvEditing(false);
-  }
     setManageBotId(null);
     setBotStatus(null); setBotLogs(""); setBotEnvVars({}); setBotEnvEditing(false);
   }
