@@ -11,7 +11,7 @@ import {
   MessageCircle, Send, PlusCircle, Ticket,
   Bell, BellDot, ShoppingCart, TrendingDown, Star, Sparkles,
   MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy, ThumbsUp,
-  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal, Edit3, RefreshCw
+  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal, Edit3, Edit3, RefreshCw
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -208,6 +208,14 @@ export default function Dashboard() {
   const [botBusy, setBotBusy] = useState<string | null>(null);
   const [botStatusLoading, setBotStatusLoading] = useState(false);
     const [botLogsLoading, setBotLogsLoading] = useState(false);
+  const [botEnvVars, setBotEnvVars] = useState<Record<string, string>>({});
+  const [botEnvEditing, setBotEnvEditing] = useState(false);
+  const [botEnvSaving, setBotEnvSaving] = useState(false);
+  const [botEnvLoading, setBotEnvLoading] = useState(false);
+  const [terminalHistory, setTerminalHistory] = useState<Array<{cmd: string; output: string; ts: number}>>([]);
+  const [terminalInput, setTerminalInput] = useState("");
+  const [terminalRunning, setTerminalRunning] = useState(false);
+  const [botUptimeMap, setBotUptimeMap] = useState<Record<number, any[]>>({});
     const [botEnvVars, setBotEnvVars] = useState<Record<string, string>>({});
     const [botEnvEditing, setBotEnvEditing] = useState(false);
     const [botEnvSaving, setBotEnvSaving] = useState(false);
@@ -244,14 +252,36 @@ export default function Dashboard() {
     finally { setBotEnvLoading(false); }
   }
 
+  async function loadBotEnvVars(orderId: number) {
+    setBotEnvLoading(true);
+    try { const r = await customerFetch(`/api/customer/bots/${orderId}/env-vars`); if (r.success) setBotEnvVars(r.envVars || {}); }
+    catch {} finally { setBotEnvLoading(false); }
+  }
+  async function loadBotUptime(orderId: number) {
+    try { const r = await customerFetch(`/api/customer/bots/${orderId}/uptime`); if (r.success) setBotUptimeMap(prev => ({ ...prev, [orderId]: r.pings || [] })); }
+    catch {}
+  }
+  async function runTerminalCommand(orderId: number, cmd: string) {
+    if (!cmd.trim() || terminalRunning) return;
+    const ts = Date.now();
+    setTerminalHistory(h => [...h, { cmd, output: "Running...", ts }]);
+    setTerminalInput("");
+    setTerminalRunning(true);
+    try {
+      const r = await customerFetch(`/api/customer/bots/${orderId}/terminal`, { method: "POST", body: JSON.stringify({ command: cmd }) });
+      setTerminalHistory(h => h.map(e => e.ts === ts ? { ...e, output: r.success ? r.output : `Error: ${r.error}` } : e));
+    } catch (e: any) { setTerminalHistory(h => h.map(e => e.ts === ts ? { ...e, output: `Error: ${e.message}` } : e)); }
+    finally { setTerminalRunning(false); }
+  }
   function openManageBot(orderId: number) {
     setManageBotId(orderId);
-    setBotStatus(null); setBotLogs(""); setBotEnvVars({}); setBotEnvEditing(false);
-    loadBotStatus(orderId);
-    loadBotLogs(orderId);
-    loadBotEnvVars(orderId);
+    setBotStatus(null); setBotLogs(""); setBotEnvVars({}); setBotEnvEditing(false); setTerminalHistory([]);
+    loadBotStatus(orderId); loadBotLogs(orderId); loadBotEnvVars(orderId); loadBotUptime(orderId);
   }
   function closeManageBot() {
+    setManageBotId(null);
+    setBotStatus(null); setBotLogs(""); setBotEnvVars({}); setBotEnvEditing(false);
+  }
     setManageBotId(null);
     setBotStatus(null); setBotLogs(""); setBotEnvVars({}); setBotEnvEditing(false);
   }
@@ -1226,6 +1256,7 @@ export default function Dashboard() {
                     deploy_failed: { label: "Deploy Failed", color: "text-red-400", bg: "bg-red-500/10" },
                     configuring: { label: "Configuring", color: "text-blue-400", bg: "bg-blue-500/10" },
     suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
+    suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
                     deploying: { label: "Deploying", color: "text-indigo-400", bg: "bg-indigo-500/10" },
                     stopped: { label: "Stopped", color: "text-gray-400", bg: "bg-gray-500/10" },
                     suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
@@ -1252,6 +1283,30 @@ export default function Dashboard() {
                           <span className="font-mono bg-white/5 px-2 py-1 rounded-lg text-indigo-300">{bot.pm2_name}</span>
                         </div>
                       )}
+                      {bot.expires_at && bot.status === "deployed" && (() => {
+                        const daysLeft = Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000);
+                        if (daysLeft > 14) return null;
+                        const col = daysLeft <= 3 ? "text-red-400 bg-red-500/10 border-red-500/20" : daysLeft <= 7 ? "text-amber-400 bg-amber-500/10 border-amber-500/20" : "text-indigo-400 bg-indigo-500/10 border-indigo-500/20";
+                        return <div className={`mt-2 flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border w-fit ${col}`}><Bell className="w-3 h-3" />{daysLeft <= 0 ? "Expired" : `Expires in ${daysLeft}d`}</div>;
+                      })()}
+                      {bot.expires_at && bot.status === "deployed" && Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000) <= 7 && Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000) > 0 && (
+                        <div className="mt-2 flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-300">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          <span>Bot expires in <strong>{Math.ceil((new Date(bot.expires_at).getTime()-Date.now())/86400000)} days</strong>. Renew to keep it running.</span>
+                        </div>
+                      )}
+                      {bot.status === "deployed" && (botUptimeMap[bot.id] || []).length > 0 && (() => {
+                        const pings = botUptimeMap[bot.id];
+                        const buckets: string[] = [];
+                        for (let h = 167; h >= 0; h--) {
+                          const s = Date.now() - h * 3600000, e2 = s + 3600000;
+                          const inB = pings.filter((p: any) => { const t = new Date(p.checked_at).getTime(); return t >= s && t < e2; });
+                          if (!inB.length) { buckets.push("empty"); continue; }
+                          buckets.push(inB.filter((p: any) => p.pm2_status === "online").length / inB.length >= 0.5 ? "online" : "offline");
+                        }
+                        const pct = Math.round((buckets.filter(b => b === "online").length / 168) * 100);
+                        return (<div className="mt-3"><div className="flex items-center justify-between text-[10px] text-white/30 mb-1"><span>7-day uptime</span><span className={pct >= 95 ? "text-emerald-400" : pct >= 80 ? "text-amber-400" : "text-red-400"}>{pct}%</span></div><div className="flex gap-px h-3">{buckets.map((b, i) => <div key={i} className={`flex-1 rounded-sm ${b === "online" ? "bg-emerald-500/70" : b === "offline" ? "bg-red-500/60" : "bg-white/5"}`} />)}</div></div>);
+                      })()}
                       {bot.expires_at && bot.status === "deployed" && (() => {
                         const daysLeft = Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000);
                         if (daysLeft > 14) return null;
@@ -2722,6 +2777,43 @@ export default function Dashboard() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              {/* ── Mini Terminal ────────────────────────────────────────── */}
+              <div className="rounded-xl border border-white/10 bg-zinc-900 overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5">
+                  <div className="flex items-center gap-2"><Terminal className="w-3.5 h-3.5 text-emerald-400" /><span className="text-xs font-semibold text-white/70">Terminal</span></div>
+                  <button onClick={() => setTerminalHistory([])} className="text-[10px] text-white/20 hover:text-white/50">Clear</button>
+                </div>
+                <div className="font-mono text-[11px] max-h-52 overflow-y-auto p-3 space-y-2 bg-black/40">
+                  {terminalHistory.length === 0 && <p className="text-white/20">Allowed: pm2 logs, pm2 status, pm2 list, pm2 restart, ls, cat .env, git log…</p>}
+                  {terminalHistory.map((entry, i) => (
+                    <div key={i}>
+                      <div className="flex items-center gap-1 text-indigo-300/70"><span className="text-white/20">$</span><span>{entry.cmd}</span></div>
+                      <pre className="whitespace-pre-wrap break-words text-emerald-300/80 mt-0.5 leading-relaxed">{entry.output}</pre>
+                    </div>
+                  ))}
+                  {terminalRunning && <div className="text-white/30 animate-pulse">Running…</div>}
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2 bg-black/20 border-t border-white/5">
+                  <span className="text-emerald-400 font-mono text-xs shrink-0">$</span>
+                  <input
+                    className="flex-1 bg-transparent text-xs text-white/80 font-mono focus:outline-none placeholder:text-white/20"
+                    placeholder="pm2 status, pm2 logs, ls ..."
+                    value={terminalInput}
+                    onChange={e => setTerminalInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && manageBotId) runTerminalCommand(manageBotId, terminalInput); }}
+                    disabled={terminalRunning}
+                  />
+                  <button
+                    onClick={() => manageBotId && runTerminalCommand(manageBotId, terminalInput)}
+                    disabled={terminalRunning || !terminalInput.trim()}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600/50 hover:bg-indigo-600/80 text-indigo-200 disabled:opacity-30 flex items-center gap-1"
+                  >
+                    {terminalRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                    Run
+                  </button>
+                </div>
               </div>
             </div>
           </div>
