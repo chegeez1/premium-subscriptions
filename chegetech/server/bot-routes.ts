@@ -446,9 +446,10 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
             const envVars = JSON.parse(order.env_vars || "{}");
             deployBotToVps(order, bots[0], envVars).then(async (result) => {
               if (result) {
+                const expiresAtAdmin = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
                 await m(
-                  `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE id = ?`,
-                  [result.pm2Name, result.vpsServerId, id]
+                  `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, expires_at = ?, updated_at = ${updNow} WHERE id = ?`,
+                  [result.pm2Name, result.vpsServerId, expiresAtAdmin, id]
                 );
               }
             }).catch(async (e: any) => {
@@ -627,8 +628,8 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         deployBotToVps(freshOrder, bots[0], envVars).then(async (result) => {
           if (result) {
             await m(
-              `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, updated_at = ${updNow} WHERE reference = ?`,
-              [result.pm2Name, result.vpsServerId, reference]
+              `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, expires_at = ?, renewal_reminded = NULL, updated_at = ${updNow} WHERE reference = ?`,
+              [result.pm2Name, result.vpsServerId, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), reference]
             );
             console.log(`[Bot Deploy] ✓ Order ${reference} deployed — PM2 ${result.pm2Name}`);
           } else {
@@ -747,5 +748,57 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   
 
 
+
+      // ─── Customer: Read env vars ─────────────────────────────────────────────
+      app.get("/api/customer/bots/:orderId/env-vars", customerAuthMiddleware, async (req: any, res) => {
+        try {
+          const customerId = req.customer.id;
+          const orderId = parseInt(req.params.orderId);
+          const rows = await q("SELECT * FROM bot_orders WHERE id = ? AND customer_id = ?", [orderId, customerId]);
+          if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
+          const order = rows[0];
+          const envVars: Record<string,string> = order.env_vars ? JSON.parse(order.env_vars) : {};
+          return res.json({ success: true, envVars });
+        } catch (e: any) {
+          return res.status(500).json({ success: false, error: e.message });
+        }
+      });
+
+      // ─── Customer: Update env vars + restart bot ────────────────────────────
+      app.patch("/api/customer/bots/:orderId/env-vars", customerAuthMiddleware, async (req: any, res) => {
+        try {
+          const customerId = req.customer.id;
+          const orderId = parseInt(req.params.orderId);
+          const { envVars } = req.body as { envVars: Record<string, string> };
+          if (!envVars || typeof envVars !== "object") {
+            return res.status(400).json({ success: false, error: "envVars object required" });
+          }
+          const rows = await q("SELECT * FROM bot_orders WHERE id = ? AND customer_id = ?", [orderId, customerId]);
+          if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
+          const order = rows[0];
+          if (!order.pm2_name || !order.vps_server_id) {
+            return res.status(400).json({ success: false, error: "Bot not deployed yet" });
+          }
+          const servers = vpsManager.getAll();
+          const server = servers.find((s: any) => s.id === order.vps_server_id);
+          if (!server) return res.status(404).json({ success: false, error: "VPS server not found" });
+
+          // Write new .env to VPS
+          const envLines = Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join("\n");
+          const botDir = `/opt/bots/bot-${order.reference}`;
+          const escapedEnv = envLines.replace(/'/g, "'\''");
+          await vpsManager.execCommand(server, `printf '%s\n' '${escapedEnv}' > ${botDir}/.env && pm2 restart ${order.pm2_name} --update-env`);
+
+          const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+          await m(
+            `UPDATE bot_orders SET env_vars = ?, updated_at = ${updNow} WHERE id = ?`,
+            [JSON.stringify(envVars), orderId]
+          );
+          return res.json({ success: true, message: "Env vars updated and bot restarted" });
+        } catch (e: any) {
+          return res.status(500).json({ success: false, error: e.message });
+        }
+      });
+  
 }
 
