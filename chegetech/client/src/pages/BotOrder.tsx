@@ -78,7 +78,7 @@ export default function BotOrder() {
             {order.status === "deploying" && "Your bot is being deployed. This usually takes a few minutes."}
             {order.status === "deployed" && "Your bot is live and running on our servers!"}
             {order.status === "failed" && "There was an issue deploying your bot. Please contact support."}
-            {order.status === "deploy_failed" && "Deployment to Heroku failed. See the error details below."}
+            {order.status === "deploy_failed" && "Deployment to VPS failed. See the error details below."}
             {order.status === "stopped" && "Your bot has been stopped by admin."}
             {order.status === "suspended" && "Your bot has been suspended."}
           </p>
