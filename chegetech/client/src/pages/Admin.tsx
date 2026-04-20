@@ -3216,8 +3216,8 @@ function TransactionsTab() {
                             data-testid={`button-proof-${tx.id}`}>
                             <ClipboardCheck className="w-3.5 h-3.5" />
                           </Button>}
-                          {tx.isBotOrder && tx.herokuAppUrl && (
-                            <a href={tx.herokuAppUrl} target="_blank" rel="noopener noreferrer"
+                          {tx.isBotOrder && tx.deployUrl && (
+                            <a href={tx.deployUrl} target="_blank" rel="noopener noreferrer"
                               className="h-7 px-2 flex items-center text-emerald-400/60 hover:text-emerald-400 text-xs">
                               <Bot className="w-3.5 h-3.5" />
                             </a>
@@ -7989,8 +7989,8 @@ function BotOrdersAdminTab() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [notes, setNotes] = useState("");
   const [newStatus, setNewStatus] = useState("");
-  const [herokuStatus, setHerokuStatus] = useState<any>(null);
-  const [herokuLoading, setHerokuLoading] = useState(false);
+  const [vpsStatus, setVpsStatus] = useState<any>(null);
+  const [vpsLoading, setVpsLoading] = useState(false);
   const [configVars, setConfigVars] = useState<Record<string, string>>({});
   const [configLoading, setConfigLoading] = useState(false);
   const [configEditing, setConfigEditing] = useState(false);
@@ -8024,16 +8024,12 @@ function BotOrdersAdminTab() {
     },
   });
 
-  const herokuAction = async (orderId: number, action: string, body?: any) => {
+  const vpsAction = async (orderId: number, action: string, body?: any) => {
     setActionLoading(action);
     try {
-      let url = `/api/admin/bot-orders/${orderId}/heroku/${action}`;
-      const method = action === "config-vars" && body ? "PATCH" : action.startsWith("config") ? "GET" : "POST";
-      if (action === "maintenance") {
-        url = `/api/admin/bot-orders/${orderId}/heroku/maintenance`;
-      }
-      const res = await fetch(url, {
-        method: body ? (action === "maintenance" ? "PATCH" : "POST") : "POST",
+      const method = body ? "PATCH" : "POST";
+      const res = await fetch(`/api/admin/bot-orders/${orderId}/vps/${action}`, {
+        method,
         headers: { ...authHeaders() as any, "Content-Type": "application/json" },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
@@ -8041,8 +8037,9 @@ function BotOrdersAdminTab() {
       if (data.success !== false) {
         toast({ title: data.message || "Done" });
         queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
+        loadVpsStatus(selectedOrder);
       } else {
-        toast({ title: "Heroku Error", description: data.error, variant: "destructive" });
+        toast({ title: "VPS Error", description: data.error, variant: "destructive" });
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -8080,22 +8077,22 @@ function BotOrdersAdminTab() {
     }
   }
 
-  const loadHerokuStatus = async (order: any) => {
-    if (!order.herokuAppName) return;
-    setHerokuLoading(true);
+  const loadVpsStatus = async (order: any) => {
+    if (!order?.id) return;
+    setVpsLoading(true);
     try {
-      const r = await fetch(`/api/admin/bot-orders/${order.id}/heroku-status`, { headers: authHeaders() as any });
+      const r = await fetch(`/api/admin/bot-orders/${order.id}/vps-status`, { headers: authHeaders() as any });
       const d = await r.json();
-      setHerokuStatus(d);
-    } catch { setHerokuStatus(null); }
-    setHerokuLoading(false);
+      setVpsStatus(d);
+    } catch { setVpsStatus(null); }
+    setVpsLoading(false);
   };
 
   const loadConfigVars = async (order: any) => {
-    if (!order.herokuAppName) return;
+    if (!order.pm2Name) return;
     setConfigLoading(true);
     try {
-      const r = await fetch(`/api/admin/bot-orders/${order.id}/heroku/config-vars`, { headers: authHeaders() as any });
+      const r = await fetch(`/api/admin/bot-orders/${order.id}/vps/config-vars`, { headers: authHeaders() as any });
       const d = await r.json();
       if (d.success && d.configVars) {
         setConfigVars(d.configVars);
@@ -8111,7 +8108,7 @@ function BotOrdersAdminTab() {
     configDraft.forEach(({ key, value }) => { if (key.trim()) vars[key.trim()] = value; });
     setActionLoading("config-save");
     try {
-      const r = await fetch(`/api/admin/bot-orders/${order.id}/heroku/config-vars`, {
+      const r = await fetch(`/api/admin/bot-orders/${order.id}/vps/config-vars`, {
         method: "PATCH",
         headers: { ...authHeaders() as any, "Content-Type": "application/json" },
         body: JSON.stringify({ configVars: vars }),
@@ -8127,9 +8124,9 @@ function BotOrdersAdminTab() {
     setSelectedOrder(order);
     setNewStatus(order.status);
     setNotes(order.deploymentNotes || "");
-    setHerokuStatus(null);
+    setVpsStatus(null);
     setConfigEditing(false);
-    loadHerokuStatus(order);
+    loadVpsStatus(order);
   };
 
   const STATUS_BADGES: Record<string, string> = {
@@ -8144,7 +8141,7 @@ function BotOrdersAdminTab() {
 
   const allOrders = data?.orders || [];
   const filtered = statusFilter === "all" ? allOrders : allOrders.filter((o: any) => o.status === statusFilter);
-  const isDeployed = selectedOrder && (selectedOrder.herokuAppName || selectedOrder.herokuAppUrl);
+  const isDeployed = selectedOrder && (selectedOrder.pm2Name || selectedOrder.pm2_name || selectedOrder.status === "deployed");
 
   return (
     <div className="space-y-5">
@@ -8196,10 +8193,10 @@ function BotOrdersAdminTab() {
             <div>
               <h3 className="font-semibold text-white text-base">{selectedOrder.botName}</h3>
               <p className="text-xs text-gray-500 font-mono mt-0.5">{selectedOrder.reference}</p>
-              {selectedOrder.herokuAppUrl && (
-                <a href={selectedOrder.herokuAppUrl} target="_blank" rel="noopener noreferrer"
+              {selectedOrder.deployUrl && (
+                <a href={selectedOrder.deployUrl} target="_blank" rel="noopener noreferrer"
                   className="text-xs text-emerald-400 hover:underline mt-1 inline-block">
-                  {selectedOrder.herokuAppUrl}
+                  {selectedOrder.deployUrl}
                 </a>
               )}
             </div>
@@ -8220,8 +8217,8 @@ function BotOrdersAdminTab() {
               <div className="col-span-2"><p className="text-xs text-gray-500">Session ID</p>
                 <p className="text-gray-200 font-mono text-xs break-all">{selectedOrder.sessionId}</p></div>
             )}
-            {selectedOrder.herokuAppName && (
-              <div><p className="text-xs text-gray-500">Heroku App</p><p className="text-emerald-400 text-xs">{selectedOrder.herokuAppName}</p></div>
+            {selectedOrder.pm2Name && (
+              <div><p className="text-xs text-gray-500">PM2 Name</p><p className="text-emerald-400 text-xs">{selectedOrder.pm2Name || selectedOrder.pm2_name}</p></div>
             )}
             {selectedOrder.deployedAt && (
               <div><p className="text-xs text-gray-500">Deployed</p><p className="text-gray-200 text-xs">{new Date(selectedOrder.deployedAt).toLocaleString()}</p></div>
@@ -8234,63 +8231,59 @@ function BotOrdersAdminTab() {
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Live Status</p>
                 <button onClick={() => loadHerokuStatus(selectedOrder)} className="text-xs text-gray-500 hover:text-white flex items-center gap-1">
-                  <RefreshCw className={`w-3 h-3 ${herokuLoading ? "animate-spin" : ""}`} /> Refresh
+                  <RefreshCw className={`w-3 h-3 ${vpsLoading ? "animate-spin" : ""}`} /> Refresh
                 </button>
               </div>
-              {herokuLoading ? (
+              {vpsLoading ? (
                 <div className="flex items-center gap-2 text-xs text-gray-500"><Loader2 className="w-3 h-3 animate-spin" /> Loading status...</div>
-              ) : herokuStatus?.deployed ? (
+              ) : vpsStatus?.deployed ? (
                 <div className="flex flex-wrap gap-4 text-xs">
-                  <div><span className="text-gray-500">App state: </span>
-                    <span className={herokuStatus.app?.maintenance ? "text-orange-400" : "text-green-400"}>
-                      {herokuStatus.app?.maintenance ? "Maintenance" : "Active"}
+                  {vpsStatus.pm2Name && (
+                    <div><span className="text-gray-500">PM2: </span><span className="text-indigo-300 font-mono">{vpsStatus.pm2Name}</span></div>
+                  )}
+                  <div><span className="text-gray-500">Status: </span>
+                    <span className={vpsStatus.pm2Status === "online" ? "text-green-400" : vpsStatus.pm2Status === "stopped" ? "text-orange-400" : "text-yellow-400"}>
+                      {vpsStatus.pm2Status ?? "unknown"}
                     </span>
                   </div>
-                  {herokuStatus.latestBuild && (
-                    <div><span className="text-gray-500">Build: </span>
-                      <span className={herokuStatus.latestBuild.status === "succeeded" ? "text-green-400" : herokuStatus.latestBuild.status === "failed" ? "text-red-400" : "text-yellow-400"}>
-                        {herokuStatus.latestBuild.status}
-                      </span>
-                    </div>
-                  )}
                 </div>
               ) : (
-                <p className="text-xs text-gray-500">{herokuStatus?.message || "Status unavailable"}</p>
+                <p className="text-xs text-gray-500">{vpsStatus?.message || "Status unavailable"}</p>
               )}
             </div>
           )}
 
-          {/* Heroku action buttons */}
+          {/* VPS action buttons */}
           {isDeployed && (
             <div className="space-y-2">
               <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Bot Controls</p>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm"
-                  onClick={() => herokuAction(selectedOrder.id, "reboot")}
+                  onClick={() => vpsAction(selectedOrder.id, "reboot")}
                   disabled={actionLoading === "reboot"}
                   className="bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:bg-blue-600/30 h-8 px-3 text-xs">
                   {actionLoading === "reboot" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RotateCcw className="w-3 h-3 mr-1" />}
                   Reboot
                 </Button>
                 <Button size="sm"
-                  onClick={() => herokuAction(selectedOrder.id, "stop")}
+                  onClick={() => vpsAction(selectedOrder.id, "stop")}
                   disabled={actionLoading === "stop"}
                   className="bg-orange-600/20 border border-orange-500/30 text-orange-300 hover:bg-orange-600/30 h-8 px-3 text-xs">
                   {actionLoading === "stop" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Power className="w-3 h-3 mr-1" />}
                   Stop
                 </Button>
                 <Button size="sm"
-                  onClick={() => herokuAction(selectedOrder.id, "resume")}
+                  onClick={() => vpsAction(selectedOrder.id, "resume")}
                   disabled={actionLoading === "resume"}
                   className="bg-green-600/20 border border-green-500/30 text-green-300 hover:bg-green-600/30 h-8 px-3 text-xs">
                   {actionLoading === "resume" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
                   Resume
                 </Button>
                 <Button size="sm"
-                  onClick={() => herokuAction(selectedOrder.id, "maintenance", { enabled: true })}
-                  disabled={actionLoading === "maintenance"}
+                   onClick={() => vpsAction(selectedOrder.id, "stop")}
+                   disabled={actionLoading === "stop"}
                   className="bg-red-600/20 border border-red-500/30 text-red-300 hover:bg-red-600/30 h-8 px-3 text-xs">
-                  {actionLoading === "maintenance" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Shield className="w-3 h-3 mr-1" />}
+                   {actionLoading === "stop" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Shield className="w-3 h-3 mr-1" />}
                   Suspend
                 </Button>
                 <Button size="sm"
@@ -8299,10 +8292,10 @@ function BotOrdersAdminTab() {
                   <Server className="w-3 h-3 mr-1" />Deploy via VPS
                 </Button>
                 <Button size="sm"
-                  onClick={() => herokuAction(selectedOrder.id, "maintenance", { enabled: false })}
-                  disabled={actionLoading === "maintenance"}
+                   onClick={() => vpsAction(selectedOrder.id, "resume")}
+                   disabled={actionLoading === "resume"}
                   className="bg-purple-600/20 border border-purple-500/30 text-purple-300 hover:bg-purple-600/30 h-8 px-3 text-xs">
-                  {actionLoading === "maintenance" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Shield className="w-3 h-3 mr-1" />}
+                   {actionLoading === "resume" ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Shield className="w-3 h-3 mr-1" />}
                   Unsuspend
                 </Button>
                 <Button size="sm"
@@ -8410,7 +8403,7 @@ function BotOrdersAdminTab() {
                 <TableHead className="text-gray-400">Bot</TableHead>
                 <TableHead className="text-gray-400">Amount</TableHead>
                 <TableHead className="text-gray-400">Status</TableHead>
-                <TableHead className="text-gray-400">Heroku</TableHead>
+                <TableHead className="text-gray-400">VPS</TableHead>
                 <TableHead className="text-gray-400">Date</TableHead>
                 <TableHead className="text-gray-400">Action</TableHead>
               </TableRow>
@@ -8431,8 +8424,8 @@ function BotOrdersAdminTab() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {order.herokuAppName ? (
-                      <span className="text-xs text-emerald-400 font-mono">{order.herokuAppName}</span>
+                    {order.pm2Name ? (
+                      <span className="text-xs text-emerald-400 font-mono">{order.pm2Name}</span>
                     ) : (
                       <span className="text-xs text-gray-600">—</span>
                     )}
