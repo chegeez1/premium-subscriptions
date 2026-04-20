@@ -11,7 +11,7 @@ import {
   MessageCircle, Send, PlusCircle, Ticket,
   Bell, BellDot, ShoppingCart, TrendingDown, Star, Sparkles,
   MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy, ThumbsUp,
-  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal, Edit3, Edit3, RefreshCw
+  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal, Edit3, RefreshCw
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
