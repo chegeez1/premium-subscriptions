@@ -800,6 +800,13 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
           const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
           await m(
             `UPDATE bot_orders SET env_vars = ?, updated_at = ${updNow} WHERE id = ?`,
+            [JSON.stringify(envVars), orderId]
+          );
+          return res.json({ success: true, message: "Env vars updated and bot restarted" });
+        } catch (e: any) {
+          return res.status(500).json({ success: false, error: e.message });
+        }
+      });
 
       // ─── Customer: 7-day uptime history ─────────────────────────────────────
       app.get("/api/customer/bots/:orderId/uptime", customerAuthMiddleware, async (req: any, res) => {
@@ -889,14 +896,6 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
           }
           return res.json({ success: true, restarted, total: orders.length });
         } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
-      });
-  
-            [JSON.stringify(envVars), orderId]
-          );
-          return res.json({ success: true, message: "Env vars updated and bot restarted" });
-        } catch (e: any) {
-          return res.status(500).json({ success: false, error: e.message });
-        }
       });
   
 }
