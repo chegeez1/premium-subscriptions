@@ -121,7 +121,23 @@ export class VpsManager {
     });
   }
 
-  async reboot(id: string): Promise<{ success: boolean; message: string }> {
+
+    /** Pick VPS server with fewest deployed bots (DB count-based load balancing). */
+    async getLeastLoadedServer(
+      getDeployedCounts: () => Promise<Record<string, number>>
+    ): Promise<VpsServer | null> {
+      const servers = this.getAll();
+      if (!servers.length) return null;
+      if (servers.length === 1) return servers[0];
+      try {
+        const counts = await getDeployedCounts();
+        return servers.reduce((best, s) =>
+          (counts[s.id] ?? 0) < (counts[best.id] ?? 0) ? s : best
+        , servers[0]);
+      } catch { return servers[0]; }
+    }
+
+    async reboot(id: string): Promise<{ success: boolean; message: string }> {
     const server = this.getById(id);
     if (!server) return { success: false, message: "Server not found" };
     try {
