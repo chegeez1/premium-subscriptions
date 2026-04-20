@@ -4,6 +4,8 @@ import { sendTelegramMessage } from "./telegram";
 import { getAppConfig } from "./app-config";
 import { dbSettingsGet, dbSettingsSet } from "./storage";
 import { sendAdminEmail, sendBulkEmail, sendRawEmail } from "./email";
+  import { runQuery, runMutation, dbType } from "./storage";
+  import { vpsManager } from "./vps-manager";
 
 // ─── Daily: check expiring accounts + renewal reminders ───────────────────
 
@@ -383,7 +385,111 @@ export async function sendMonthlySummaries(targetEmail?: string, mode: "previous
   }
 }
 
-// ─── Start all crons ────────────────────────────────────────────────────────
+
+  // ─── Daily: check expiring & expired bot orders ──────────────────────────────
+
+  async function checkExpiringBotOrders() {
+    try {
+      const { siteName } = getAppConfig();
+      const rows: any[] = await runQuery(
+        "SELECT * FROM bot_orders WHERE (status = 'deployed' OR status = 'suspended') AND expires_at IS NOT NULL AND expires_at != ''"
+      ).catch(() => []);
+      if (!rows.length) return;
+
+      const now = new Date();
+      const REMINDER_DAYS = [7, 3, 1];
+      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+
+      for (const order of rows) {
+        if (!order.expires_at) continue;
+        const exp = new Date(order.expires_at);
+        const msLeft = exp.getTime() - now.getTime();
+        const daysLeft = msLeft / 86400000;
+
+        // ── Already expired and still deployed → suspend ──────────────────────
+        if (daysLeft <= 0 && order.status === "deployed") {
+          try {
+            if (order.pm2_name && order.vps_server_id) {
+              const servers = vpsManager.getAll();
+              const server = servers.find((s: any) => s.id === order.vps_server_id);
+              if (server) await vpsManager.execCommand(server, `pm2 stop ${order.pm2_name}`).catch(() => {});
+            }
+          } catch (e: any) { console.warn("[cron][bot-expiry] PM2 stop failed:", e.message); }
+          await runMutation(
+            `UPDATE bot_orders SET status = 'suspended', updated_at = ${updNow} WHERE id = ?`,
+            [order.id]
+          ).catch(() => {});
+          if (order.customer_email) {
+            const expDate = exp.toLocaleDateString("en-KE", { year: "numeric", month: "long", day: "numeric" });
+            const html = `<!DOCTYPE html><html>
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+  <body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+    <div style="max-width:520px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
+      <div style="background:linear-gradient(135deg,#EF4444 0%,#DC2626 100%);padding:28px;text-align:center;">
+        <span style="background:#fff;color:#EF4444;font-size:12px;font-weight:700;padding:4px 14px;border-radius:99px;">Bot Suspended</span>
+        <h1 style="color:#fff;margin:14px 0 4px;font-size:20px;">${siteName}</h1>
+      </div>
+      <div style="padding:28px;">
+        <p style="color:#374151;font-size:15px;">Your bot subscription has expired. Your bot <strong>${order.reference}</strong> has been suspended as of <strong>${expDate}</strong>.</p>
+        <p style="color:#374151;font-size:15px;">To restore your bot, please renew your subscription.</p>
+        <div style="text-align:center;margin:24px 0;">
+          <a href="${process.env.APP_URL || ""}/bots" style="background:#4F46E5;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Renew Now</a>
+        </div>
+      </div>
+    </div>
+  </body></html>`;
+            await sendRawEmail(order.customer_email, `Your Bot Has Been Suspended — ${siteName}`, html).catch(() => {});
+          }
+          console.log(`[cron][bot-expiry] Suspended bot order ${order.reference}`);
+          continue;
+        }
+
+        // ── Send renewal reminder emails ───────────────────────────────────────
+        if (daysLeft > 0 && order.status === "deployed") {
+          for (const day of REMINDER_DAYS) {
+            if (daysLeft > day) continue;
+            const key = `bot_renewal_reminder_${order.reference}_${day}d`;
+            if (dbSettingsGet(key)) continue;
+            dbSettingsSet(key, new Date().toISOString());
+
+            const urgency = day === 1 ? "🚨 Last Day!" : day === 3 ? "⚠️ 3 Days Left" : "⏰ 7 Days Left";
+            const badgeBg = day === 1 ? "#EF4444" : day === 3 ? "#F59E0B" : "#4F46E5";
+            const expDate = exp.toLocaleDateString("en-KE", { year: "numeric", month: "long", day: "numeric" });
+
+            if (order.customer_email) {
+              const html = `<!DOCTYPE html><html>
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+  <body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+    <div style="max-width:520px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
+      <div style="background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);padding:28px;text-align:center;">
+        <span style="background:${badgeBg};color:#fff;font-size:12px;font-weight:700;padding:4px 14px;border-radius:99px;letter-spacing:.5px;">${urgency}</span>
+        <h1 style="color:#fff;margin:14px 0 4px;font-size:20px;">${siteName}</h1>
+        <p style="color:rgba(255,255,255,.75);margin:0;font-size:13px;">Bot Subscription Renewal Reminder</p>
+      </div>
+      <div style="padding:28px;">
+        <p style="color:#374151;font-size:15px;margin:0 0 12px;">Hi there,</p>
+        <p style="color:#374151;font-size:15px;">Your bot subscription (ref: <strong>${order.reference}</strong>) expires on <strong>${expDate}</strong> — that's in ${Math.ceil(daysLeft)} day${Math.ceil(daysLeft) !== 1 ? "s" : ""}.</p>
+        <p style="color:#374151;font-size:15px;">Renew before it expires to keep your bot running without interruption.</p>
+        <div style="text-align:center;margin:24px 0;">
+          <a href="${process.env.APP_URL || ""}/bots" style="background:#4F46E5;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Renew Subscription</a>
+        </div>
+        <p style="color:#6B7280;font-size:13px;text-align:center;">If not renewed by ${expDate}, your bot will be automatically suspended.</p>
+      </div>
+    </div>
+  </body></html>`;
+              await sendRawEmail(order.customer_email, `Bot Renewal Reminder — ${urgency} — ${siteName}`, html).catch(() => {});
+            }
+            console.log(`[cron][bot-renewal] Sent ${day}d reminder for order ${order.reference}`);
+            break; // Only send the most urgent reminder per run
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("[cron][bot-expiry] Error:", err.message);
+    }
+  }
+
+  // ─── Start all crons ────────────────────────────────────────────────────────
 
 export function startCronJobs() {
   // Daily at 9am: check expiring subscriptions
@@ -398,5 +504,8 @@ export function startCronJobs() {
   // 1st of every month at 9am: monthly spending summary emails
   cron.schedule("0 9 1 * *", () => sendMonthlySummaries());
 
-  console.log("[cron] Jobs scheduled: expiry check (daily 9am), weekly report (Sunday 8am), campaigns (every 5min), monthly summary (1st of month 9am)");
+  // Daily at 10am: check expiring & expired bot orders
+    cron.schedule("0 10 * * *", checkExpiringBotOrders);
+
+    console.log("[cron] Jobs scheduled: expiry check (daily 9am), weekly report (Sunday 8am), campaigns (every 5min), monthly summary (1st of month 9am), bot-expiry check (daily 10am)");
 }
