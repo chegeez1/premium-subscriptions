@@ -8001,6 +8001,9 @@ function BotOrdersAdminTab() {
   const [vpsDeployLoading, setVpsDeployLoading] = useState(false);
   const [vpsDeployLog, setVpsDeployLog] = useState("");
   const [vpsDeployStatus, setVpsDeployStatus] = useState<"idle"|"success"|"failed">("idle");
+const [bulkLoading, setBulkLoading] = useState<string | null>(null);
+const [bulkResult, setBulkResult] = useState<string | null>(null);
+const [bulkVpsId, setBulkVpsId] = useState("");
 
   const { data, isLoading } = useQuery<{ success: boolean; orders: any[] }>({
     queryKey: ["/api/admin/bot-orders"],
@@ -8047,6 +8050,27 @@ function BotOrdersAdminTab() {
       setActionLoading(null);
     }
   };
+
+const doBulkAction = async (actionType: string) => {
+  setBulkLoading(actionType); setBulkResult(null);
+  try {
+    const url = actionType === "restart-all" ? "/api/admin/bots/bulk/restart-all"
+      : actionType === "suspend-expired" ? "/api/admin/bots/bulk/suspend-expired"
+      : `/api/admin/bots/bulk/restart-vps/${bulkVpsId}`;
+    if (actionType === "restart-vps" && !bulkVpsId) { setBulkResult("Enter a VPS ID first"); setBulkLoading(null); return; }
+    const r = await fetch(url, { method: "POST", headers: authHeaders() as any });
+    const d = await r.json();
+    if (d.success) {
+      const msg = actionType === "restart-all" ? `Restarted ${d.restarted}/${d.total} bots`
+        : actionType === "suspend-expired" ? `Suspended ${d.suspended} expired bots`
+        : `Restarted ${d.restarted}/${d.total} bots on VPS`;
+      setBulkResult(msg);
+      toast({ title: msg });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
+    } else { setBulkResult("Error: " + (d.error || "Unknown")); }
+  } catch (e: any) { setBulkResult("Error: " + e.message); }
+  finally { setBulkLoading(null); }
+};
 
   async function deployViaVps() {
     if (!selectedOrder || !vpsDeployVpsId) return;
@@ -8184,6 +8208,29 @@ function BotOrdersAdminTab() {
           ))}
         </div>
       </div>
+
+              {/* ── Bulk Actions Panel ─────────────────────────────────────────────── */}
+              <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs font-bold text-white/60 uppercase tracking-wide">Bulk Actions</span>
+                  {bulkResult && <span className={`text-xs px-2 py-0.5 rounded ${bulkResult.startsWith("Error") ? "bg-red-500/20 text-red-300" : "bg-emerald-500/20 text-emerald-300"}`}>{bulkResult}</span>}
+                </div>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <button onClick={() => doBulkAction("suspend-expired")} disabled={!!bulkLoading} className="text-xs px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 font-medium disabled:opacity-50 flex items-center gap-1.5">
+                    {bulkLoading === "suspend-expired" ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" /> : "⏸"} Suspend All Expired
+                  </button>
+                  <button onClick={() => doBulkAction("restart-all")} disabled={!!bulkLoading} className="text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-400 font-medium disabled:opacity-50 flex items-center gap-1.5">
+                    {bulkLoading === "restart-all" ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" /> : "↻"} Restart All Bots
+                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input placeholder="VPS ID" value={bulkVpsId} onChange={e => setBulkVpsId(e.target.value)} className="text-xs bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-white/70 w-36 focus:outline-none focus:border-indigo-500/50" />
+                    <button onClick={() => doBulkAction("restart-vps")} disabled={!!bulkLoading || !bulkVpsId} className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 font-medium disabled:opacity-50 flex items-center gap-1.5">
+                      {bulkLoading === "restart-vps" ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" /> : "🔄"} Restart VPS Bots
+                    </button>
+                  </div>
+                </div>
+              </div>
+
 
       {/* Management panel */}
       {selectedOrder && (
