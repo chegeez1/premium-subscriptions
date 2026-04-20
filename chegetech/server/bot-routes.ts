@@ -76,7 +76,15 @@ async function m(template: string, params: any[] = []): Promise<void> {
       console.log("[Bot Deploy] No VPS servers configured — skipping deploy");
       return null;
     }
-    const server = servers[0];
+    // Load-balance: pick VPS with fewest deployed bots
+      const deployedCountRows = await q(
+        `SELECT vps_server_id, COUNT(*) as cnt FROM bot_orders WHERE status = 'deployed' AND vps_server_id IS NOT NULL GROUP BY vps_server_id`
+      ).catch(() => []);
+      const deployedCounts: Record<string,number> = {};
+      for (const row of deployedCountRows) deployedCounts[row.vps_server_id] = Number(row.cnt ?? 0);
+      const server = servers.reduce((best: any, s: any) =>
+        (deployedCounts[s.id] ?? 0) < (deployedCounts[best.id] ?? 0) ? s : best
+      , servers[0]);
     const ref = order.reference;
     const pm2Name = `bot-${ref}`;
     const botDir = `/opt/bots/${pm2Name}`;
@@ -792,6 +800,97 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
           const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
           await m(
             `UPDATE bot_orders SET env_vars = ?, updated_at = ${updNow} WHERE id = ?`,
+
+      // ─── Customer: 7-day uptime history ─────────────────────────────────────
+      app.get("/api/customer/bots/:orderId/uptime", customerAuthMiddleware, async (req: any, res) => {
+        try {
+          const orderId = parseInt(req.params.orderId);
+          const customerId = req.customer.id;
+          const rows = await q("SELECT * FROM bot_orders WHERE id = ? AND customer_id = ?", [orderId, customerId]);
+          if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
+          const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+          const pings = await q(
+            "SELECT pm2_status, checked_at FROM bot_pings WHERE bot_order_id = ? AND checked_at >= ? ORDER BY checked_at ASC",
+            [orderId, since]
+          );
+          return res.json({ success: true, pings });
+        } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
+      });
+
+      // ─── Customer: Mini terminal ─────────────────────────────────────────────
+      app.post("/api/customer/bots/:orderId/terminal", customerAuthMiddleware, async (req: any, res) => {
+        try {
+          const orderId = parseInt(req.params.orderId);
+          const customerId = req.customer.id;
+          const { command } = req.body as { command: string };
+          if (!command || typeof command !== "string") return res.status(400).json({ success: false, error: "command required" });
+          const trimmed = command.trim();
+          const allowed = ["pm2 logs", "pm2 status", "pm2 list", "pm2 describe", "pm2 restart", "pm2 stop", "pm2 start", "ls", "cat .env", "tail", "node -v", "npm -v", "git log"];
+          if (!allowed.some(p => trimmed.startsWith(p))) {
+            return res.status(403).json({ success: false, error: "Command not allowed. Permitted: " + allowed.join(", ") });
+          }
+          const rows = await q("SELECT * FROM bot_orders WHERE id = ? AND customer_id = ?", [orderId, customerId]);
+          if (!rows.length) return res.status(404).json({ success: false, error: "Order not found" });
+          const order = rows[0];
+          if (!order.pm2_name || !order.vps_server_id) return res.status(400).json({ success: false, error: "Bot not deployed yet" });
+          const svrs = vpsManager.getAll();
+          const svr = svrs.find((s: any) => s.id === order.vps_server_id);
+          if (!svr) return res.status(404).json({ success: false, error: "VPS not found" });
+          const botDir = `/opt/bots/bot-${order.reference}`;
+          const fullCmd = trimmed.startsWith("pm2 logs")
+            ? `${trimmed} --lines 50 --nostream 2>&1 | tail -100`
+            : (trimmed.startsWith("ls") || trimmed.startsWith("tail") || trimmed.startsWith("cat"))
+            ? `cd ${botDir} && ${trimmed} 2>&1`
+            : `${trimmed} 2>&1`;
+          const { stdout, stderr } = await vpsManager.execCommand(svr, fullCmd);
+          return res.json({ success: true, output: (stdout + (stderr ? "\n[stderr]: " + stderr : "")).slice(0, 8000) });
+        } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
+      });
+
+      // ─── Admin: Bulk actions ─────────────────────────────────────────────────
+      app.post("/api/admin/bots/bulk/restart-vps/:vpsId", async (req, res) => {
+        try {
+          const svr = vpsManager.getById(req.params.vpsId);
+          if (!svr) return res.status(404).json({ success: false, error: "VPS not found" });
+          const orders = await q("SELECT * FROM bot_orders WHERE vps_server_id = ? AND status = 'deployed' AND pm2_name IS NOT NULL", [req.params.vpsId]);
+          let restarted = 0;
+          for (const o of orders) { try { await vpsManager.execCommand(svr, `pm2 restart ${o.pm2_name}`); restarted++; } catch {} }
+          return res.json({ success: true, restarted, total: orders.length });
+        } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
+      });
+
+      app.post("/api/admin/bots/bulk/suspend-expired", async (req, res) => {
+        try {
+          const now = new Date().toISOString();
+          const expired = await q("SELECT * FROM bot_orders WHERE status = 'deployed' AND expires_at IS NOT NULL AND expires_at != '' AND expires_at < ?", [now]);
+          const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+          let suspended = 0;
+          for (const o of expired) {
+            if (o.pm2_name && o.vps_server_id) {
+              const svr = vpsManager.getAll().find((s: any) => s.id === o.vps_server_id);
+              if (svr) { try { await vpsManager.execCommand(svr, `pm2 stop ${o.pm2_name}`); } catch {} }
+            }
+            await m(`UPDATE bot_orders SET status = 'suspended', updated_at = ${updNow} WHERE id = ?`, [o.id]);
+            suspended++;
+          }
+          return res.json({ success: true, suspended, total: expired.length });
+        } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
+      });
+
+      app.post("/api/admin/bots/bulk/restart-all", async (req, res) => {
+        try {
+          const orders = await q("SELECT * FROM bot_orders WHERE status = 'deployed' AND pm2_name IS NOT NULL AND vps_server_id IS NOT NULL");
+          const svrs = vpsManager.getAll();
+          let restarted = 0;
+          for (const o of orders) {
+            const svr = svrs.find((s: any) => s.id === o.vps_server_id);
+            if (!svr) continue;
+            try { await vpsManager.execCommand(svr, `pm2 restart ${o.pm2_name}`); restarted++; } catch {}
+          }
+          return res.json({ success: true, restarted, total: orders.length });
+        } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
+      });
+  
             [JSON.stringify(envVars), orderId]
           );
           return res.json({ success: true, message: "Env vars updated and bot restarted" });
