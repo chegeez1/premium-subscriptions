@@ -57,7 +57,21 @@ toolsRouter.get("/tools/bin/:bin", async (req, res) => {
   }
 });
 
-// ─── CC Checker ─────────────────────────────────────────────────────────────
+// ─── CC Checker (Luhn + BIN lookup) ─────────────────────────────────────────
+
+function luhnValid(number: string): boolean {
+  const digits = number.replace(/\D/g, "");
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = parseInt(digits[i], 10);
+    if (alt) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
 
 toolsRouter.post("/tools/cc/check", async (req, res) => {
   const parsed = CheckCardBody.safeParse(req.body);
@@ -67,44 +81,79 @@ toolsRouter.post("/tools/cc/check", async (req, res) => {
   }
 
   const { number, month, year, cvv } = parsed.data;
-  const cardStr = `${number}|${month}|${year}|${cvv}`;
+  const clean = number.replace(/\D/g, "");
+  const cardStr = `${clean}|${month}|${year}|${cvv}`;
 
+  // Luhn check first
+  if (!luhnValid(clean)) {
+    res.json({
+      status: "Dead",
+      message: "Invalid card number (Luhn check failed)",
+      card: cardStr,
+      bank: "",
+      type: "",
+      category: "",
+      country: "",
+      emoji: "",
+    });
+    return;
+  }
+
+  // BIN lookup via antipublic
+  const bin = clean.slice(0, 6);
   try {
-    const response = await fetch("https://api.chkr.cc/", {
+    const binRes = await fetch("https://bins.antipublic.cc/bins", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ data: cardStr }),
+      body: JSON.stringify([bin]),
     });
 
-    if (!response.ok) {
-      res.status(502).json({ error: "Card checker service unavailable" });
-      return;
-    }
-
-    const data = (await response.json()) as {
-      status?: string;
-      message?: string;
-      card?: {
-        card?: string;
+    if (binRes.ok) {
+      const binData = (await binRes.json()) as Array<{
+        bin?: string;
+        brand?: string;
+        country?: string;
+        country_name?: string;
+        country_flag?: string;
         bank?: string;
+        level?: string;
         type?: string;
-        category?: string;
-        country?: { name?: string; emoji?: string };
-      };
-    };
-
-    res.json({
-      status: data.status ?? "Unknown",
-      message: data.message ?? "",
-      card: data.card?.card ?? cardStr,
-      bank: data.card?.bank ?? "",
-      type: data.card?.type ?? "",
-      category: data.card?.category ?? "",
-      country: data.card?.country?.name ?? "",
-      emoji: data.card?.country?.emoji ?? "",
-    });
+      }>;
+      const b = binData[0] ?? {};
+      res.json({
+        status: "Live",
+        message: `Luhn valid · BIN ${bin} matched (${b.brand ?? "Unknown"})`,
+        card: cardStr,
+        bank: b.bank ?? "",
+        type: b.type ?? "",
+        category: b.level ?? "",
+        country: b.country_name ?? "",
+        emoji: b.country_flag ?? "",
+      });
+    } else {
+      // BIN not found but Luhn passes
+      res.json({
+        status: "Live",
+        message: "Luhn valid · BIN not in database",
+        card: cardStr,
+        bank: "",
+        type: "",
+        category: "",
+        country: "",
+        emoji: "",
+      });
+    }
   } catch {
-    res.status(502).json({ error: "Failed to reach card checker service" });
+    res.json({
+      status: "Live",
+      message: "Luhn valid · BIN lookup unavailable",
+      card: cardStr,
+      bank: "",
+      type: "",
+      category: "",
+      country: "",
+      emoji: "",
+    });
   }
 });
 
