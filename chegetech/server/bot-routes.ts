@@ -2135,6 +2135,56 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   });
 
 
+
+  // ── TempMail (mail.tm proxy) ──────────────────────────────────────────────
+  app.post('/api/tempmail/create', async (_req, res) => {
+    try {
+      const axiosM = require('axios');
+      // Get available domains
+      const domsRes = await axiosM.get('https://api.mail.tm/domains', { headers: { 'Accept': 'application/json' }, timeout: 10000 });
+      const domains: any[] = domsRes.data?.['hydra:member'] || [];
+      if (!domains.length) return res.status(503).json({ success: false, error: 'No domains available' });
+      const domain = domains[0].domain;
+      const user = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+      const address = `${user}@${domain}`;
+      const password = Math.random().toString(36).slice(2, 18);
+      // Create account
+      await axiosM.post('https://api.mail.tm/accounts', { address, password }, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 10000 });
+      // Get token
+      const tokRes = await axiosM.post('https://api.mail.tm/token', { address, password }, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 10000 });
+      const token: string = tokRes.data?.token;
+      if (!token) return res.status(500).json({ success: false, error: 'Token generation failed' });
+      res.json({ success: true, address, token });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.get('/api/tempmail/inbox', async (req, res) => {
+    try {
+      const { token } = req.query as { token: string };
+      if (!token) return res.status(400).json({ success: false, error: 'Token required' });
+      const axiosM = require('axios');
+      const r = await axiosM.get('https://api.mail.tm/messages', { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }, timeout: 10000 });
+      const messages = (r.data?.['hydra:member'] || []).map((m: any) => ({
+        id: m.id, from: m.from, subject: m.subject, createdAt: m.createdAt, seen: m.seen,
+      }));
+      res.json({ success: true, messages });
+    } catch (e: any) {
+      if (e.response?.status === 401) return res.json({ success: false, expired: true });
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.get('/api/tempmail/read/:id', async (req, res) => {
+    try {
+      const { token } = req.query as { token: string };
+      if (!token) return res.status(400).json({ success: false, error: 'Token required' });
+      const axiosM = require('axios');
+      const r = await axiosM.get(`https://api.mail.tm/messages/${req.params.id}`, { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }, timeout: 10000 });
+      res.json({ success: true, message: { id: r.data.id, from: r.data.from, subject: r.data.subject, createdAt: r.data.createdAt, seen: r.data.seen, html: r.data.html, text: r.data.text } });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+
   // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
