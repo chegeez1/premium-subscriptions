@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders" | "free-proxies" | "gift-cards" | "gc-orders" | "sms-plans" | "sms-orders" | "cc-checker" | "email-gen";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders" | "free-proxies" | "gift-cards" | "gc-orders" | "sms-plans" | "sms-orders" | "cc-checker" | "email-gen" | "chegebot-subs";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -279,6 +279,7 @@ export default function Admin() {
     { id: "sms-orders", label: "SMS Orders", icon: MessageSquare, alwaysVisible: true },
     { id: "cc-checker", label: "CC Checker", icon: CreditCard, alwaysVisible: true },
     { id: "email-gen", label: "Email Generator", icon: Mail, alwaysVisible: true },
+    { id: "chegebot-subs", label: "ChegeBot Pro", icon: Zap, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
@@ -426,6 +427,7 @@ export default function Admin() {
           {activeTab === "sms-orders" && <SmsOrdersAdminTab />}
           {activeTab === "cc-checker" && <BulkCcCheckerAdminTab />}
           {activeTab === "email-gen" && <EmailGenAdminTab />}
+          {activeTab === "chegebot-subs" && <ChegeBotSubsAdminTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
@@ -10639,3 +10641,263 @@ function SmsOrdersAdminTab() {
   );
 }
 
+
+
+// ─── ChegeBot Pro Subscriptions Admin Tab ─────────────────────────────────────
+function ChegeBotSubsAdminTab() {
+  const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [grantModal, setGrantModal] = useState(false);
+  const [grantEmail, setGrantEmail] = useState("");
+  const [grantPlan, setGrantPlan] = useState("monthly");
+  const [grantDays, setGrantDays] = useState(30);
+  const [granting, setGranting] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: stats, isLoading: statsLoading } = useQuery<any>({
+    queryKey: ["/api/admin/tradingbot/stats"],
+    queryFn: () => authFetch("/api/admin/tradingbot/stats"),
+    staleTime: 30000,
+  });
+
+  const { data: subData, isLoading: subsLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/tradingbot/subscriptions", search, statusFilter],
+    queryFn: () => authFetch(`/api/admin/tradingbot/subscriptions?search=${encodeURIComponent(search)}&status=${statusFilter}`),
+    staleTime: 15000,
+  });
+
+  const subs: any[] = subData?.subscriptions ?? [];
+
+  async function handleRevoke(id: number) {
+    if (!confirm("Revoke this subscription?")) return;
+    const r = await authFetch(`/api/admin/tradingbot/revoke/${id}`, { method: "POST" });
+    if (r.success) { toast({ title: "Subscription revoked" }); refetch(); }
+    else toast({ title: "Error", description: r.error, variant: "destructive" });
+  }
+
+  async function handleActivate(id: number) {
+    const r = await authFetch(`/api/admin/tradingbot/activate/${id}`, { method: "POST" });
+    if (r.success) { toast({ title: "Subscription activated" }); refetch(); }
+    else toast({ title: "Error", description: r.error, variant: "destructive" });
+  }
+
+  async function handleGrant() {
+    if (!grantEmail.trim()) return;
+    setGranting(true);
+    const r = await authFetch("/api/admin/tradingbot/grant", {
+      method: "POST",
+      body: JSON.stringify({ email: grantEmail.trim(), plan: grantPlan, days: grantDays }),
+    });
+    setGranting(false);
+    if (r.success) {
+      toast({ title: "Access granted", description: `${grantEmail} now has ${grantPlan} access` });
+      setGrantModal(false); setGrantEmail(""); refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/tradingbot/stats"] });
+    } else {
+      toast({ title: "Error", description: r.error, variant: "destructive" });
+    }
+  }
+
+  const planBadge: Record<string, string> = {
+    monthly:   "bg-blue-500/15 text-blue-400 border border-blue-500/20",
+    quarterly: "bg-green-500/15 text-green-400 border border-green-500/20",
+    lifetime:  "bg-purple-500/15 text-purple-400 border border-purple-500/20",
+  };
+  const statusBadge: Record<string, string> = {
+    active:  "bg-green-500/15 text-green-400",
+    pending: "bg-yellow-500/15 text-yellow-400",
+    revoked: "bg-red-500/15 text-red-400",
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-green-500/15 border border-green-500/25 flex items-center justify-center">
+            <Zap className="w-5 h-5 text-green-400" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold">ChegeBot Pro Subscriptions</h2>
+            <p className="text-sm text-gray-400">Manage trading bot subscribers</p>
+          </div>
+        </div>
+        <button onClick={() => setGrantModal(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-green-900/20">
+          <Plus className="w-4 h-4" /> Grant Access
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {statsLoading ? (
+          [...Array(4)].map((_,i) => (
+            <div key={i} className="rounded-2xl bg-white/[0.03] border border-white/[0.07] p-5 animate-pulse h-24" />
+          ))
+        ) : ([
+          { label: "Total Revenue", value: `KES ${(stats?.totalRevenue ?? 0).toLocaleString()}`, icon: TrendingUp, color: "text-green-400", sub: "all time" },
+          { label: "Active Subs",   value: stats?.activeSubs ?? 0,    icon: CheckCircle, color: "text-green-400", sub: `of ${stats?.totalSubs ?? 0} total` },
+          { label: "This Month",    value: `KES ${(stats?.monthRevenue ?? 0).toLocaleString()}`, icon: BarChart2, color: "text-blue-400", sub: `${stats?.monthCount ?? 0} new` },
+          { label: "Lifetime",      value: stats?.lifetimeSubs ?? 0,  icon: Star, color: "text-purple-400", sub: `${stats?.quarterlySubs ?? 0} quarterly` },
+        ]).map(s => (
+          <div key={s.label} className="rounded-2xl bg-white/[0.03] border border-white/[0.07] p-5">
+            <div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-500">{s.label}</span><s.icon className="w-3.5 h-3.5 text-gray-600" /></div>
+            <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+            <p className="text-[11px] text-gray-500 mt-1">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Plan breakdown */}
+      {stats && (
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { plan: "monthly",   label: "Monthly",   count: stats.monthlySubs,   revenue: stats.monthlyRevenue,   price: 500  },
+            { plan: "quarterly", label: "Quarterly", count: stats.quarterlySubs, revenue: stats.quarterlyRevenue, price: 1200 },
+            { plan: "lifetime",  label: "Lifetime",  count: stats.lifetimeSubs,  revenue: stats.lifetimeRevenue,  price: 5000 },
+          ].map(p => (
+            <div key={p.plan} className="rounded-2xl bg-white/[0.03] border border-white/[0.07] p-4">
+              <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium mb-2 ${planBadge[p.plan]}`}>{p.label}</span>
+              <p className="text-xl font-bold">{p.count ?? 0}</p>
+              <p className="text-[11px] text-gray-500">KES {(p.revenue ?? 0).toLocaleString()} · KES {p.price}/sub</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-500" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search email or reference…"
+            className="w-full bg-black/40 border border-white/10 rounded-xl pl-9 pr-3 h-10 text-sm text-white focus:outline-none focus:border-green-500/40" />
+        </div>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="bg-black/40 border border-white/10 rounded-xl px-3 h-10 text-sm text-white focus:outline-none focus:border-green-500/40">
+          <option value="all">All Status</option>
+          <option value="active">Active</option>
+          <option value="pending">Pending</option>
+          <option value="revoked">Revoked</option>
+        </select>
+        <button onClick={() => refetch()} title="Refresh"
+          className="h-10 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-400 transition-colors">
+          <RefreshCw className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-2xl bg-white/[0.03] border border-white/[0.07] overflow-hidden">
+        {subsLoading ? (
+          <div className="p-10 text-center"><Loader2 className="w-6 h-6 animate-spin text-gray-500 mx-auto" /></div>
+        ) : subs.length === 0 ? (
+          <div className="p-12 text-center">
+            <Zap className="w-10 h-10 text-gray-700 mx-auto mb-2" />
+            <p className="text-gray-500">No subscriptions found</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-white/[0.06]">
+                <tr className="text-gray-500 text-xs">
+                  {["ID","Customer","Plan","Amount","Status","Started","Expires","Reference","Actions"].map(h => (
+                    <th key={h} className="text-left px-4 py-3 font-medium whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {subs.map((sub: any) => {
+                  const expired = sub.expires_at && new Date(sub.expires_at) < new Date();
+                  const effectiveStatus = sub.status === "active" && expired ? "expired" : sub.status;
+                  return (
+                    <tr key={sub.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{sub.id}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-white">{sub.customer_name || "—"}</div>
+                        <div className="text-xs text-gray-400">{sub.customer_email}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${planBadge[sub.plan] ?? "bg-gray-500/15 text-gray-400"}`}>
+                          {sub.plan}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono font-semibold text-white">KES {(sub.amount ?? 0).toLocaleString()}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${effectiveStatus === "expired" ? "bg-orange-500/15 text-orange-400" : statusBadge[effectiveStatus] ?? "bg-gray-500/15 text-gray-400"}`}>
+                          {effectiveStatus}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-400">{sub.created_at ? new Date(sub.created_at).toLocaleDateString() : "—"}</td>
+                      <td className="px-4 py-3 text-xs text-gray-400">{sub.expires_at ? new Date(sub.expires_at).toLocaleDateString() : <span className="text-purple-400">Never</span>}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-500">{sub.paystack_reference?.slice(0,16)}…</td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-1.5">
+                          {sub.status !== "active" && (
+                            <button onClick={() => handleActivate(sub.id)}
+                              className="px-2.5 py-1 rounded-lg bg-green-600/20 hover:bg-green-600/40 text-green-400 text-xs font-medium transition-colors whitespace-nowrap">
+                              Activate
+                            </button>
+                          )}
+                          {sub.status === "active" && (
+                            <button onClick={() => handleRevoke(sub.id)}
+                              className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 text-xs font-medium transition-colors whitespace-nowrap">
+                              Revoke
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-gray-600 text-right">{subs.length} result{subs.length !== 1 ? "s" : ""}</p>
+
+      {/* Grant Modal */}
+      {grantModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={() => setGrantModal(false)}>
+          <div className="bg-[#0f0f0f] border border-white/10 rounded-2xl p-6 w-full max-w-md space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-lg">Grant Free Access</h3>
+              <button onClick={() => setGrantModal(false)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-400 mb-1.5 block">Customer Email</label>
+                <input value={grantEmail} onChange={e => setGrantEmail(e.target.value)} placeholder="customer@email.com"
+                  className="w-full bg-black/50 border border-white/10 rounded-xl px-3 h-10 text-sm text-white focus:outline-none focus:border-green-500/40" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">Plan</label>
+                  <select value={grantPlan} onChange={e => setGrantPlan(e.target.value)}
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-3 h-10 text-sm text-white focus:outline-none focus:border-green-500/40">
+                    <option value="monthly">Monthly</option>
+                    <option value="quarterly">Quarterly</option>
+                    <option value="lifetime">Lifetime</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">Duration (days, 0=∞)</label>
+                  <input type="number" value={grantDays} onChange={e => setGrantDays(Number(e.target.value))} min={0}
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-3 h-10 text-sm text-white focus:outline-none focus:border-green-500/40" />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setGrantModal(false)} className="flex-1 h-10 rounded-xl border border-white/10 text-gray-400 hover:text-white text-sm transition-colors">Cancel</button>
+              <button onClick={handleGrant} disabled={granting || !grantEmail.trim()}
+                className="flex-1 h-10 rounded-xl bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2">
+                {granting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                {granting ? "Granting…" : "Grant Access"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
