@@ -8215,7 +8215,7 @@ const deployLogRef = useRef<HTMLDivElement>(null);
     });
   };
 
-  async function deployWithStream(orderId: number) {
+  async function deployWithStream(orderId: number, vpsId?: string) {
     setDeployStreamLog([]);
     setDeployStreaming(true);
     setDeployStreamStatus("running");
@@ -8225,7 +8225,8 @@ const deployLogRef = useRef<HTMLDivElement>(null);
     try {
       const res = await fetch(`/api/admin/bot-orders/${orderId}/deploy-stream`, {
         method: "POST",
-        headers: authHeaders() as any,
+        headers: { ...authHeaders() as any, "Content-Type": "application/json" },
+        body: vpsId ? JSON.stringify({ vpsId }) : undefined,
       });
       if (!res.body) throw new Error("No response stream");
       const reader = res.body.getReader();
@@ -8365,9 +8366,9 @@ const deployLogRef = useRef<HTMLDivElement>(null);
             )}
             <div className="flex gap-2 justify-end pt-1">
               <Button size="sm" variant="outline" onClick={() => setVpsDeployOpen(false)} className="border-white/10 text-white/60 h-8">Cancel</Button>
-              <Button size="sm" onClick={deployViaVps} disabled={!vpsDeployVpsId || vpsDeployLoading}
+              <Button size="sm" onClick={() => { setVpsDeployOpen(false); deployWithStream(selectedOrder.id, vpsDeployVpsId); }} disabled={!vpsDeployVpsId || vpsDeployLoading}
                 className="bg-violet-600 hover:bg-violet-700 text-white h-8 px-4">
-                {vpsDeployLoading ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" />Deploying...</> : <><Zap className="w-3 h-3 mr-1.5" />Deploy Now</>}
+                <Zap className="w-3 h-3 mr-1.5" />Deploy Now
               </Button>
             </div>
           </div>
