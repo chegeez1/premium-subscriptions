@@ -1853,6 +1853,129 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
+
+  // ── Proxy / Residential IPs ───────────────────────────────────────────────
+
+  // Customer: list active plans
+  app.get('/api/proxy/plans', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      if (!pg) return res.json({ success: true, plans: [] });
+      const { rows } = await pg.query("SELECT * FROM proxy_plans WHERE is_active=true ORDER BY sort_order ASC, price_kes ASC");
+      res.json({ success: true, plans: rows });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Customer: create order + Paystack
+  app.post('/api/proxy/order', async (req: any, res) => {
+    try {
+      const { planId } = req.body;
+      if (!planId) return res.status(400).json({ success: false, error: 'Plan ID required' });
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      if (!pg) return res.status(500).json({ success: false, error: 'DB unavailable' });
+      const { rows } = await pg.query("SELECT * FROM proxy_plans WHERE id=$1 AND is_active=true", [planId]);
+      if (!rows.length) return res.status(404).json({ success: false, error: 'Plan not found' });
+      const plan = rows[0];
+      const email = req.customer?.email || req.session?.customerEmail || 'customer@chegetech.com';
+      const ref = 'PROXY-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
+      const amountKobo = Math.round(plan.price_kes * 100);
+      const paystackBody = JSON.stringify({
+        email, amount: amountKobo, reference: ref, currency: 'KES',
+        metadata: { type: 'proxy_order', planId: plan.id, planName: plan.name, amountKes: plan.price_kes },
+        callback_url: process.env.BASE_URL ? process.env.BASE_URL + '/payment/callback' : undefined,
+      });
+      const httpsM = require('https') as typeof import('https');
+      const paystackRes = await new Promise<any>((resolve, reject) => {
+        const r = httpsM.request({ hostname:'api.paystack.co', path:'/transaction/initialize', method:'POST', headers:{ 'Authorization':'Bearer '+process.env.PAYSTACK_SECRET_KEY, 'Content-Type':'application/json', 'Content-Length':Buffer.byteLength(paystackBody) } }, (resp) => { let d=''; resp.on('data',(c:Buffer)=>d+=c); resp.on('end',()=>resolve(JSON.parse(d))); });
+        r.on('error',reject); r.write(paystackBody); r.end();
+      });
+      if (!paystackRes.status) return res.status(500).json({ success: false, error: 'Payment init failed' });
+      await pg.query(
+        "INSERT INTO proxy_orders (reference,customer_email,plan_id,plan_name,amount_kes,status) VALUES ($1,$2,$3,$4,$5,'pending') ON CONFLICT DO NOTHING",
+        [ref, email, plan.id, plan.name, plan.price_kes]
+      );
+      res.json({ success: true, paymentUrl: paystackRes.data.authorization_url, reference: ref });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: list all plans
+  app.get('/api/admin/proxy-plans', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      if (!pg) return res.json({ success: true, plans: [] });
+      const { rows } = await pg.query("SELECT * FROM proxy_plans ORDER BY sort_order ASC, id ASC");
+      res.json({ success: true, plans: rows });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: create plan
+  app.post('/api/admin/proxy-plans', async (req, res) => {
+    try {
+      const { name, description, type, gb_amount, country, price_kes, bandwidth, speed, features, is_active, sort_order } = req.body;
+      if (!name || !price_kes) return res.status(400).json({ success: false, error: 'Name and price required' });
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query(
+        "INSERT INTO proxy_plans (name,description,type,gb_amount,country,price_kes,bandwidth,speed,features,is_active,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
+        [name, description||'', type||'residential', gb_amount||null, country||null, price_kes, bandwidth||'Unlimited', speed||'100Mbps', features||'', is_active!==false, sort_order||0]
+      );
+      res.json({ success: true, plan: rows[0] });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: update plan
+  app.put('/api/admin/proxy-plans/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { name, description, type, gb_amount, country, price_kes, bandwidth, speed, features, is_active, sort_order } = req.body;
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      await pg.query(
+        "UPDATE proxy_plans SET name=COALESCE($1,name),description=COALESCE($2,description),type=COALESCE($3,type),gb_amount=$4,country=$5,price_kes=COALESCE($6,price_kes),bandwidth=COALESCE($7,bandwidth),speed=COALESCE($8,speed),features=COALESCE($9,features),is_active=COALESCE($10,is_active),sort_order=COALESCE($11,sort_order) WHERE id=$12",
+        [name, description, type, gb_amount||null, country||null, price_kes, bandwidth, speed, features, is_active, sort_order||0, id]
+      );
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: delete plan
+  app.delete('/api/admin/proxy-plans/:id', async (req, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      await pg.query("DELETE FROM proxy_plans WHERE id=$1", [req.params.id]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: list orders
+  app.get('/api/admin/proxy-orders', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      if (!pg) return res.json({ success: true, orders: [] });
+      const { rows } = await pg.query("SELECT * FROM proxy_orders ORDER BY id DESC LIMIT 500");
+      res.json({ success: true, orders: rows });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: update order status + credentials
+  app.patch('/api/admin/proxy-orders/:id/status', async (req, res) => {
+    try {
+      const { status, credentials } = req.body;
+      const allowed = ['pending','processing','active','completed','failed'];
+      if (!allowed.includes(status)) return res.status(400).json({ success: false, error: 'Invalid status' });
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      await pg.query("UPDATE proxy_orders SET status=$1,credentials=COALESCE($2,credentials) WHERE id=$3", [status, credentials||null, req.params.id]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+
   // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
