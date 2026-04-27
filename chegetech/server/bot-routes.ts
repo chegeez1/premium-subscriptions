@@ -944,6 +944,41 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         res.json({ success: true, message: "Bot started" });
       } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
     });
+
+    // Customer self-deploy: trigger deploy for a paid/failed order they own
+    app.post("/api/customer/bots/:orderId/self-deploy", customerAuthMiddleware, async (req: any, res) => {
+      try {
+        const id = parseInt(req.params.orderId);
+        const order = await getOwnedBotOrder(req, id);
+        if (!order) return res.status(404).json({ success: false, error: "Order not found or not yours" });
+        if (!["paid", "deploy_failed", "stopped"].includes(order.status)) {
+          return res.status(400).json({ success: false, error: `Cannot deploy order with status '${order.status}'` });
+        }
+        const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
+        if (!bots.length) return res.status(404).json({ success: false, error: "Bot configuration not found" });
+        const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+        await m(`UPDATE bot_orders SET status = 'deploying', updated_at = ${updNow} WHERE id = ?`, [id]);
+        // Fire-and-forget — deploy runs in background
+        const envVars: Record<string, string> = {};
+        try { Object.assign(envVars, JSON.parse(order.env_vars || "{}")); } catch {}
+        deployBotToVps(order, bots[0], envVars).then(async (result) => {
+          const updN2 = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+          if (result) {
+            const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+            await m(
+              `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updN2}, expires_at = ?, updated_at = ${updN2} WHERE id = ?`,
+              [result.pm2Name, result.vpsServerId, expiresAt, id]
+            );
+          } else {
+            await m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = 'Self-deploy failed — no VPS available', updated_at = ${updN2} WHERE id = ?`, [id]);
+          }
+        }).catch(async (e: any) => {
+          const updN3 = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+          await m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updN3} WHERE id = ?`, [e.message?.slice(0, 200) || "Unknown error", id]);
+        });
+        res.json({ success: true, message: "Deployment started — this usually takes 1-3 minutes." });
+      } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+    });
   
 
 
