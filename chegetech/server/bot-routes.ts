@@ -2347,5 +2347,195 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
   console.log("[Bot Routes] Background deploy scheduler started (runs every 5 min, first run in 30s)");
 
+
+  // ── Gift Cards ─────────────────────────────────────────────────────────────
+  app.get('/api/giftcards/products', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query(`SELECT p.*, COUNT(s.id) FILTER (WHERE s.is_sold=false) AS stock_count FROM gift_card_products p LEFT JOIN gift_card_stock s ON s.product_id=p.id WHERE p.is_active=true GROUP BY p.id ORDER BY p.sort_order ASC, p.id ASC`);
+      res.json({ success: true, products: rows.map((r:any)=>({...r,stock_count:parseInt(r.stock_count)||0})) });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.post('/api/giftcards/order', async (req, res) => {
+    try {
+      const { productId, email } = req.body;
+      if (!productId || !email) return res.status(400).json({ success: false, error: 'Product and email required' });
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows: prods } = await pg.query("SELECT * FROM gift_card_products WHERE id=$1 AND is_active=true", [productId]);
+      if (!prods.length) return res.status(404).json({ success: false, error: 'Product not found' });
+      const product = prods[0];
+      const { rows: stock } = await pg.query("SELECT id FROM gift_card_stock WHERE product_id=$1 AND is_sold=false LIMIT 1", [productId]);
+      if (!stock.length) return res.status(400).json({ success: false, error: 'Out of stock' });
+      const ref = 'GC-' + Date.now() + '-' + Math.random().toString(36).slice(2,7).toUpperCase();
+      await pg.query("INSERT INTO gift_card_orders (reference,customer_email,product_id,product_name,brand,denomination,currency,amount_kes,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending') ON CONFLICT DO NOTHING",
+        [ref, email, product.id, product.name, product.brand, product.denomination, product.currency, product.price_kes]);
+      const httpsM = require('https') as typeof import('https');
+      const paystackBody = JSON.stringify({ email, amount: Math.round(product.price_kes*100), reference: ref, currency: 'KES', metadata: { type:'gift_card', productId: product.id }, callback_url: (process.env.BASE_URL||'') + '/giftcards?ref=' + ref });
+      const psRes = await new Promise<any>((resolve,reject) => {
+        const r = httpsM.request({ hostname:'api.paystack.co', path:'/transaction/initialize', method:'POST', headers:{'Authorization':'Bearer '+process.env.PAYSTACK_SECRET_KEY,'Content-Type':'application/json','Content-Length':Buffer.byteLength(paystackBody)} }, (resp) => { let d=''; resp.on('data',(c:Buffer)=>d+=c); resp.on('end',()=>resolve(JSON.parse(d))); }); r.on('error',reject); r.write(paystackBody); r.end();
+      });
+      if (!psRes.status) return res.status(500).json({ success: false, error: 'Payment init failed' });
+      res.json({ success: true, paymentUrl: psRes.data.authorization_url });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.post('/api/giftcards/verify/:reference', async (req, res) => {
+    try {
+      const { reference } = req.params;
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows: orders } = await pg.query("SELECT * FROM gift_card_orders WHERE reference=$1", [reference]);
+      if (!orders.length) return res.status(404).json({ success: false, error: 'Order not found' });
+      const order = orders[0];
+      if (order.status === 'delivered' && order.code) return res.json({ success: true, code: order.code });
+      const httpsM = require('https') as typeof import('https');
+      const psCheck = await new Promise<any>((resolve) => {
+        const r = httpsM.request({ hostname:'api.paystack.co', path:'/transaction/verify/'+reference, method:'GET', headers:{'Authorization':'Bearer '+process.env.PAYSTACK_SECRET_KEY} }, (resp) => { let d=''; resp.on('data',(c:Buffer)=>d+=c); resp.on('end',()=>{try{resolve(JSON.parse(d));}catch{resolve({data:{status:'failed'}});}}); }); r.on('error',()=>resolve({data:{status:'failed'}})); r.end();
+      });
+      if (psCheck.data?.status !== 'success') return res.status(402).json({ success: false, error: 'Payment not confirmed' });
+      const { rows: stock } = await pg.query("SELECT * FROM gift_card_stock WHERE product_id=$1 AND is_sold=false LIMIT 1 FOR UPDATE SKIP LOCKED", [order.product_id]);
+      if (!stock.length) return res.status(400).json({ success: false, error: 'Out of stock - contact support' });
+      const item = stock[0];
+      await pg.query("UPDATE gift_card_stock SET is_sold=true,sold_to_email=$1,sold_at=NOW()::text WHERE id=$2", [order.customer_email, item.id]);
+      await pg.query("UPDATE gift_card_orders SET status='delivered',code=$1,stock_id=$2 WHERE reference=$3", [item.code, item.id, reference]);
+      res.json({ success: true, code: item.code });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin Gift Cards
+  app.get('/api/admin/gift-card-products', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query(`SELECT p.*, COUNT(s.id) FILTER (WHERE s.is_sold=false) AS stock_count, COUNT(s.id) AS total_stock FROM gift_card_products p LEFT JOIN gift_card_stock s ON s.product_id=p.id GROUP BY p.id ORDER BY p.sort_order ASC, p.id ASC`);
+      res.json({ success: true, products: rows.map((r:any)=>({...r,stock_count:parseInt(r.stock_count)||0,total_stock:parseInt(r.total_stock)||0})) });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.post('/api/admin/gift-card-products', async (req, res) => {
+    try {
+      const { name, brand, denomination, currency, price_kes, description, is_active, sort_order } = req.body;
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query("INSERT INTO gift_card_products (name,brand,denomination,currency,price_kes,description,is_active,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+        [name, brand, denomination||'', currency||'USD', price_kes, description||'', is_active!==false, sort_order||0]);
+      res.json({ success: true, product: rows[0] });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.put('/api/admin/gift-card-products/:id', async (req, res) => {
+    try {
+      const { name, brand, denomination, currency, price_kes, description, is_active, sort_order } = req.body;
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      await pg.query("UPDATE gift_card_products SET name=COALESCE($1,name),brand=COALESCE($2,brand),denomination=COALESCE($3,denomination),currency=COALESCE($4,currency),price_kes=COALESCE($5,price_kes),description=COALESCE($6,description),is_active=COALESCE($7,is_active),sort_order=COALESCE($8,sort_order) WHERE id=$9",
+        [name, brand, denomination, currency, price_kes, description, is_active, sort_order, req.params.id]);
+      res.json({ success: true });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.delete('/api/admin/gift-card-products/:id', async (req, res) => {
+    try { const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool; await pg.query("DELETE FROM gift_card_products WHERE id=$1",[req.params.id]); res.json({ success: true }); } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.post('/api/admin/gift-card-products/:id/stock', async (req, res) => {
+    try {
+      const { codes } = req.body;
+      const lines = (codes||'').split('\n').map((l:string)=>l.trim()).filter((l:string)=>l.length>0);
+      if (!lines.length) return res.status(400).json({ success: false, error: 'No codes provided' });
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      let added=0; for (const code of lines) { try { await pg.query("INSERT INTO gift_card_stock (product_id,code) VALUES ($1,$2)",[req.params.id,code]); added++; } catch {} }
+      res.json({ success: true, added });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.get('/api/admin/gift-card-orders', async (_req, res) => {
+    try { const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool; const { rows } = await pg.query("SELECT * FROM gift_card_orders ORDER BY id DESC LIMIT 500"); res.json({ success: true, orders: rows }); } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // ── Bulk SMS ───────────────────────────────────────────────────────────────
+  app.get('/api/sms/plans', async (_req, res) => {
+    try { const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool; const { rows } = await pg.query("SELECT * FROM sms_plans WHERE is_active=true ORDER BY sms_count ASC"); res.json({ success: true, plans: rows }); } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.post('/api/sms/order', async (req, res) => {
+    try {
+      const { planId, email, senderNote } = req.body;
+      if (!planId || !email) return res.status(400).json({ success: false, error: 'Plan and email required' });
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows: plans } = await pg.query("SELECT * FROM sms_plans WHERE id=$1 AND is_active=true",[planId]);
+      if (!plans.length) return res.status(404).json({ success: false, error: 'Plan not found' });
+      const plan = plans[0];
+      const ref = 'SMS-' + Date.now() + '-' + Math.random().toString(36).slice(2,7).toUpperCase();
+      await pg.query("INSERT INTO sms_orders (reference,customer_email,plan_id,plan_name,sms_count,amount_kes,sender_note,status) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending') ON CONFLICT DO NOTHING",
+        [ref, email, plan.id, plan.name, plan.sms_count, plan.price_kes, senderNote||'']);
+      const httpsM = require('https') as typeof import('https');
+      const paystackBody = JSON.stringify({ email, amount: Math.round(plan.price_kes*100), reference: ref, currency: 'KES', metadata: { type:'sms', planId: plan.id }, callback_url: (process.env.BASE_URL||'') + '/sms' });
+      const psRes = await new Promise<any>((resolve,reject) => {
+        const r = httpsM.request({ hostname:'api.paystack.co', path:'/transaction/initialize', method:'POST', headers:{'Authorization':'Bearer '+process.env.PAYSTACK_SECRET_KEY,'Content-Type':'application/json','Content-Length':Buffer.byteLength(paystackBody)} }, (resp) => { let d=''; resp.on('data',(c:Buffer)=>d+=c); resp.on('end',()=>resolve(JSON.parse(d))); }); r.on('error',reject); r.write(paystackBody); r.end();
+      });
+      if (!psRes.status) return res.status(500).json({ success: false, error: 'Payment init failed' });
+      res.json({ success: true, paymentUrl: psRes.data.authorization_url });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.get('/api/admin/sms-plans', async (_req, res) => {
+    try { const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool; const { rows } = await pg.query("SELECT * FROM sms_plans ORDER BY sms_count ASC"); res.json({ success: true, plans: rows }); } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.post('/api/admin/sms-plans', async (req, res) => {
+    try {
+      const { name, sms_count, price_kes, description, features, is_active, sort_order, validity_days } = req.body;
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query("INSERT INTO sms_plans (name,sms_count,price_kes,description,features,is_active,sort_order,validity_days) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+        [name, sms_count, price_kes, description||'', features||'', is_active!==false, sort_order||0, validity_days||30]);
+      res.json({ success: true, plan: rows[0] });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.put('/api/admin/sms-plans/:id', async (req, res) => {
+    try {
+      const { name, sms_count, price_kes, description, features, is_active, sort_order, validity_days } = req.body;
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      await pg.query("UPDATE sms_plans SET name=COALESCE($1,name),sms_count=COALESCE($2,sms_count),price_kes=COALESCE($3,price_kes),description=COALESCE($4,description),features=COALESCE($5,features),is_active=COALESCE($6,is_active),sort_order=COALESCE($7,sort_order),validity_days=COALESCE($8,validity_days) WHERE id=$9",
+        [name,sms_count,price_kes,description,features,is_active,sort_order,validity_days,req.params.id]);
+      res.json({ success: true });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.delete('/api/admin/sms-plans/:id', async (req, res) => {
+    try { const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool; await pg.query("DELETE FROM sms_plans WHERE id=$1",[req.params.id]); res.json({ success: true }); } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.get('/api/admin/sms-orders', async (_req, res) => {
+    try { const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool; const { rows } = await pg.query("SELECT * FROM sms_orders ORDER BY id DESC LIMIT 500"); res.json({ success: true, orders: rows }); } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+  app.patch('/api/admin/sms-orders/:id/fulfill', async (req, res) => {
+    try {
+      const { notes } = req.body;
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      await pg.query("UPDATE sms_orders SET status='fulfilled',notes=$1 WHERE id=$2",[notes||'',req.params.id]);
+      res.json({ success: true });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // ── Customer All Orders (unified history) ──────────────────────────────────
+  app.get('/api/customer/all-orders', async (req: any, res) => {
+    try {
+      const token = (req.headers.authorization||'').replace('Bearer ','');
+      if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      // Get email from customer token via existing sessions/customer lookup
+      const { rows: sessions } = await pg.query("SELECT email FROM customers WHERE session_token=$1 OR id=(SELECT customer_id FROM customer_sessions WHERE token=$1 LIMIT 1) LIMIT 1",[token]).catch(()=>({rows:[]}));
+      let email = sessions[0]?.email;
+      if (!email) {
+        // Try JWT decode
+        try { const jwt = require('jsonwebtoken'); const decoded: any = jwt.verify(token, process.env.JWT_SECRET||process.env.SESSION_SECRET||'secret'); email = decoded.email; } catch {}
+      }
+      if (!email) return res.status(401).json({ success: false, error: 'Invalid token' });
+      const results: any[] = [];
+      // SMM orders
+      try { const { rows } = await pg.query("SELECT id,reference,created_at,amount_kes,status,'smm' AS type,'SMM Boost' AS category,service AS name FROM smm_orders WHERE customer_email=$1 ORDER BY id DESC LIMIT 50",[email]); results.push(...rows); } catch {}
+      // Proxy orders
+      try { const { rows } = await pg.query("SELECT id,reference,created_at,amount_kes,status,'proxy' AS type,'Proxy Plan' AS category,plan_name AS name FROM proxy_orders WHERE customer_email=$1 ORDER BY id DESC LIMIT 50",[email]); results.push(...rows); } catch {}
+      // Digital (aged accounts)
+      try { const { rows } = await pg.query("SELECT id,reference,created_at,amount_kes,status,'digital' AS type,'Aged Account' AS category,product_name AS name FROM digital_orders WHERE customer_email=$1 ORDER BY id DESC LIMIT 50",[email]); results.push(...rows); } catch {}
+      // Gift cards
+      try { const { rows } = await pg.query("SELECT id,reference,created_at,amount_kes,status,'giftcard' AS type,'Gift Card' AS category,product_name AS name FROM gift_card_orders WHERE customer_email=$1 ORDER BY id DESC LIMIT 50",[email]); results.push(...rows); } catch {}
+      // SMS orders
+      try { const { rows } = await pg.query("SELECT id,reference,created_at,amount_kes,status,'sms' AS type,'Bulk SMS' AS category,plan_name AS name FROM sms_orders WHERE customer_email=$1 ORDER BY id DESC LIMIT 50",[email]); results.push(...rows); } catch {}
+      // Sort all by date desc
+      results.sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime());
+      res.json({ success: true, orders: results.slice(0,200), email });
+    } catch (e:any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+
 }
 
