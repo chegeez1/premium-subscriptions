@@ -1172,7 +1172,11 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       emit(`📋 Ref: ${order.reference}`);
       emit("─────────────────────────────────────────────────");
 
-      await m(`UPDATE bot_orders SET status = 'deploying', updated_at = ${updNow} WHERE id = ?`, [req.params.id]);
+      await m(`UPDATE bot_orders SET status = 'deploying', deployment_notes = 'Connecting to VPS...', updated_at = ${updNow} WHERE id = ?`, [req.params.id]);
+
+      const setPhase = async (phase: string) => {
+        await m(`UPDATE bot_orders SET deployment_notes = ?, updated_at = ${updNow} WHERE id = ?`, [phase, req.params.id]).catch(() => {});
+      };
 
       const execStep = async (label: string, cmd: string, timeoutMs = 300000) => {
         emit(`\n⚡ ${label}...`);
@@ -1187,6 +1191,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       };
 
       // 0. Kill any leftover npm/git processes from previous failed deploys
+      await setPhase("🧹 Clearing stuck processes...");
       emit("\n🧹 Clearing any stuck processes from previous deploys...");
       const loadInfo = await vpsManager.execCommand(server,
         `cat /proc/loadavg 2>/dev/null; pkill -TERM -f "npm install" 2>/dev/null; pkill -TERM -f "npm ci" 2>/dev/null; pkill -TERM -f "git clone" 2>/dev/null; sleep 2; pkill -KILL -f "npm install" 2>/dev/null; pkill -KILL -f "npm ci" 2>/dev/null; echo "cleanup_done"`,
@@ -1198,6 +1203,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       emit("   ✓ Cleanup done");
 
       // 1. Ensure Node.js + PM2 — source nvm first so PATH is always correct
+      await setPhase("🔍 Checking Node.js & PM2...");
       emit("\n🔍 Checking Node.js & PM2...");
       const envCheck = await vpsManager.execCommand(
         server,
@@ -1208,6 +1214,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const needsPm2  = envCheck.stdout.includes("PM2_MISSING");
 
       if (needsNode) {
+        await setPhase("⬇ Installing Node.js via nvm...");
         emit("   ⬇ Node.js not found — installing via nvm (1-3 min)...");
         await execStep("Install Node.js 20 via nvm",
           `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && ${nvmSource} && nvm install 20 && nvm alias default 20 && nvm use default && ln -sf "$(${nvmSource}; which node)" /usr/local/bin/node 2>/dev/null; ln -sf "$(${nvmSource}; which npm)" /usr/local/bin/npm 2>/dev/null; true`,
@@ -1228,10 +1235,12 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       }
 
       // 2. Git
+      await setPhase("🔍 Checking git...");
       emit("\n🔍 Checking git...");
       await execStep("Ensure git", `which git 2>/dev/null || git --version 2>/dev/null || (${installGit}); echo "git ready"`, 60000);
 
       // 4. Clone or pull — shallow clone for speed
+      await setPhase("📂 Cloning / updating repo...");
       emit("\n📂 Cloning / updating repo...");
       await execStep("Clone or pull",
         `mkdir -p /opt/bots && (git -C ${botDir} fetch --depth=1 origin 2>&1 && git -C ${botDir} reset --hard FETCH_HEAD 2>&1 || git clone --depth=1 ${repoUrl} ${botDir} 2>&1)`,
@@ -1245,11 +1254,13 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       if (order.mode) envVars["MODE"] = order.mode;
       if (order.timezone) envVars["TIMEZONE"] = order.timezone;
       const envLines = Object.entries(envVars).map(([k, v]) => `${k}=${String(v).replace(/\r?\n/g, "\\n")}`).join("\n");
+      await setPhase("📝 Configuring environment...");
       emit("\n📝 Writing .env file...");
       await vpsManager.execCommand(server, `printf '%s\\n' ${JSON.stringify(envLines)} > ${botDir}/.env`);
       emit("   ✓ .env written");
 
       // 6. npm install — wipe node_modules first to avoid stale/corrupt cache issues
+      await setPhase("📦 Installing dependencies...");
       await execStep(
         "npm install --production",
         `${nvmSource}; cd ${botDir} && rm -rf node_modules package-lock.json 2>/dev/null; npm install --production --no-audit --no-fund --loglevel=error 2>&1 | tail -10`,
@@ -1257,6 +1268,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       );
 
       // 7. Start PM2
+      await setPhase("🚀 Starting bot with PM2...");
       await execStep("Start with PM2",
         `${nvmSource}; pm2 delete ${pm2Name} 2>/dev/null || true; cd ${botDir} && (pm2 start . --name ${pm2Name} 2>&1 || pm2 start index.js --name ${pm2Name} 2>&1); pm2 save 2>&1`
       );
