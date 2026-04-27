@@ -247,4 +247,91 @@ toolsRouter.post("/tools/cc/generate", (req, res) => {
   res.json(cards);
 });
 
+// ─── Bulk CC Checker ─────────────────────────────────────────────────────────
+
+toolsRouter.post("/tools/cc/bulk-check", async (req, res) => {
+  const { cards } = req.body as { cards?: string[] };
+  if (!Array.isArray(cards) || cards.length === 0) {
+    res.status(400).json({ error: "cards array required" });
+    return;
+  }
+  const limited = cards.slice(0, 50).map((c) => c.trim()).filter(Boolean);
+
+  const results = await Promise.allSettled(
+    limited.map(async (entry) => {
+      const parts = entry.split(/[|/ ]+/);
+      const [num, month = "01", year = "26", cvv = "000"] = parts;
+      const clean = (num ?? "").replace(/\D/g, "");
+      if (!clean) return { card: entry, status: "Invalid", message: "No card number", bank: "", type: "", category: "", country: "", emoji: "" };
+
+      if (!luhnValid(clean)) {
+        return { card: entry, status: "Dead", message: "Luhn check failed", bank: "", type: "", category: "", country: "", emoji: "" };
+      }
+
+      const bin = clean.slice(0, 6);
+      try {
+        const binRes = await fetch("https://bins.antipublic.cc/bins", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify([bin]),
+        });
+        if (binRes.ok) {
+          const binData = (await binRes.json()) as Array<{ bin?: string; brand?: string; country_name?: string; country_flag?: string; bank?: string; level?: string; type?: string }>;
+          const b = binData[0] ?? {};
+          return { card: `${clean}|${month}|${year}|${cvv}`, status: "Live", message: `BIN ${bin} · ${b.brand ?? "Unknown"}`, bank: b.bank ?? "", type: b.type ?? "", category: b.level ?? "", country: b.country_name ?? "", emoji: b.country_flag ?? "" };
+        }
+      } catch { /* fall through */ }
+      return { card: `${clean}|${month}|${year}|${cvv}`, status: "Live", message: "Luhn valid · BIN unknown", bank: "", type: "", category: "", country: "", emoji: "" };
+    })
+  );
+
+  const data = results.map((r, i) =>
+    r.status === "fulfilled" ? r.value : { card: limited[i], status: "Error", message: String((r as PromiseRejectedResult).reason), bank: "", type: "", category: "", country: "", emoji: "" }
+  );
+
+  res.json({ results: data, live: data.filter((d) => d.status === "Live").length, dead: data.filter((d) => d.status === "Dead").length, total: data.length });
+});
+
+// ─── Mail Generator ───────────────────────────────────────────────────────────
+
+const DISPOSABLE_DOMAINS = [
+  "yopmail.com", "guerrillamail.com", "sharklasers.com", "guerrillamailblock.com",
+  "grr.la", "guerrillamail.info", "guerrillamail.biz", "guerrillamail.de",
+  "mailnull.com", "spamgourmet.com", "trashmail.com", "throwam.com",
+  "dispostable.com", "mailexpire.com", "fakeinbox.com", "getonemail.com",
+  "spamoff.de", "tempinbox.com", "throwam.com", "mailsac.com",
+];
+
+const ADJECTIVES = ["quick", "bright", "silent", "cool", "dark", "fast", "sharp", "bold", "slick", "clean", "smart", "wild"];
+const NOUNS = ["tiger", "storm", "hawk", "wolf", "blade", "fox", "raven", "ghost", "pixel", "byte", "nova", "flux"];
+const NAMES = ["alex", "james", "sam", "ryan", "chris", "jordan", "morgan", "taylor", "casey", "riley", "drew", "sage", "avery", "quinn", "blake"];
+
+function randomUsername(format: string): string {
+  const rnd = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+  const num = () => String(Math.floor(Math.random() * 9000) + 1000);
+  switch (format) {
+    case "name_num": return rnd(NAMES) + num();
+    case "word_word": return rnd(ADJECTIVES) + rnd(NOUNS);
+    case "word_word_num": return rnd(ADJECTIVES) + rnd(NOUNS) + Math.floor(Math.random() * 99 + 1);
+    case "random": {
+      const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+      return Array.from({ length: 8 + Math.floor(Math.random() * 4) }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+    }
+    default: return rnd(NAMES) + num();
+  }
+}
+
+toolsRouter.post("/tools/mail/generate", (req, res) => {
+  const { count: rawCount = 10, domain = "random", format = "name_num" } = req.body as { count?: number; domain?: string; format?: string };
+  const count = Math.min(Math.max(Number(rawCount) || 10, 1), 100);
+
+  const emails: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = domain === "random" ? DISPOSABLE_DOMAINS[Math.floor(Math.random() * DISPOSABLE_DOMAINS.length)] : (domain || DISPOSABLE_DOMAINS[0]);
+    emails.push(`${randomUsername(format)}@${d}`);
+  }
+
+  res.json({ emails, count: emails.length });
+});
+
 export default toolsRouter;
