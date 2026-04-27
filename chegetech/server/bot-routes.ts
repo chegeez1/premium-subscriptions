@@ -1359,6 +1359,74 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     res.end();
   });
 
+  // ── Admin VPS Sales / Seller Dashboard endpoints ──────────────────────────
+
+  // Generate a short reference
+  function genVpsRef() {
+    return "VPS-" + Date.now().toString(36).toUpperCase() + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+  }
+
+  // List all VPS orders with summary stats
+  app.get("/api/admin/vps-orders", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const orders = await q("SELECT * FROM vps_orders ORDER BY created_at DESC");
+      const now = new Date();
+      const in7 = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const stats = {
+        total: orders.length,
+        active: orders.filter((o: any) => o.status === "active").length,
+        pending: orders.filter((o: any) => o.status === "pending").length,
+        expiring7d: orders.filter((o: any) => o.status === "active" && o.expires_at && o.expires_at <= in7).length,
+        revenueKes: orders.filter((o: any) => o.status === "active").reduce((s: number, o: any) => s + (Number(o.price_kes) || 0), 0),
+      };
+      res.json({ success: true, orders, stats });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Create a new VPS order (manual entry by admin)
+  app.post("/api/admin/vps-orders", adminAuthMiddleware, async (req, res) => {
+    try {
+      const { customer_name, customer_email, customer_phone, plan_name, ram, cpu, storage: stor, bandwidth, price_kes, status, assigned_ip, server_username, server_password, ssh_port, os_type, notes, paid_at, expires_at } = req.body;
+      if (!customer_name || !customer_email || !plan_name) return res.status(400).json({ success: false, error: "customer_name, customer_email and plan_name are required" });
+      const ref = genVpsRef();
+      const now = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      const row = await q(
+        `INSERT INTO vps_orders (reference, customer_name, customer_email, customer_phone, plan_name, ram, cpu, storage, bandwidth, price_kes, status, assigned_ip, server_username, server_password, ssh_port, os_type, notes, paid_at, expires_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${now}, ${now}) RETURNING *`,
+        [ref, customer_name, customer_email, customer_phone || null, plan_name, ram || null, cpu || null, stor || null, bandwidth || null, Number(price_kes) || 0, status || "pending", assigned_ip || null, server_username || null, server_password || null, Number(ssh_port) || 22, os_type || "ubuntu", notes || null, paid_at || null, expires_at || null]
+      );
+      res.json({ success: true, order: row[0] });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Update a VPS order (assign credentials, change status, etc.)
+  app.put("/api/admin/vps-orders/:id", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const fields = ["customer_name", "customer_email", "customer_phone", "plan_name", "ram", "cpu", "storage", "bandwidth", "price_kes", "status", "assigned_ip", "server_username", "server_password", "ssh_port", "os_type", "notes", "paid_at", "expires_at"];
+      const updates: string[] = [];
+      const vals: any[] = [];
+      for (const f of fields) {
+        if (req.body[f] !== undefined) { updates.push(`${f} = ?`); vals.push(req.body[f]); }
+      }
+      if (!updates.length) return res.status(400).json({ success: false, error: "No fields to update" });
+      const now = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      updates.push(`updated_at = ${now}`);
+      vals.push(id);
+      await m(`UPDATE vps_orders SET ${updates.join(", ")} WHERE id = ?`, vals);
+      const rows = await q("SELECT * FROM vps_orders WHERE id = ?", [id]);
+      res.json({ success: true, order: rows[0] });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Delete a VPS order
+  app.delete("/api/admin/vps-orders/:id", adminAuthMiddleware, async (req, res) => {
+    try {
+      await m("DELETE FROM vps_orders WHERE id = ?", [parseInt(req.params.id)]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
   // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
