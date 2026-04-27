@@ -4050,8 +4050,7 @@ echo "    It polls every 60 s for new paid orders and deploys them automatically
 echo "    Check logs: pm2 logs chege-deploy-agent"
 `;
 
-    res.setHeader("Content-Type", "text/plain");
-    res.send(bashScript);
+    res.json({ success: true, script: bashScript, vpsLabel: server.label });
   });
 
   // ─── Admin: Deploy bot order to VPS via SSH ──────────────────────────────
