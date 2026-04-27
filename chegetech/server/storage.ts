@@ -384,6 +384,41 @@ export async function initializeDatabase() {
       // Migrate: add reseller_id to transactions
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
       
+      
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS digital_products (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        category TEXT DEFAULT 'social',
+        price_kes NUMERIC(10,2) NOT NULL,
+        description TEXT DEFAULT '',
+        features TEXT DEFAULT '',
+        is_active BOOLEAN DEFAULT true,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS digital_accounts_stock (
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES digital_products(id) ON DELETE CASCADE,
+        credentials TEXT NOT NULL,
+        is_sold BOOLEAN DEFAULT false,
+        sold_to_email TEXT,
+        sold_at TEXT,
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS digital_orders (
+        id SERIAL PRIMARY KEY,
+        reference TEXT NOT NULL UNIQUE,
+        customer_email TEXT,
+        product_id INTEGER,
+        product_name TEXT,
+        platform TEXT,
+        amount_kes NUMERIC(10,2),
+        status TEXT DEFAULT 'pending',
+        credentials TEXT,
+        account_stock_id INTEGER,
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
       await pgPool.query(`CREATE TABLE IF NOT EXISTS proxy_plans (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
