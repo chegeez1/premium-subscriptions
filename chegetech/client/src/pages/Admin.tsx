@@ -6272,6 +6272,9 @@ function VpsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ label: "", host: "", port: "22", username: "root", authType: "password", password: "", privateKey: "", osType: "ubuntu" });
   const [pingResults, setPingResults] = useState<Record<string, any>>({});
+  const [agentScriptVps, setAgentScriptVps] = useState<string | null>(null);
+  const [agentScript, setAgentScript] = useState<string>("");
+  const [agentScriptLoading, setAgentScriptLoading] = useState(false);
 
   const OS_OPTIONS = [
     { group: "Debian-based", items: [
@@ -6331,6 +6334,18 @@ function VpsTab() {
     finally { setPingLoading((p) => ({ ...p, [id]: false })); }
   };
 
+  const loadAgentScript = async (id: string) => {
+    setAgentScriptVps(id);
+    setAgentScript("");
+    setAgentScriptLoading(true);
+    try {
+      const res = await fetch(`/api/agent/script/${id}`, { headers: authHeaders() as any });
+      const text = await res.text();
+      setAgentScript(text);
+    } catch (e: any) { setAgentScript("Error: " + e.message); }
+    finally { setAgentScriptLoading(false); }
+  };
+
   const rebootServer = async (id: string) => {
     setRebootLoading((r) => ({ ...r, [id]: true }));
     setConfirmReboot(null);
@@ -6365,6 +6380,46 @@ function VpsTab() {
           <Plus className="w-4 h-4 mr-1.5" />Add VPS
         </Button>
       </div>
+
+      {/* ── Agent script modal ─────────────────────────────────────────────── */}
+      {agentScriptVps && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,.85)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setAgentScriptVps(null); }}>
+          <div className="w-full max-w-2xl rounded-2xl border border-emerald-500/20 overflow-hidden" style={{ background: "#0a0f1e", boxShadow: "0 25px 60px rgba(0,0,0,.6)" }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+              <div>
+                <h3 className="font-bold text-white text-sm">Deploy Agent Install Script</h3>
+                <p className="text-xs text-white/40 mt-0.5">Copy and paste this into your VPS terminal — runs everything automatically</p>
+              </div>
+              <button onClick={() => setAgentScriptVps(null)} className="text-white/30 hover:text-white text-lg leading-none">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-xs text-emerald-300 space-y-1">
+                <p className="font-semibold text-emerald-200">What this does:</p>
+                <p>✓ Installs Node.js + PM2 if not already installed</p>
+                <p>✓ Creates a deploy agent at <code className="text-white/70">/opt/deploy-agent/agent.js</code></p>
+                <p>✓ Starts the agent with PM2 (survives reboots)</p>
+                <p>✓ Agent polls your app every <strong>60 seconds</strong> for new paid orders and deploys them automatically</p>
+              </div>
+              {agentScriptLoading ? (
+                <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 text-emerald-400 animate-spin" /></div>
+              ) : (
+                <>
+                  <div className="relative rounded-xl border border-white/10 bg-black/50 overflow-hidden">
+                    <pre className="text-xs text-white/70 font-mono p-4 overflow-auto max-h-72 whitespace-pre-wrap">{agentScript}</pre>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(agentScript); toast({ title: "Copied to clipboard!" }); }}
+                      className="absolute top-2 right-2 px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white/60 hover:text-white text-xs rounded-lg transition-colors">
+                      Copy
+                    </button>
+                  </div>
+                  <p className="text-xs text-white/30">Run as <code className="text-white/50">root</code> or with <code className="text-white/50">sudo</code>. After install: <code className="text-white/50">pm2 logs chege-deploy-agent</code> to monitor.</p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAdd && (
         <div className="glass-card rounded-2xl p-5 border border-indigo-500/20">
@@ -6452,6 +6507,10 @@ function VpsTab() {
                       <Button size="sm" onClick={() => setTerminalState((s) => ({ ...s, [server.id]: { open: !isTermOpen, cmd: s[server.id]?.cmd || "", output: s[server.id]?.output || "", loading: false } }))}
                         variant="outline" className="border-white/10 text-white/60 hover:text-white hover:bg-white/5">
                         <Terminal className="w-3.5 h-3.5" /><span className="ml-1.5">Terminal</span>
+                      </Button>
+                      <Button size="sm" onClick={() => loadAgentScript(server.id)}
+                        variant="outline" className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10">
+                        <Zap className="w-3.5 h-3.5" /><span className="ml-1.5">Get Script</span>
                       </Button>
                       <Button size="sm" onClick={() => setConfirmReboot(server.id)} disabled={rebootLoading[server.id]}
                         className="bg-amber-600/70 hover:bg-amber-600 text-white border-0">
