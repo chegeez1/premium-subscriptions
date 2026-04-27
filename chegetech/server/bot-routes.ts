@@ -38,6 +38,7 @@ function fmtOrder(o: Record<string, any>) {
     dbUrl: o.db_url ?? o.dbUrl,
     paystackReference: o.paystack_reference ?? o.paystackReference,
     deploymentNotes: o.deployment_notes ?? o.deploymentNotes,
+    deploymentLog: o.deployment_log ?? o.deploymentLog,
     herokuAppName: o.render_service_id ?? o.herokuAppName,
     herokuAppUrl: o.render_service_url ?? o.herokuAppUrl,
     deployedAt: o.deployed_at ?? o.deployedAt,
@@ -1051,7 +1052,16 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("X-Accel-Buffering", "no");
 
-    const emit = (msg: string) => { try { res.write(msg + "\n"); } catch {} };
+    const logLines: string[] = [];
+    const emit = (msg: string) => {
+      logLines.push(msg);
+      try { res.write(msg + "\n"); } catch {}
+    };
+    const saveLog = async (orderId: string) => {
+      const updN = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      await m(`UPDATE bot_orders SET deployment_log = ?, updated_at = ${updN} WHERE id = ?`,
+        [logLines.join("\n"), orderId]).catch(() => {});
+    };
     const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
 
     try {
@@ -1181,6 +1191,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       emit("✅ DEPLOYMENT COMPLETE! Bot is live.");
       emit(`   PM2: ${pm2Name}`);
       emit(`   VPS: ${server.label} (${server.host})`);
+      await saveLog(req.params.id);
       emit("__DONE__:success");
       vpsDeployLock.delete(server.id);
     } catch (e: any) {
@@ -1189,6 +1200,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       await m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow2} WHERE id = ?`,
         ["Deploy failed: " + e.message.slice(0, 200), req.params.id]).catch(() => {});
       emit(`\n❌ FAILED: ${e.message}`);
+      await saveLog(req.params.id);
       emit("__DONE__:failed");
     }
     res.end();
