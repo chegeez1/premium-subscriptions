@@ -1258,164 +1258,168 @@ export default function Dashboard() {
 
         {/* WALLET TAB */}
         {/* MY BOTS TAB */}
-        {tab === "my-bots" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-white">My Bots</h2>
-              <span className="text-xs text-white/40">{(myBotsData?.bots ?? []).length} deployed</span>
-            </div>
-            {myBotsLoading ? (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
-              </div>
-            ) : (myBotsData?.bots ?? []).length === 0 ? (
-              <div className="text-center py-16 rounded-2xl border border-white/8" style={{ background: "rgba(255,255,255,.02)" }}>
-                <Bot className="w-10 h-10 text-white/20 mx-auto mb-3" />
-                <p className="text-white/40 text-sm">No bots deployed yet</p>
-                <a href="/bots" className="inline-block mt-4 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
-                  Browse Bots
-                </a>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {(myBotsData?.bots ?? []).map((bot: any) => {
-                  const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-                    deployed: { label: "Running", color: "text-emerald-400", bg: "bg-emerald-500/10" },
-                    paid: { label: "Pending Deploy", color: "text-amber-400", bg: "bg-amber-500/10" },
-                    deploy_failed: { label: "Deploy Failed", color: "text-red-400", bg: "bg-red-500/10" },
-                    configuring: { label: "Configuring", color: "text-blue-400", bg: "bg-blue-500/10" },
-    suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
-    suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
-                    deploying: { label: "Deploying", color: "text-indigo-400", bg: "bg-indigo-500/10" },
-                    stopped: { label: "Stopped", color: "text-gray-400", bg: "bg-gray-500/10" },
-                    suspended: { label: "Suspended", color: "text-red-400", bg: "bg-red-500/10" },
-                  };
-                  const s = statusConfig[bot.status] ?? { label: bot.status, color: "text-white/40", bg: "bg-white/5" };
-                  const features = (() => { try { return JSON.parse(bot.bot_features || "[]"); } catch { return []; } })();
-                  return (
-                    <div key={bot.id} className="rounded-2xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 flex items-center justify-center shrink-0">
-                            <Bot className="w-5 h-5 text-indigo-400" />
-                          </div>
-                          <div>
-                            <p className="font-semibold text-white text-sm">{bot.bot_name || "WhatsApp Bot"}</p>
-                            {bot.deployed_at ? (
-                              <p className="text-xs text-white/40 mt-0.5">
-                                Last updated: {(() => {
-                                  const diff = Date.now() - new Date(bot.deployed_at).getTime();
-                                  if (diff < 60000) return "just now";
-                                  if (diff < 3600000) return `${Math.floor(diff/60000)}m ago`;
-                                  if (diff < 86400000) return `${Math.floor(diff/3600000)}h ago`;
-                                  return new Date(bot.deployed_at).toLocaleDateString();
-                                })()}
-                              </p>
-                            ) : (
-                              <p className="text-xs text-white/40 mt-0.5">Ordered {new Date(bot.created_at).toLocaleDateString()}</p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-1">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${s.bg} ${s.color}`}>{s.label}</span>
-                          {bot.deployed_at && Date.now() - new Date(bot.deployed_at).getTime() < 86400000 && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">🆕 Updated</span>
-                          )}
-                        </div>
-                      </div>
-                      {(bot.pm2_name || bot.vps_label) && (
-                        <div className="mt-3 flex items-center gap-3 flex-wrap text-xs text-white/40">
-                          {bot.pm2_name && (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-white/30">PM2:</span>
-                              <span className="font-mono bg-white/5 px-2 py-1 rounded-lg text-indigo-300">{bot.pm2_name}</span>
-                            </div>
-                          )}
-                          {bot.vps_label && (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-white/30">Server:</span>
-                              <span className="bg-white/5 px-2 py-1 rounded-lg text-white/60">{bot.vps_label}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {bot.expires_at && bot.status === "deployed" && (() => {
-                        const daysLeft = Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000);
-                        if (daysLeft > 14) return null;
-                        const col = daysLeft <= 3 ? "text-red-400 bg-red-500/10 border-red-500/20" : daysLeft <= 7 ? "text-amber-400 bg-amber-500/10 border-amber-500/20" : "text-indigo-400 bg-indigo-500/10 border-indigo-500/20";
-                        return <div className={`mt-2 flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border w-fit ${col}`}><Bell className="w-3 h-3" />{daysLeft <= 0 ? "Expired" : `Expires in ${daysLeft}d`}</div>;
-                      })()}
-                      {bot.expires_at && bot.status === "deployed" && Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000) <= 7 && Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000) > 0 && (
-                        <div className="mt-2 flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-300">
-                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                          <span>Bot expires in <strong>{Math.ceil((new Date(bot.expires_at).getTime()-Date.now())/86400000)} days</strong>. Renew to keep it running.</span>
-                        </div>
-                      )}
-                      {bot.status === "deployed" && (botUptimeMap[bot.id] || []).length > 0 && (() => {
-                        const pings = botUptimeMap[bot.id];
-                        const buckets: string[] = [];
-                        for (let h = 167; h >= 0; h--) {
-                          const s = Date.now() - h * 3600000, e2 = s + 3600000;
-                          const inB = pings.filter((p: any) => { const t = new Date(p.checked_at).getTime(); return t >= s && t < e2; });
-                          if (!inB.length) { buckets.push("empty"); continue; }
-                          buckets.push(inB.filter((p: any) => p.pm2_status === "online").length / inB.length >= 0.5 ? "online" : "offline");
-                        }
-                        const pct = Math.round((buckets.filter(b => b === "online").length / 168) * 100);
-                        return (<div className="mt-3"><div className="flex items-center justify-between text-[10px] text-white/30 mb-1"><span>7-day uptime</span><span className={pct >= 95 ? "text-emerald-400" : pct >= 80 ? "text-amber-400" : "text-red-400"}>{pct}%</span></div><div className="flex gap-px h-3">{buckets.map((b, i) => <div key={i} className={`flex-1 rounded-sm ${b === "online" ? "bg-emerald-500/70" : b === "offline" ? "bg-red-500/60" : "bg-white/5"}`} />)}</div></div>);
-                      })()}
-                      {bot.expires_at && bot.status === "deployed" && (() => {
-                        const daysLeft = Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000);
-                        if (daysLeft > 14) return null;
-                        const color = daysLeft <= 0 ? "text-red-400 bg-red-500/10 border-red-500/20" : daysLeft <= 3 ? "text-red-400 bg-red-500/10 border-red-500/20" : daysLeft <= 7 ? "text-amber-400 bg-amber-500/10 border-amber-500/20" : "text-indigo-400 bg-indigo-500/10 border-indigo-500/20";
-                        const label = daysLeft <= 0 ? "Expired" : `Expires in ${daysLeft}d`;
-                        return (
-                          <div className={`mt-2 flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border w-fit ${color}`}>
-                            <Bell className="w-3 h-3" />
-                            {label}
-                          </div>
-                        );
-                      })()}
-                      {bot.expires_at && bot.status === "deployed" && (() => {
-                        const daysLeft = Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000);
-                        if (daysLeft > 7 || daysLeft <= 0) return null;
-                        return (
-                          <div className="mt-2 flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-300">
-                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                            <span>Your bot expires in <strong>{daysLeft} day{daysLeft !== 1 ? 's' : ''}</strong>. Renew to keep it running.</span>
-                          </div>
-                        );
-                      })()}
-                      {features.length > 0 && (
-                        <div className="mt-3 flex flex-wrap gap-1.5">
-                          {features.slice(0, 4).map((f: string) => (
-                            <span key={f} className="px-2 py-0.5 rounded-full text-[10px] bg-white/5 text-white/50">{f}</span>
-                          ))}
-                        </div>
-                      )}
-                      <div className="mt-3 flex gap-2">
-                        {bot.status === "deploy_failed" || bot.status === "stopped" ? (
-                          <a href="/bots" className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">
-                            Redeploy / Renew
-                          </a>
-                        ) : bot.status === "deployed" ? (
-                          <span className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 font-medium">
-                            ✓ Bot is live
-                          </span>
-                        ) : null}
-                        <button onClick={() => openManageBot(bot.id)} className="text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 font-medium transition-colors flex items-center gap-1.5" data-testid={`button-manage-bot-${bot.id}`}>
-                          <Server className="w-3 h-3" />Manage
-                        </button>
-                        <a href="/bots" className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 font-medium transition-colors">
-                          Get Another Bot
-                        </a>
-                      </div>
+        {tab === "my-bots" && (() => {
+          const allBots: any[] = myBotsData?.bots ?? [];
+          const deployedBots = allBots.filter((b: any) => b.status === "deployed");
+          const otherBots    = allBots.filter((b: any) => b.status !== "deployed");
+
+          const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
+            deployed:     { label: "Running",        color: "text-emerald-400", bg: "bg-emerald-500/10" },
+            paid:         { label: "Pending Deploy",  color: "text-amber-400",  bg: "bg-amber-500/10" },
+            deploy_failed:{ label: "Deploy Failed",   color: "text-red-400",    bg: "bg-red-500/10" },
+            configuring:  { label: "Configuring",     color: "text-blue-400",   bg: "bg-blue-500/10" },
+            deploying:    { label: "Deploying",       color: "text-indigo-400", bg: "bg-indigo-500/10" },
+            stopped:      { label: "Stopped",         color: "text-gray-400",   bg: "bg-gray-500/10" },
+            suspended:    { label: "Suspended",       color: "text-red-400",    bg: "bg-red-500/10" },
+            pending:      { label: "Pending",         color: "text-amber-400",  bg: "bg-amber-500/10" },
+          };
+
+          const BotCard = ({ bot }: { bot: any }) => {
+            const s = statusConfig[bot.status] ?? { label: bot.status, color: "text-white/40", bg: "bg-white/5" };
+            const features = (() => { try { return JSON.parse(bot.bot_features || "[]"); } catch { return []; } })();
+            const daysLeft = bot.expires_at ? Math.ceil((new Date(bot.expires_at).getTime() - Date.now()) / 86400000) : null;
+            return (
+              <div key={bot.id} className="rounded-2xl border border-white/8 p-4" style={{ background: "rgba(255,255,255,.03)" }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-600/20 flex items-center justify-center shrink-0">
+                      <Bot className="w-5 h-5 text-indigo-400" />
                     </div>
-                  );
-                })}
+                    <div>
+                      <p className="font-semibold text-white text-sm">{bot.bot_name || "WhatsApp Bot"}</p>
+                      {bot.deployed_at ? (
+                        <p className="text-xs text-white/40 mt-0.5">
+                          Last updated: {(() => {
+                            const diff = Date.now() - new Date(bot.deployed_at).getTime();
+                            if (diff < 60000) return "just now";
+                            if (diff < 3600000) return `${Math.floor(diff/60000)}m ago`;
+                            if (diff < 86400000) return `${Math.floor(diff/3600000)}h ago`;
+                            return new Date(bot.deployed_at).toLocaleDateString();
+                          })()}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-white/40 mt-0.5">Ordered {new Date(bot.created_at).toLocaleDateString()}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${s.bg} ${s.color}`}>{s.label}</span>
+                    {bot.deployed_at && Date.now() - new Date(bot.deployed_at).getTime() < 86400000 && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">🆕 Updated</span>
+                    )}
+                  </div>
+                </div>
+                {(bot.pm2_name || bot.vps_label) && (
+                  <div className="mt-3 flex items-center gap-3 flex-wrap text-xs text-white/40">
+                    {bot.pm2_name && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-white/30">PM2:</span>
+                        <span className="font-mono bg-white/5 px-2 py-1 rounded-lg text-indigo-300">{bot.pm2_name}</span>
+                      </div>
+                    )}
+                    {bot.vps_label && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-white/30">Server:</span>
+                        <span className="bg-white/5 px-2 py-1 rounded-lg text-white/60">{bot.vps_label}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {bot.status === "deployed" && (botUptimeMap[bot.id] || []).length > 0 && (() => {
+                  const pings = botUptimeMap[bot.id];
+                  const buckets: string[] = [];
+                  for (let h = 167; h >= 0; h--) {
+                    const st = Date.now() - h * 3600000, e2 = st + 3600000;
+                    const inB = pings.filter((p: any) => { const t = new Date(p.checked_at).getTime(); return t >= st && t < e2; });
+                    if (!inB.length) { buckets.push("empty"); continue; }
+                    buckets.push(inB.filter((p: any) => p.pm2_status === "online").length / inB.length >= 0.5 ? "online" : "offline");
+                  }
+                  const pct = Math.round((buckets.filter(b => b === "online").length / 168) * 100);
+                  return (<div className="mt-3"><div className="flex items-center justify-between text-[10px] text-white/30 mb-1"><span>7-day uptime</span><span className={pct >= 95 ? "text-emerald-400" : pct >= 80 ? "text-amber-400" : "text-red-400"}>{pct}%</span></div><div className="flex gap-px h-3">{buckets.map((b, idx) => <div key={idx} className={`flex-1 rounded-sm ${b === "online" ? "bg-emerald-500/70" : b === "offline" ? "bg-red-500/60" : "bg-white/5"}`} />)}</div></div>);
+                })()}
+                {daysLeft !== null && bot.status === "deployed" && daysLeft <= 14 && (
+                  <div className={`mt-2 flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border w-fit ${daysLeft <= 0 ? "text-red-400 bg-red-500/10 border-red-500/20" : daysLeft <= 3 ? "text-red-400 bg-red-500/10 border-red-500/20" : daysLeft <= 7 ? "text-amber-400 bg-amber-500/10 border-amber-500/20" : "text-indigo-400 bg-indigo-500/10 border-indigo-500/20"}`}>
+                    <Bell className="w-3 h-3" />{daysLeft <= 0 ? "Expired" : `Expires in ${daysLeft}d`}
+                  </div>
+                )}
+                {daysLeft !== null && bot.status === "deployed" && daysLeft > 0 && daysLeft <= 7 && (
+                  <div className="mt-2 flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-300">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>Your bot expires in <strong>{daysLeft} day{daysLeft !== 1 ? "s" : ""}</strong>. Renew to keep it running.</span>
+                  </div>
+                )}
+                {features.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {features.slice(0, 4).map((f: string) => (
+                      <span key={f} className="px-2 py-0.5 rounded-full text-[10px] bg-white/5 text-white/50">{f}</span>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-3 flex gap-2 flex-wrap">
+                  {(bot.status === "deploy_failed" || bot.status === "stopped") ? (
+                    <a href="/bots" className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">Redeploy / Renew</a>
+                  ) : bot.status === "deployed" ? (
+                    <span className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 font-medium">✓ Bot is live</span>
+                  ) : bot.status === "paid" || bot.status === "pending" ? (
+                    <span className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 font-medium">⏳ Awaiting deployment</span>
+                  ) : null}
+                  <button onClick={() => openManageBot(bot.id)} className="text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 font-medium transition-colors flex items-center gap-1.5" data-testid={`button-manage-bot-${bot.id}`}>
+                    <Server className="w-3 h-3" />Manage
+                  </button>
+                  <a href="/bots" className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 font-medium transition-colors">Get Another Bot</a>
+                </div>
               </div>
-            )}
-          </div>
-        )}
+            );
+          };
+
+          return (
+            <div className="space-y-6">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold text-white">My WhatsApp Bots</h2>
+                <span className="text-xs text-white/40">{deployedBots.length} running · {allBots.length} total</span>
+              </div>
+
+              {myBotsLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+                </div>
+              ) : allBots.length === 0 ? (
+                <div className="text-center py-16 rounded-2xl border border-white/8" style={{ background: "rgba(255,255,255,.02)" }}>
+                  <Bot className="w-10 h-10 text-white/20 mx-auto mb-3" />
+                  <p className="text-white/40 text-sm">No bots yet</p>
+                  <a href="/bots" className="inline-block mt-4 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">Browse Bots</a>
+                </div>
+              ) : (
+                <>
+                  {/* ── DEPLOYED BOTS ─────────────────────────── */}
+                  {deployedBots.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <h3 className="text-sm font-semibold text-emerald-400">Deployed Bots</h3>
+                        <span className="text-xs text-white/25 ml-auto">{deployedBots.length} running</span>
+                      </div>
+                      {deployedBots.map((bot: any) => <BotCard key={bot.id} bot={bot} />)}
+                    </div>
+                  )}
+
+                  {/* ── OTHER BOTS ────────────────────────────── */}
+                  {otherBots.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-white/20" />
+                        <h3 className="text-sm font-semibold text-white/50">Other Bots</h3>
+                        <span className="text-xs text-white/25 ml-auto">{otherBots.length} order{otherBots.length !== 1 ? "s" : ""}</span>
+                      </div>
+                      {otherBots.map((bot: any) => <BotCard key={bot.id} bot={bot} />)}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {tab === "wallet" && (
           <div className="space-y-4">
