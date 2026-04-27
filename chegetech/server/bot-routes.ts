@@ -588,7 +588,12 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       } else {
         rows = await q("SELECT * FROM bot_orders ORDER BY created_at DESC", []);
       }
-      res.json({ success: true, orders: rows.map(fmtOrder) });
+      const allVps = vpsManager.getAll();
+      const orders = rows.map(fmtOrder).map((o: any) => {
+        const vps = allVps.find((s: any) => s.id === (o.vpsServerId ?? o.vps_server_id));
+        return { ...o, vpsLabel: vps?.label ?? null };
+      });
+      res.json({ success: true, orders });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
