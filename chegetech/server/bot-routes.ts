@@ -1976,6 +1976,165 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   });
 
 
+
+  // ── Digital Accounts (Social Media + Email) ───────────────────────────────
+
+  // Customer: list products with live stock count
+  app.get('/api/digital/products', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      if (!pg) return res.json({ success: true, products: [] });
+      const { rows } = await pg.query(`
+        SELECT p.*, COUNT(s.id) FILTER (WHERE s.is_sold=false) AS stock_count
+        FROM digital_products p
+        LEFT JOIN digital_accounts_stock s ON s.product_id=p.id
+        WHERE p.is_active=true
+        GROUP BY p.id
+        ORDER BY p.sort_order ASC, p.id ASC
+      `);
+      res.json({ success: true, products: rows.map((r: any) => ({ ...r, stock_count: parseInt(r.stock_count)||0 })) });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Customer: create order + Paystack
+  app.post('/api/digital/order', async (req: any, res) => {
+    try {
+      const { productId } = req.body;
+      if (!productId) return res.status(400).json({ success: false, error: 'Product ID required' });
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      const { rows: prods } = await pg.query("SELECT * FROM digital_products WHERE id=$1 AND is_active=true", [productId]);
+      if (!prods.length) return res.status(404).json({ success: false, error: 'Product not found' });
+      const product = prods[0];
+      const { rows: stock } = await pg.query("SELECT id FROM digital_accounts_stock WHERE product_id=$1 AND is_sold=false LIMIT 1", [productId]);
+      if (!stock.length) return res.status(400).json({ success: false, error: 'Out of stock' });
+      const email = req.customer?.email || req.session?.customerEmail || 'customer@chegetech.com';
+      const ref = 'ACCT-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
+      const amountKobo = Math.round(product.price_kes * 100);
+      const paystackBody = JSON.stringify({
+        email, amount: amountKobo, reference: ref, currency: 'KES',
+        metadata: { type: 'digital_account', productId: product.id, productName: product.name, platform: product.platform },
+        callback_url: (process.env.BASE_URL || '') + '/accounts?ref=' + ref,
+      });
+      const httpsM = require('https') as typeof import('https');
+      const psRes = await new Promise<any>((resolve, reject) => {
+        const r = httpsM.request({ hostname:'api.paystack.co', path:'/transaction/initialize', method:'POST', headers:{'Authorization':'Bearer '+process.env.PAYSTACK_SECRET_KEY,'Content-Type':'application/json','Content-Length':Buffer.byteLength(paystackBody)} }, (resp) => { let d=''; resp.on('data',(c:Buffer)=>d+=c); resp.on('end',()=>resolve(JSON.parse(d))); }); r.on('error',reject); r.write(paystackBody); r.end();
+      });
+      if (!psRes.status) return res.status(500).json({ success: false, error: 'Payment init failed' });
+      await pg.query("INSERT INTO digital_orders (reference,customer_email,product_id,product_name,platform,amount_kes,status) VALUES ($1,$2,$3,$4,$5,$6,'pending') ON CONFLICT DO NOTHING",
+        [ref, email, product.id, product.name, product.platform, product.price_kes]);
+      res.json({ success: true, paymentUrl: psRes.data.authorization_url, reference: ref });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Customer: verify payment + auto-deliver account
+  app.get('/api/digital/verify/:reference', async (req, res) => {
+    try {
+      const { reference } = req.params;
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      const { rows: orders } = await pg.query("SELECT * FROM digital_orders WHERE reference=$1", [reference]);
+      if (!orders.length) return res.status(404).json({ success: false, error: 'Order not found' });
+      const order = orders[0];
+      if (order.status === 'delivered' && order.credentials) {
+        return res.json({ success: true, credentials: order.credentials, already: true });
+      }
+      // Verify with Paystack
+      const httpsM = require('https') as typeof import('https');
+      const psCheck = await new Promise<any>((resolve) => {
+        const r = httpsM.request({ hostname:'api.paystack.co', path:'/transaction/verify/'+reference, method:'GET', headers:{'Authorization':'Bearer '+process.env.PAYSTACK_SECRET_KEY} }, (resp) => { let d=''; resp.on('data',(c:Buffer)=>d+=c); resp.on('end',()=>{ try{resolve(JSON.parse(d));}catch{resolve({data:{status:'failed'}});} }); }); r.on('error',()=>resolve({data:{status:'failed'}})); r.end();
+      });
+      if (psCheck.data?.status !== 'success') return res.status(402).json({ success: false, error: 'Payment not confirmed yet' });
+      // Assign account from stock
+      const { rows: stock } = await pg.query("SELECT * FROM digital_accounts_stock WHERE product_id=$1 AND is_sold=false LIMIT 1 FOR UPDATE SKIP LOCKED", [order.product_id]);
+      if (!stock.length) return res.status(400).json({ success: false, error: 'Out of stock - contact support' });
+      const acct = stock[0];
+      await pg.query("UPDATE digital_accounts_stock SET is_sold=true,sold_to_email=$1,sold_at=NOW()::text WHERE id=$2", [order.customer_email, acct.id]);
+      await pg.query("UPDATE digital_orders SET status='delivered',credentials=$1,account_stock_id=$2 WHERE reference=$3", [acct.credentials, acct.id, reference]);
+      res.json({ success: true, credentials: acct.credentials });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: list all digital products
+  app.get('/api/admin/digital-products', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query(`SELECT p.*, COUNT(s.id) FILTER (WHERE s.is_sold=false) AS stock_count, COUNT(s.id) AS total_stock FROM digital_products p LEFT JOIN digital_accounts_stock s ON s.product_id=p.id GROUP BY p.id ORDER BY p.sort_order ASC, p.id ASC`);
+      res.json({ success: true, products: rows.map((r: any) => ({ ...r, stock_count: parseInt(r.stock_count)||0, total_stock: parseInt(r.total_stock)||0 })) });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.post('/api/admin/digital-products', async (req, res) => {
+    try {
+      const { name, platform, category, price_kes, description, features, is_active, sort_order } = req.body;
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query("INSERT INTO digital_products (name,platform,category,price_kes,description,features,is_active,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+        [name, platform, category||'social', price_kes, description||'', features||'', is_active!==false, sort_order||0]);
+      res.json({ success: true, product: rows[0] });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.put('/api/admin/digital-products/:id', async (req, res) => {
+    try {
+      const { name, platform, category, price_kes, description, features, is_active, sort_order } = req.body;
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      await pg.query("UPDATE digital_products SET name=COALESCE($1,name),platform=COALESCE($2,platform),category=COALESCE($3,category),price_kes=COALESCE($4,price_kes),description=COALESCE($5,description),features=COALESCE($6,features),is_active=COALESCE($7,is_active),sort_order=COALESCE($8,sort_order) WHERE id=$9",
+        [name, platform, category, price_kes, description, features, is_active, sort_order||0, req.params.id]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.delete('/api/admin/digital-products/:id', async (req, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      await pg.query("DELETE FROM digital_products WHERE id=$1", [req.params.id]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: bulk add accounts to stock
+  app.post('/api/admin/digital-products/:id/stock', async (req, res) => {
+    try {
+      const { credentials } = req.body; // newline-separated
+      if (!credentials) return res.status(400).json({ success: false, error: 'No credentials provided' });
+      const lines = credentials.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+      if (!lines.length) return res.status(400).json({ success: false, error: 'No valid lines found' });
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      let added = 0;
+      for (const line of lines) {
+        try { await pg.query("INSERT INTO digital_accounts_stock (product_id,credentials) VALUES ($1,$2)", [req.params.id, line]); added++; } catch {}
+      }
+      res.json({ success: true, added, total: lines.length });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: list digital orders
+  app.get('/api/admin/digital-orders', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query("SELECT * FROM digital_orders ORDER BY id DESC LIMIT 500");
+      res.json({ success: true, orders: rows });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.patch('/api/admin/digital-orders/:id/status', async (req, res) => {
+    try {
+      const { status } = req.body;
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      await pg.query("UPDATE digital_orders SET status=$1 WHERE id=$2", [status, req.params.id]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+
   // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
