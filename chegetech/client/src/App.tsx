@@ -24,15 +24,16 @@ import BotCheckout from "@/pages/BotCheckout";
 import BotOrder from "@/pages/BotOrder";
 import VpsPage from "@/pages/VpsPage";
 import SmmPage from "./pages/SmmPage";
+import ProxyPage from "./pages/ProxyPage";
 import TempNumbers from "@/pages/TempNumbers";
 import Shell from "@/components/Shell";
 import ChatWidget from "@/components/ChatWidget";
 import CookieConsent from "@/components/CookieConsent";
 
 const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy", "/track", "/bots"];
-const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password", "/smm", "/numbers"];
+const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password", "/smm", "/numbers", "/proxy"];
 const NO_COOKIE_PATHS = ["/admin"];
-const SHELL_PATHS = ["/", "/bots", "/vps", "/dashboard", "/numbers", "/smm", "/checkout", "/cart-checkout", "/payment"];
+const SHELL_PATHS = ["/", "/bots", "/vps", "/dashboard", "/numbers", "/smm", "/proxy", "/checkout", "/cart-checkout", "/payment"];
 
 function Router() {
   const [location] = useLocation();
@@ -114,6 +115,7 @@ function Router() {
         <Route path="/vps" component={VpsPage} />
         <Route path="/numbers" component={TempNumbers} />
         <Route path="/smm" component={SmmPage} />
+        <Route path="/proxy" component={ProxyPage} />
         <Route path="/admin/plan-previews" component={AdminPlanPreviews} />
         <Route path="/admin" component={Admin} />
         <Route path="/track" component={Track} />
