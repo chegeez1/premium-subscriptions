@@ -8106,6 +8106,11 @@ const [deployStreamLog, setDeployStreamLog] = useState<string[]>([]);
 const [deployStreaming, setDeployStreaming] = useState(false);
 const [deployStreamStatus, setDeployStreamStatus] = useState<"idle"|"running"|"success"|"failed">("idle");
 const deployLogRef = useRef<HTMLDivElement>(null);
+const [botLogs, setBotLogs] = useState<string[]>([]);
+const [botLogsLoading, setBotLogsLoading] = useState(false);
+const [botLogsTs, setBotLogsTs] = useState<Date | null>(null);
+const [botLogsAuto, setBotLogsAuto] = useState(true);
+const botLogsRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading } = useQuery<{ success: boolean; orders: any[] }>({
     queryKey: ["/api/admin/bot-orders"],
@@ -8307,6 +8312,32 @@ const deployLogRef = useRef<HTMLDivElement>(null);
     setActionLoading(null);
   };
 
+  const fetchBotLogs = async (order: any) => {
+    if (!order?.id) return;
+    setBotLogsLoading(true);
+    try {
+      const r = await fetch(`/api/admin/bot-orders/${order.id}/live-logs`, { headers: authHeaders() as any });
+      const d = await r.json();
+      if (d.success) {
+        setBotLogs(d.logs || []);
+        setBotLogsTs(new Date());
+        setTimeout(() => { botLogsRef.current?.scrollTo({ top: 99999, behavior: "smooth" }); }, 50);
+      } else {
+        setBotLogs([`❌ ${d.error || "Failed to fetch logs"}`]);
+      }
+    } catch (e: any) { setBotLogs([`❌ ${e.message}`]); }
+    setBotLogsLoading(false);
+  };
+
+  // Auto-refresh bot logs every 5s when bot is deployed
+  React.useEffect(() => {
+    if (!selectedOrder || !["deployed", "stopped"].includes(selectedOrder.status)) return;
+    if (!botLogsAuto) return;
+    fetchBotLogs(selectedOrder);
+    const iv = setInterval(() => fetchBotLogs(selectedOrder), 5000);
+    return () => clearInterval(iv);
+  }, [selectedOrder?.id, botLogsAuto, selectedOrder?.status]);
+
   const selectOrder = (order: any) => {
     setSelectedOrder(order);
     setNewStatus(order.status);
@@ -8314,6 +8345,8 @@ const deployLogRef = useRef<HTMLDivElement>(null);
     setVpsStatus(null);
     setConfigEditing(false);
     setDeployStreaming(false);
+    setBotLogs([]);
+    setBotLogsTs(null);
     // Restore persisted deployment log from DB if available
     if (order.deploymentLog) {
       const lines = order.deploymentLog.split("\n").filter((l: string) => !l.startsWith("__DONE__"));
@@ -8543,6 +8576,45 @@ const deployLogRef = useRef<HTMLDivElement>(null);
               ) : (
                 <p className="text-xs text-gray-500">{vpsStatus?.message || "Status unavailable"}</p>
               )}
+            </div>
+          )}
+
+          {/* Live Bot Logs */}
+          {isDeployed && (
+            <div className="rounded-xl border border-white/5 overflow-hidden" style={{ background: "#080810" }}>
+              <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <p className="text-xs font-medium text-white/70 uppercase tracking-wide">Live Bot Logs</p>
+                  {botLogsTs && (
+                    <span className="text-[10px] text-white/25">· {botLogsTs.toLocaleTimeString()}</span>
+                  )}
+                  {botLogsLoading && <span className="text-[10px] text-white/30 animate-pulse">fetching...</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setBotLogsAuto(a => !a)}
+                    className={`text-[10px] px-2 py-0.5 rounded-full border transition-all ${botLogsAuto ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-white/5 text-white/30 border-white/10"}`}
+                  >{botLogsAuto ? "● Auto" : "○ Paused"}</button>
+                  <button onClick={() => fetchBotLogs(selectedOrder)} className="text-white/25 hover:text-white/60 transition-colors">
+                    <RefreshCw className={`w-3 h-3 ${botLogsLoading ? "animate-spin" : ""}`} />
+                  </button>
+                </div>
+              </div>
+              <div ref={botLogsRef} className="font-mono text-[11px] leading-relaxed overflow-auto p-3 text-green-300/80 whitespace-pre-wrap" style={{ maxHeight: "320px", minHeight: "120px" }}>
+                {botLogs.length === 0 ? (
+                  <span className="text-white/20">{botLogsLoading ? "Loading logs..." : "No logs yet — logs will appear here when the bot runs."}</span>
+                ) : (
+                  botLogs.map((line, i) => {
+                    const isError = /error|fail|crash|exception|logout|disconnect/i.test(line);
+                    const isWarn = /warn|timeout|retry/i.test(line);
+                    const isQr = /qr|scan|pairing|code/i.test(line);
+                    const isOk = /success|connected|ready|online|start/i.test(line);
+                    const color = isError ? "text-red-400" : isQr ? "text-yellow-300 font-bold" : isOk ? "text-emerald-400" : isWarn ? "text-amber-400" : "text-green-300/70";
+                    return <div key={i} className={color}>{line}</div>;
+                  })
+                )}
+              </div>
             </div>
           )}
 
