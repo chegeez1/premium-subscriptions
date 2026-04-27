@@ -1,27 +1,30 @@
 import { useLocation } from "wouter";
 import {
-  ShoppingBag, Bot, Server, LayoutDashboard, LogOut, Zap, X
+  ShoppingBag, Bot, Server, LayoutDashboard, LogOut, Zap
 } from "lucide-react";
 import { useState } from "react";
 
 interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
+  shortLabel: string;
   path: string;
   color: string;
   activeBg: string;
+  activeTextBg: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { icon: ShoppingBag, label: "Premium Accounts", path: "/", color: "text-indigo-400", activeBg: "bg-indigo-500/20 border-indigo-500/30" },
-  { icon: Bot,         label: "WhatsApp Bots",    path: "/bots", color: "text-green-400", activeBg: "bg-green-500/20 border-green-500/30" },
-  { icon: Server,      label: "VPS Hosting",      path: "/vps",  color: "text-cyan-400",  activeBg: "bg-cyan-500/20 border-cyan-500/30" },
-  { icon: LayoutDashboard, label: "My Account",   path: "/dashboard", color: "text-purple-400", activeBg: "bg-purple-500/20 border-purple-500/30" },
+  { icon: ShoppingBag, label: "Premium Accounts", shortLabel: "Accounts", path: "/",          color: "text-indigo-400", activeBg: "bg-indigo-500/20 border-indigo-500/30", activeTextBg: "bg-indigo-500/15" },
+  { icon: Bot,         label: "WhatsApp Bots",    shortLabel: "Bots",     path: "/bots",       color: "text-green-400",  activeBg: "bg-green-500/20 border-green-500/30",  activeTextBg: "bg-green-500/15"  },
+  { icon: Server,      label: "VPS Hosting",      shortLabel: "VPS",      path: "/vps",        color: "text-cyan-400",   activeBg: "bg-cyan-500/20 border-cyan-500/30",    activeTextBg: "bg-cyan-500/15"   },
+  { icon: LayoutDashboard, label: "My Account",   shortLabel: "Account",  path: "/dashboard",  color: "text-purple-400", activeBg: "bg-purple-500/20 border-purple-500/30", activeTextBg: "bg-purple-500/15" },
 ];
 
 function logout() {
   localStorage.removeItem("customer_token");
   localStorage.removeItem("customer_data");
+  fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
   window.location.href = "/auth";
 }
 
@@ -75,7 +78,6 @@ export default function Shell({ children, isAuthenticated }: ShellProps) {
                 >
                   <Icon className="w-5 h-5" />
                 </button>
-                {/* Tooltip */}
                 {tooltip === item.label && (
                   <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 whitespace-nowrap bg-gray-800 text-white text-xs font-medium px-2.5 py-1.5 rounded-lg shadow-xl pointer-events-none z-50 border border-white/10">
                     {item.label}
@@ -87,7 +89,7 @@ export default function Shell({ children, isAuthenticated }: ShellProps) {
         </nav>
 
         {/* Logout */}
-        <div className="px-2 pb-4 shrink-0">
+        <div className="px-2 pb-4 shrink-0 relative">
           <button
             onClick={logout}
             className="w-full flex items-center justify-center h-11 rounded-xl border border-transparent text-white/30 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20 transition-all duration-150"
@@ -96,47 +98,58 @@ export default function Shell({ children, isAuthenticated }: ShellProps) {
             onMouseLeave={() => setTooltip(null)}
           >
             <LogOut className="w-5 h-5" />
-            {tooltip === "Logout" && (
-              <div className="absolute left-full ml-3 whitespace-nowrap bg-gray-800 text-white text-xs font-medium px-2.5 py-1.5 rounded-lg shadow-xl pointer-events-none z-50 border border-white/10">
-                Logout
-              </div>
-            )}
           </button>
+          {tooltip === "Logout" && (
+            <div className="absolute left-full ml-3 bottom-4 whitespace-nowrap bg-gray-800 text-white text-xs font-medium px-2.5 py-1.5 rounded-lg shadow-xl pointer-events-none z-50 border border-white/10">
+              Logout
+            </div>
+          )}
         </div>
       </aside>
 
-      {/* ── Main content area (offset by sidebar) ────────────────────── */}
-      <main className="flex-1 md:pl-16 pb-16 md:pb-0 min-h-screen">
-        {children}
+      {/* ── Main content area ────────────────────────────────────────── */}
+      <main className="flex-1 md:pl-16 min-h-screen" style={{ paddingBottom: "calc(4.5rem + env(safe-area-inset-bottom, 0px))" }}>
+        <div className="md:pb-0" style={{ paddingBottom: "0" }}>
+          {children}
+        </div>
       </main>
 
       {/* ── Mobile bottom nav ─────────────────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-gray-900/95 backdrop-blur-md border-t border-white/5 flex items-center justify-around h-16 px-2">
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          const active = isActive(item.path);
-          return (
-            <button
-              key={item.path}
-              onClick={() => setLocation(item.path)}
-              className={`flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-all ${
-                active ? `${item.color}` : "text-white/35 hover:text-white/60"
-              }`}
-            >
-              <Icon className="w-5 h-5" />
-              <span className="text-[9px] font-medium leading-none">
-                {item.label.split(" ")[0]}
-              </span>
-            </button>
-          );
-        })}
-        <button
-          onClick={logout}
-          className="flex flex-col items-center gap-1 px-3 py-1 rounded-xl text-white/30 hover:text-red-400 transition-all"
-        >
-          <LogOut className="w-5 h-5" />
-          <span className="text-[9px] font-medium leading-none">Logout</span>
-        </button>
+      <nav
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-gray-900/98 backdrop-blur-lg border-t border-white/8"
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        <div className="flex items-center justify-around px-1 h-[4.25rem]">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const active = isActive(item.path);
+            return (
+              <button
+                key={item.path}
+                onClick={() => setLocation(item.path)}
+                className="flex flex-col items-center justify-center gap-1 flex-1 py-1.5 mx-0.5 rounded-2xl transition-all duration-150 active:scale-95 min-w-0"
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                <div className={`flex items-center justify-center w-10 h-7 rounded-xl transition-all duration-150 ${active ? item.activeTextBg : ""}`}>
+                  <Icon className={`w-5 h-5 transition-colors ${active ? item.color : "text-white/35"}`} />
+                </div>
+                <span className={`text-[10px] font-semibold leading-none truncate w-full text-center transition-colors ${active ? item.color : "text-white/35"}`}>
+                  {item.shortLabel}
+                </span>
+              </button>
+            );
+          })}
+          <button
+            onClick={logout}
+            className="flex flex-col items-center justify-center gap-1 flex-1 py-1.5 mx-0.5 rounded-2xl transition-all duration-150 active:scale-95 min-w-0"
+            style={{ WebkitTapHighlightColor: "transparent" }}
+          >
+            <div className="flex items-center justify-center w-10 h-7 rounded-xl">
+              <LogOut className="w-5 h-5 text-white/25" />
+            </div>
+            <span className="text-[10px] font-semibold leading-none text-white/25">Logout</span>
+          </button>
+        </div>
       </nav>
     </div>
   );
