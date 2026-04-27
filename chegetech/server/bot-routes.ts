@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { runQuery, runMutation, dbType } from "./storage";
 import { getPaystackSecretKey, getPaystackPublicKey } from "./secrets";
+import axios from "axios";
 import { promoManager } from "./promo";
 import { customerAuthMiddleware } from "./auth";
 import { vpsManager } from "./vps-manager";
@@ -1357,6 +1358,149 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       emit("__DONE__:failed");
     }
     res.end();
+  });
+
+  // ── Public VPS Plans listing ───────────────────────────────────────────────
+  app.get("/api/vps-plans", async (_req, res) => {
+    try {
+      const plans = await q("SELECT * FROM vps_plans WHERE active = true ORDER BY sort_order ASC, price_kes ASC");
+      res.json({ success: true, plans });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // ── Admin VPS Plans CRUD ───────────────────────────────────────────────────
+  app.get("/api/admin/vps-plans", adminAuthMiddleware, async (_req, res) => {
+    try {
+      const plans = await q("SELECT * FROM vps_plans ORDER BY sort_order ASC, price_kes ASC");
+      res.json({ success: true, plans });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.post("/api/admin/vps-plans", adminAuthMiddleware, async (req, res) => {
+    try {
+      const { name, ram, cpu, storage: stor, bandwidth, price_kes, popular, active, description, sort_order } = req.body;
+      if (!name || price_kes === undefined) return res.status(400).json({ success: false, error: "name and price_kes are required" });
+      const now = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      const rows = await q(
+        `INSERT INTO vps_plans (name, ram, cpu, storage, bandwidth, price_kes, popular, active, description, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${now}) RETURNING *`,
+        [name, ram || null, cpu || null, stor || null, bandwidth || null, Number(price_kes) || 0, popular ? 1 : 0, active !== false ? 1 : 0, description || null, Number(sort_order) || 0]
+      );
+      res.json({ success: true, plan: rows[0] });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.put("/api/admin/vps-plans/:id", adminAuthMiddleware, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const fields = ["name", "ram", "cpu", "storage", "bandwidth", "price_kes", "popular", "active", "description", "sort_order"];
+      const updates: string[] = [];
+      const vals: any[] = [];
+      for (const f of fields) {
+        if (req.body[f] !== undefined) {
+          updates.push(`${f} = ?`);
+          vals.push(f === "popular" || f === "active" ? (req.body[f] ? 1 : 0) : req.body[f]);
+        }
+      }
+      if (!updates.length) return res.status(400).json({ success: false, error: "Nothing to update" });
+      vals.push(id);
+      await m(`UPDATE vps_plans SET ${updates.join(", ")} WHERE id = ?`, vals);
+      const rows = await q("SELECT * FROM vps_plans WHERE id = ?", [id]);
+      res.json({ success: true, plan: rows[0] });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.delete("/api/admin/vps-plans/:id", adminAuthMiddleware, async (req, res) => {
+    try {
+      await m("DELETE FROM vps_plans WHERE id = ?", [parseInt(req.params.id)]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // ── VPS Payment: initialize (Paystack) ────────────────────────────────────
+  app.post("/api/vps/payment/initialize", async (req: any, res) => {
+    try {
+      const { planId, customerName, email, phone } = req.body;
+      if (!planId || !customerName || !email) return res.status(400).json({ success: false, error: "planId, customerName and email are required" });
+
+      const plans = await q("SELECT * FROM vps_plans WHERE id = ? AND active = true", [Number(planId)]);
+      if (!plans.length) return res.status(404).json({ success: false, error: "Plan not found or inactive" });
+      const plan = plans[0];
+
+      const paystackSecret = getPaystackSecretKey();
+      const reference = "VPS-" + Date.now().toString(36).toUpperCase() + "-" + Math.random().toString(36).slice(2, 6).toUpperCase();
+
+      // Create pending order
+      const now = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      await m(
+        `INSERT INTO vps_orders (reference, plan_id, customer_name, customer_email, customer_phone, plan_name, ram, cpu, storage, bandwidth, price_kes, status, paystack_reference, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ${now}, ${now})`,
+        [reference, plan.id, customerName, email, phone || null, plan.name, plan.ram, plan.cpu, plan.storage, plan.bandwidth, plan.price_kes, reference]
+      );
+
+      if (!paystackSecret) {
+        return res.json({ success: true, reference, authorizationUrl: null, paystackConfigured: false, plan: plan.name, amount: plan.price_kes });
+      }
+
+      const baseUrl = req.protocol + "://" + req.get("host");
+      const psRes = await axios.post(
+        "https://api.paystack.co/transaction/initialize",
+        {
+          email,
+          amount: plan.price_kes * 100,
+          reference,
+          metadata: { type: "vps", planId: plan.id, planName: plan.name, customerName, phone },
+          callback_url: `${baseUrl}/payment/success?ref=${reference}&type=vps`,
+        },
+        { headers: { Authorization: `Bearer ${paystackSecret}` } }
+      );
+
+      res.json({
+        success: true,
+        reference,
+        authorizationUrl: psRes.data.data.authorization_url,
+        accessCode: psRes.data.data.access_code,
+        paystackConfigured: true,
+        plan: plan.name,
+        amount: plan.price_kes,
+      });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // ── VPS Payment: verify ───────────────────────────────────────────────────
+  app.post("/api/vps/payment/verify", async (req, res) => {
+    try {
+      const { reference } = req.body;
+      if (!reference) return res.status(400).json({ success: false, error: "Reference required" });
+
+      const orders = await q("SELECT * FROM vps_orders WHERE reference = ? OR paystack_reference = ?", [reference, reference]);
+      if (!orders.length) return res.status(404).json({ success: false, error: "Order not found" });
+      const order = orders[0];
+
+      if (order.status === "paid" || order.status === "active") {
+        return res.json({ success: true, alreadyProcessed: true, planName: order.plan_name, reference: order.reference });
+      }
+
+      const paystackSecret = getPaystackSecretKey();
+      if (!paystackSecret) return res.status(503).json({ success: false, error: "Payment gateway not configured" });
+
+      const verifyRes = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+        headers: { Authorization: `Bearer ${paystackSecret}` },
+      });
+
+      const psTx = verifyRes.data.data;
+      if (psTx.status !== "success") {
+        return res.json({ success: false, error: "Payment not confirmed by Paystack" });
+      }
+
+      const now = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await m(
+        `UPDATE vps_orders SET status = 'paid', paid_at = ${now}, expires_at = ?, updated_at = ${now} WHERE id = ?`,
+        [expiresAt, order.id]
+      );
+
+      res.json({ success: true, planName: order.plan_name, reference: order.reference });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
   // ── Admin VPS Sales / Seller Dashboard endpoints ──────────────────────────
