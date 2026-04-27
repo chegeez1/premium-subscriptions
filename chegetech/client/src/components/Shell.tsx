@@ -1,6 +1,6 @@
 import { useLocation } from "wouter";
 import {
-  ShoppingBag, Bot, Server, LayoutDashboard, LogOut, Zap, Smartphone
+  ShoppingBag, Bot, Server, LayoutDashboard, LogOut, Zap, Smartphone, TrendingUp
 } from "lucide-react";
 import { useState } from "react";
 
@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { icon: Bot,         label: "WhatsApp Bots",    shortLabel: "Bots",     path: "/bots",       color: "text-green-400",  activeBg: "bg-green-500/20 border-green-500/30",  activeTextBg: "bg-green-500/15"  },
   { icon: Server,      label: "VPS Hosting",      shortLabel: "VPS",      path: "/vps",        color: "text-cyan-400",   activeBg: "bg-cyan-500/20 border-cyan-500/30",    activeTextBg: "bg-cyan-500/15"   },
   { icon: Smartphone, label: "Free Numbers", shortLabel: "Numbers", path: "/numbers", color: "text-cyan-400", activeBg: "bg-cyan-500/20 border-cyan-500/30", activeTextBg: "bg-cyan-500/15" },
+  { icon: TrendingUp,   label: "SMM Boost",    shortLabel: "SMM",     path: "/smm",     color: "text-pink-400",   activeBg: "bg-pink-500/20 border-pink-500/30",    activeTextBg: "bg-pink-500/15"   },
   { icon: LayoutDashboard, label: "My Account",   shortLabel: "Account",  path: "/dashboard",  color: "text-purple-400", activeBg: "bg-purple-500/20 border-purple-500/30", activeTextBg: "bg-purple-500/15" },
 ];
 
