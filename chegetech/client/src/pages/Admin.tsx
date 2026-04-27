@@ -8449,7 +8449,23 @@ const deployLogRef = useRef<HTMLDivElement>(null);
             </div>
             <div ref={deployLogRef} className="font-mono text-xs p-4 h-52 overflow-y-auto space-y-0.5 scroll-smooth">
               {deployStreamLog.length === 0 && !deployStreaming ? (
-                <span className="text-white/20">Click "Deploy to VPS" to start — VPS is auto-selected, logs stream here live.</span>
+                <div className="space-y-1">
+                  {selectedOrder?.deploymentNotes ? (
+                    <>
+                      <div className={`leading-relaxed mb-2 ${selectedOrder.status === 'deployed' ? 'text-emerald-400' : selectedOrder.status === 'deploy_failed' ? 'text-red-400' : 'text-amber-300'}`}>
+                        {selectedOrder.status === 'deployed' ? '✅ Deployed successfully' : selectedOrder.status === 'deploy_failed' ? '❌ Deployment failed' : `ℹ️ Status: ${selectedOrder.status}`}
+                      </div>
+                      {selectedOrder.deploymentNotes.split('\n').map((line: string, i: number) => (
+                        <div key={i} className={`leading-relaxed whitespace-pre-wrap ${line.startsWith('❌') || line.includes('FAILED') || line.includes('failed') ? 'text-red-400' : line.startsWith('✅') || line.includes('success') ? 'text-emerald-400' : 'text-white/50'}`}>{line || '\u00a0'}</div>
+                      ))}
+                      {selectedOrder.pm2Name && <div className="mt-2 text-emerald-400/60">PM2: {selectedOrder.pm2Name}</div>}
+                      {selectedOrder.deployedAt && <div className="text-white/30">Deployed: {new Date(selectedOrder.deployedAt).toLocaleString()}</div>}
+                      <div className="mt-2 text-white/20 border-t border-white/5 pt-2">Click "Deploy to VPS" to redeploy manually.</div>
+                    </>
+                  ) : (
+                    <span className="text-white/20">Click "Deploy to VPS" to start — VPS is auto-selected, logs stream here live.</span>
+                  )}
+                </div>
               ) : (
                 deployStreamLog.map((line, i) => (
                   <div key={i} className={`leading-relaxed whitespace-pre ${
