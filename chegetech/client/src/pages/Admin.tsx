@@ -8110,7 +8110,10 @@ const deployLogRef = useRef<HTMLDivElement>(null);
   const { data, isLoading } = useQuery<{ success: boolean; orders: any[] }>({
     queryKey: ["/api/admin/bot-orders"],
     queryFn: () => fetch("/api/admin/bot-orders", { headers: authHeaders() as any }).then((r) => r.json()),
-    refetchInterval: 30000,
+    refetchInterval: (query) => {
+      const orders = (query.state.data as any)?.orders ?? [];
+      return orders.some((o: any) => o.status === "deploying") ? 3000 : 30000;
+    },
   });
 
   const updateMutation = useMutation({
@@ -8205,10 +8208,20 @@ const deployLogRef = useRef<HTMLDivElement>(null);
     }
   }
 
+  const patchOrderInCache = (id: number, patch: any) => {
+    queryClient.setQueryData(["/api/admin/bot-orders"], (old: any) => {
+      if (!old?.orders) return old;
+      return { ...old, orders: old.orders.map((o: any) => o.id === id ? { ...o, ...patch } : o) };
+    });
+  };
+
   async function deployWithStream(orderId: number) {
     setDeployStreamLog([]);
     setDeployStreaming(true);
     setDeployStreamStatus("running");
+    // Optimistically mark as deploying in the list immediately
+    patchOrderInCache(orderId, { status: "deploying" });
+    setSelectedOrder((o: any) => o ? { ...o, status: "deploying" } : null);
     try {
       const res = await fetch(`/api/admin/bot-orders/${orderId}/deploy-stream`, {
         method: "POST",
@@ -8227,10 +8240,14 @@ const deployLogRef = useRef<HTMLDivElement>(null);
         for (const line of lines) {
           if (line === "__DONE__:success") {
             setDeployStreamStatus("success");
-            queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
+            patchOrderInCache(orderId, { status: "deployed" });
             setSelectedOrder((o: any) => o ? { ...o, status: "deployed" } : null);
+            queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
           } else if (line === "__DONE__:failed") {
             setDeployStreamStatus("failed");
+            patchOrderInCache(orderId, { status: "deploy_failed" });
+            setSelectedOrder((o: any) => o ? { ...o, status: "deploy_failed" } : null);
+            queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
           } else {
             setDeployStreamLog(prev => { const next = [...prev, line]; setTimeout(() => { deployLogRef.current?.scrollTo({ top: 99999, behavior: "smooth" }); }, 30); return next; });
           }
@@ -8239,6 +8256,8 @@ const deployLogRef = useRef<HTMLDivElement>(null);
     } catch (e: any) {
       setDeployStreamLog(prev => [...prev, "❌ " + e.message]);
       setDeployStreamStatus("failed");
+      patchOrderInCache(orderId, { status: "deploy_failed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
     } finally {
       setDeployStreaming(false);
     }
@@ -8311,13 +8330,14 @@ const deployLogRef = useRef<HTMLDivElement>(null);
   };
 
   const STATUS_BADGES: Record<string, string> = {
-    pending:   "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
-    paid:      "bg-blue-500/10 text-blue-400 border-blue-500/20",
-    deploying: "bg-purple-500/10 text-purple-400 border-purple-500/20",
-    deployed:  "bg-green-500/10 text-green-400 border-green-500/20",
-    stopped:   "bg-orange-500/10 text-orange-400 border-orange-500/20",
-    suspended: "bg-red-500/10 text-red-400 border-red-500/20",
-    failed:    "bg-red-500/10 text-red-400 border-red-500/20",
+    pending:       "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+    paid:          "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    deploying:     "bg-purple-500/10 text-purple-400 border-purple-500/20",
+    deployed:      "bg-green-500/10 text-green-400 border-green-500/20",
+    stopped:       "bg-orange-500/10 text-orange-400 border-orange-500/20",
+    suspended:     "bg-red-500/10 text-red-400 border-red-500/20",
+    failed:        "bg-red-500/10 text-red-400 border-red-500/20",
+    deploy_failed: "bg-red-500/10 text-red-400 border-red-500/20",
   };
 
   const allOrders = data?.orders || [];
@@ -8688,9 +8708,16 @@ const deployLogRef = useRef<HTMLDivElement>(null);
                   <TableCell className="text-white text-sm">{order.botName}</TableCell>
                   <TableCell className="text-white font-semibold text-sm">KES {order.amount}</TableCell>
                   <TableCell>
-                    <Badge className={`text-xs border ${STATUS_BADGES[order.status] || "bg-gray-500/10 text-gray-400"}`}>
-                      {order.status}
-                    </Badge>
+                    {order.status === "deploying" ? (
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                        <span className="w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin" />
+                        deploying
+                      </span>
+                    ) : (
+                      <Badge className={`text-xs border ${STATUS_BADGES[order.status] || "bg-gray-500/10 text-gray-400"}`}>
+                        {order.status}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>
                     {order.pm2Name ? (
