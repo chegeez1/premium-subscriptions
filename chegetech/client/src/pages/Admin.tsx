@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -267,6 +267,7 @@ export default function Admin() {
     { id: "whatsapp", label: "WhatsApp Bot", icon: MessageCircle, alwaysVisible: true },
     { id: "bot-store", label: "Bot Store", icon: Bot, alwaysVisible: true },
     { id: "bot-orders", label: "Bot Orders", icon: Package, alwaysVisible: true },
+    { id: "smm-orders", label: "SMM Orders", icon: TrendingUp, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
@@ -402,6 +403,7 @@ export default function Admin() {
           {activeTab === "whatsapp" && <WhatsAppTab />}
           {activeTab === "bot-store" && <BotStoreAdminTab />}
           {activeTab === "bot-orders" && <BotOrdersAdminTab />}
+          {activeTab === "smm-orders" && <SmmOrdersAdminTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
@@ -9294,3 +9296,160 @@ const botLogsRef = useRef<HTMLDivElement>(null);
     </div>
   );
 }
+
+// ─── SMM Orders Admin Tab ─────────────────────────────────────────────────────
+function SmmOrdersAdminTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["/api/admin/smm-orders"],
+    queryFn: () => fetch("/api/admin/smm-orders", { headers: authHeaders() as any }).then(r => r.json()),
+    refetchInterval: 30000,
+  });
+
+  const orders: any[] = data?.orders || [];
+
+  const updateStatus = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) =>
+      fetch(`/api/admin/smm-orders/${id}/status`, {
+        method: "PATCH",
+        headers: { ...authHeaders(), "Content-Type": "application/json" } as any,
+        body: JSON.stringify({ status }),
+      }).then(r => r.json()),
+    onSuccess: (res) => {
+      if (res.success) {
+        toast({ title: "Status updated" });
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/smm-orders"] });
+      } else {
+        toast({ title: "Error", description: res.error, variant: "destructive" });
+      }
+    },
+  });
+
+  const filtered = orders.filter(o => {
+    const matchStatus = statusFilter === "all" || o.status === statusFilter;
+    const matchSearch = !search || [o.reference, o.service_name, o.platform, o.customer_email, o.link].some(v => (v || "").toLowerCase().includes(search.toLowerCase()));
+    return matchStatus && matchSearch;
+  });
+
+  const totalKes = orders.filter(o => o.status !== "failed").reduce((s: number, o: any) => s + (o.amount_kes || 0), 0);
+  const pending = orders.filter(o => o.status === "pending").length;
+  const processing = orders.filter(o => o.status === "processing").length;
+
+  const STATUS_OPTS = [
+    { v: "pending",    label: "Pending",    cls: "text-amber-400 border-amber-500/30 bg-amber-500/10" },
+    { v: "processing", label: "Processing", cls: "text-blue-400 border-blue-500/30 bg-blue-500/10" },
+    { v: "completed",  label: "Completed",  cls: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10" },
+    { v: "failed",     label: "Failed",     cls: "text-red-400 border-red-500/30 bg-red-500/10" },
+  ];
+  const statusCls = (s: string) => STATUS_OPTS.find(x => x.v === s)?.cls || "text-gray-400 border-gray-500/30 bg-gray-500/10";
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">SMM Orders</h2>
+          <p className="text-sm text-gray-400 mt-0.5">Manage social media boost orders from customers</p>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => refetch()} className="border-white/10 text-gray-400 hover:text-white gap-1.5">
+          <RefreshCw className="w-3.5 h-3.5" /> Refresh
+        </Button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: "Total Orders", value: orders.length, color: "text-white" },
+          { label: "Pending", value: pending, color: "text-amber-400" },
+          { label: "Processing", value: processing, color: "text-blue-400" },
+          { label: "Revenue (KES)", value: `KES ${totalKes.toLocaleString()}`, color: "text-emerald-400" },
+        ].map(stat => (
+          <div key={stat.label} className="bg-white/5 border border-white/10 rounded-xl p-4">
+            <p className="text-xs text-gray-400 mb-1">{stat.label}</p>
+            <p className={`text-xl font-bold ${stat.color}`}>{stat.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="flex gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-48">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by reference, service, email..." className="pl-8 bg-white/5 border-white/10 text-white text-sm h-9" />
+        </div>
+        <div className="flex gap-1.5">
+          {["all", "pending", "processing", "completed", "failed"].map(s => (
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors capitalize ${statusFilter === s ? "bg-pink-500/20 border-pink-500/30 text-pink-300" : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      {isLoading ? (
+        <div className="text-center py-12 text-gray-500">Loading orders...</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-12 text-gray-500">
+          <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-30" />
+          <p>No SMM orders yet</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-white/10 hover:bg-transparent">
+                {["Reference","Platform","Service","Qty","Link","Amount","Status","Date","Action"].map(h => (
+                  <TableHead key={h} className="text-gray-400 text-xs font-medium">{h}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((order: any) => (
+                <TableRow key={order.id} className="border-white/5 hover:bg-white/3">
+                  <TableCell className="font-mono text-xs text-gray-300">{order.reference?.slice(0, 14)}…</TableCell>
+                  <TableCell>
+                    <span className="text-xs px-2 py-0.5 rounded-full border bg-pink-500/10 text-pink-400 border-pink-500/20">{order.platform || "—"}</span>
+                  </TableCell>
+                  <TableCell className="text-xs text-gray-300 max-w-48">
+                    <p className="truncate" title={order.service_name}>{order.service_name || "—"}</p>
+                    <p className="text-gray-500">{order.customer_email}</p>
+                  </TableCell>
+                  <TableCell className="text-sm text-white font-medium">{(order.quantity || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-xs max-w-32">
+                    <a href={order.link} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline flex items-center gap-1 truncate">
+                      <ExternalLink className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{order.link}</span>
+                    </a>
+                  </TableCell>
+                  <TableCell className="text-sm text-emerald-400 font-medium">KES {(order.amount_kes || 0).toLocaleString()}</TableCell>
+                  <TableCell>
+                    <span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${statusCls(order.status)}`}>{order.status}</span>
+                  </TableCell>
+                  <TableCell className="text-xs text-gray-500">{order.created_at ? new Date(order.created_at).toLocaleDateString() : "—"}</TableCell>
+                  <TableCell>
+                    <select
+                      value={order.status}
+                      onChange={e => updateStatus.mutate({ id: order.id, status: e.target.value })}
+                      className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-gray-300 focus:outline-none focus:border-pink-500/40"
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="processing">Processing</option>
+                      <option value="completed">Completed</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}
+
