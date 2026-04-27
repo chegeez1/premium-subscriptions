@@ -15,7 +15,7 @@ import {
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
   Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera,
   Bot, Sparkles, Minimize2, Database, UserCircle, Wallet, Pencil,
-  MinusCircle, History, ArrowUpCircle, ArrowDownCircle, Bell, ShoppingBag
+  MinusCircle, History, ArrowUpCircle, ArrowDownCircle, Bell, ShoppingBag, MessageSquare, Gift
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders" | "free-proxies";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders" | "free-proxies" | "gift-cards" | "gc-orders" | "sms-plans" | "sms-orders";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -273,6 +273,10 @@ export default function Admin() {
     { id: "digital-products", label: "Aged Accounts", icon: Users, alwaysVisible: true },
     { id: "digital-orders", label: "Acct Orders", icon: Users, alwaysVisible: true },
     { id: "free-proxies", label: "Free Proxies", icon: Shield, alwaysVisible: true },
+    { id: "gift-cards", label: "Gift Cards", icon: Gift, alwaysVisible: true },
+    { id: "gc-orders", label: "GC Orders", icon: Gift, alwaysVisible: true },
+    { id: "sms-plans", label: "SMS Plans", icon: MessageSquare, alwaysVisible: true },
+    { id: "sms-orders", label: "SMS Orders", icon: MessageSquare, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
@@ -414,6 +418,10 @@ export default function Admin() {
           {activeTab === "digital-products" && <DigitalProductsAdminTab />}
           {activeTab === "digital-orders" && <DigitalOrdersAdminTab />}
           {activeTab === "free-proxies" && <FreeProxiesAdminTab />}
+          {activeTab === "gift-cards" && <GiftCardsAdminTab />}
+          {activeTab === "gc-orders" && <GiftCardOrdersAdminTab />}
+          {activeTab === "sms-plans" && <SmsPlansAdminTab />}
+          {activeTab === "sms-orders" && <SmsOrdersAdminTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
@@ -10218,6 +10226,145 @@ function FreeProxiesAdminTab() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Gift Cards Admin Tab ─────────────────────────────────────────────────────
+function GiftCardsAdminTab() {
+  const { toast } = useToast(); const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false); const [editing, setEditing] = useState<any>(null);
+  const [stockModal, setStockModal] = useState<any>(null); const [stockText, setStockText] = useState("");
+  const [stockLoading, setStockLoading] = useState(false);
+  const [form, setForm] = useState({name:"",brand:"Google Play",denomination:"",currency:"USD",price_kes:"",description:"",is_active:true,sort_order:"0"});
+  const BRANDS = ["Google Play","iTunes","Steam","Amazon","Netflix","Spotify","Xbox","PlayStation","Roblox","Razer Gold","Fortnite","Valorant","Other"];
+  const BRAND_EMOJI: Record<string,string> = {"Google Play":"🎮","iTunes":"🍎","Steam":"🎲","Amazon":"📦","Netflix":"🎬","Spotify":"🎵","Xbox":"🟢","PlayStation":"🎯","Roblox":"🟡","Razer Gold":"💚","Fortnite":"🔷","Valorant":"🔴","Other":"🎁"};
+  const { data, isLoading, refetch } = useQuery({ queryKey:["/api/admin/gift-card-products"], queryFn:()=>fetch("/api/admin/gift-card-products",{headers:authHeaders() as any}).then(r=>r.json()) });
+  const products:any[]=data?.products||[];
+  const inp="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-yellow-500/40";
+  const reset=()=>{setForm({name:"",brand:"Google Play",denomination:"",currency:"USD",price_kes:"",description:"",is_active:true,sort_order:"0"});setEditing(null);setShowForm(false);};
+  const startEdit=(p:any)=>{setForm({name:p.name,brand:p.brand,denomination:p.denomination||"",currency:p.currency||"USD",price_kes:p.price_kes,description:p.description||"",is_active:p.is_active,sort_order:p.sort_order||"0"});setEditing(p);setShowForm(true);};
+  const save=useMutation({mutationFn:()=>{ const body={...form,price_kes:parseFloat(form.price_kes as any),sort_order:parseInt(form.sort_order as any)||0}; return fetch(editing?`/api/admin/gift-card-products/${editing.id}`:"/api/admin/gift-card-products",{method:editing?"PUT":"POST",headers:{...authHeaders(),"Content-Type":"application/json"} as any,body:JSON.stringify(body)}).then(r=>r.json()); },onSuccess:(r)=>{if(r.success){toast({title:editing?"Updated":"Created"});queryClient.invalidateQueries({queryKey:["/api/admin/gift-card-products"]});reset();}else toast({title:"Error",description:r.error,variant:"destructive"});},});
+  const del=useMutation({mutationFn:(id:number)=>fetch(`/api/admin/gift-card-products/${id}`,{method:"DELETE",headers:authHeaders() as any}).then(r=>r.json()),onSuccess:()=>{toast({title:"Deleted"});queryClient.invalidateQueries({queryKey:["/api/admin/gift-card-products"]});}});
+  const addStock=async()=>{if(!stockModal||!stockText.trim())return;setStockLoading(true);try{const r=await fetch(`/api/admin/gift-card-products/${stockModal.id}/stock`,{method:"POST",headers:{...authHeaders(),"Content-Type":"application/json"} as any,body:JSON.stringify({codes:stockText})}).then(r=>r.json());if(r.success){toast({title:`Added ${r.added} codes`});queryClient.invalidateQueries({queryKey:["/api/admin/gift-card-products"]});setStockModal(null);setStockText("");}else toast({title:"Error",description:r.error,variant:"destructive"});}catch{toast({title:"Error",variant:"destructive"});}setStockLoading(false);};
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold text-white">Gift Cards</h2><p className="text-sm text-gray-400">Manage gift card products and code inventory</p></div><Button size="sm" onClick={()=>{reset();setShowForm(true);}} className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold gap-1.5"><Plus className="w-4 h-4"/>Add Product</Button></div>
+      {showForm&&(<div className="bg-white/5 border border-yellow-500/20 rounded-2xl p-5 space-y-3"><h3 className="font-semibold">{editing?"Edit":"New"} Gift Card Product</h3><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><div><label className="text-xs text-gray-400 mb-1 block">Brand</label><select className={inp} value={form.brand} onChange={e=>setForm(f=>({...f,brand:e.target.value}))}>{BRANDS.map(b=><option key={b} value={b}>{BRAND_EMOJI[b]} {b}</option>)}</select></div><div><label className="text-xs text-gray-400 mb-1 block">Product Name</label><input className={inp} value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Google Play $10"/></div><div><label className="text-xs text-gray-400 mb-1 block">Denomination</label><input className={inp} value={form.denomination} onChange={e=>setForm(f=>({...f,denomination:e.target.value}))} placeholder="10"/></div><div><label className="text-xs text-gray-400 mb-1 block">Currency</label><input className={inp} value={form.currency} onChange={e=>setForm(f=>({...f,currency:e.target.value}))} placeholder="USD"/></div><div><label className="text-xs text-gray-400 mb-1 block">Price (KES)</label><input type="number" className={inp} value={form.price_kes} onChange={e=>setForm(f=>({...f,price_kes:e.target.value}))} placeholder="1500"/></div><div><label className="text-xs text-gray-400 mb-1 block">Sort Order</label><input type="number" className={inp} value={form.sort_order} onChange={e=>setForm(f=>({...f,sort_order:e.target.value}))}/></div><div className="col-span-2 sm:col-span-3"><label className="text-xs text-gray-400 mb-1 block">Description (optional)</label><input className={inp} value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Works worldwide, no expiry"/></div><div className="flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={e=>setForm(f=>({...f,is_active:e.target.checked}))} className="w-4 h-4"/><label className="text-sm text-gray-300">Active</label></div></div><div className="flex gap-2"><Button onClick={()=>save.mutate()} disabled={save.isPending||!form.name||!form.price_kes} className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold">{save.isPending?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:null}{editing?"Update":"Create"}</Button><Button variant="outline" onClick={reset} className="border-white/10 text-gray-400">Cancel</Button></div></div>)}
+      {isLoading?<div className="text-center py-8 text-gray-500">Loading...</div>:products.length===0?<div className="text-center py-12 text-gray-500"><Gift className="w-8 h-8 mx-auto mb-2 opacity-30"/><p>No products yet</p></div>:(
+        <div className="overflow-x-auto rounded-xl border border-white/10"><Table><TableHeader><TableRow className="border-white/10 hover:bg-transparent">{["Brand","Product","Denom","Price KES","Stock","Status","Actions"].map(h=><TableHead key={h} className="text-gray-400 text-xs">{h}</TableHead>)}</TableRow></TableHeader><TableBody>{products.map((p:any)=>(
+          <TableRow key={p.id} className="border-white/5 hover:bg-white/3">
+            <TableCell className="text-lg">{BRAND_EMOJI[p.brand]||"🎁"} <span className="text-xs text-gray-400">{p.brand}</span></TableCell>
+            <TableCell className="text-sm text-white font-medium max-w-32"><p className="truncate">{p.name}</p></TableCell>
+            <TableCell className="text-sm text-white/60">{p.denomination} {p.currency}</TableCell>
+            <TableCell className="text-sm text-yellow-400 font-bold">KES {(p.price_kes||0).toLocaleString()}</TableCell>
+            <TableCell><span className={`text-sm font-bold ${p.stock_count>0?"text-emerald-400":"text-red-400"}`}>{p.stock_count}</span><span className="text-xs text-gray-500 ml-1">/ {p.total_stock}</span></TableCell>
+            <TableCell><span className={`text-xs px-2 py-0.5 rounded-full border ${p.is_active?"bg-emerald-500/10 text-emerald-400 border-emerald-500/20":"bg-white/5 text-gray-500 border-white/10"}`}>{p.is_active?"Active":"Hidden"}</span></TableCell>
+            <TableCell><div className="flex gap-1.5"><Button size="sm" variant="outline" onClick={()=>{setStockModal(p);setStockText("");}} className="border-yellow-500/20 text-yellow-400 hover:bg-yellow-500/10 h-7 px-2 text-xs"><Plus className="w-3 h-3 mr-1"/>Codes</Button><Button size="sm" variant="outline" onClick={()=>startEdit(p)} className="border-white/10 text-gray-400 h-7 px-2 text-xs"><Edit2 className="w-3 h-3"/></Button><Button size="sm" variant="outline" onClick={()=>{if(confirm("Delete?"))del.mutate(p.id);}} className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-7 px-2 text-xs"><Trash2 className="w-3 h-3"/></Button></div></TableCell>
+          </TableRow>
+        ))}</TableBody></Table></div>
+      )}
+      {stockModal&&(<div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={e=>{if(e.target===e.currentTarget){setStockModal(null);setStockText("");}}}><div className="bg-gray-900 border border-white/10 rounded-2xl w-full max-w-lg p-6"><h3 className="font-bold mb-1">Add Gift Card Codes</h3><p className="text-sm text-gray-400 mb-3">{stockModal.name} — Stock: <span className="text-yellow-400 font-bold">{stockModal.stock_count}</span></p><textarea value={stockText} onChange={e=>setStockText(e.target.value)} rows={8} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-yellow-400 font-mono focus:outline-none focus:border-yellow-500/40 mb-3" placeholder={"XXXX-XXXX-XXXX-XXXX\nYYYY-YYYY-YYYY-YYYY\nZZZZ-ZZZZ-ZZZZ-ZZZZ"}/><p className="text-xs text-gray-500 mb-3">{stockText.split('\n').filter(l=>l.trim()).length} codes ready</p><div className="flex gap-2"><Button onClick={addStock} disabled={stockLoading||!stockText.trim()} className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold flex-1">{stockLoading?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:<Plus className="w-4 h-4 mr-1"/>}Import Codes</Button><Button variant="outline" onClick={()=>{setStockModal(null);setStockText("");}} className="border-white/10 text-gray-400">Cancel</Button></div></div></div>)}
+    </div>
+  );
+}
+
+// ─── Gift Card Orders Admin Tab ───────────────────────────────────────────────
+function GiftCardOrdersAdminTab() {
+  const { toast } = useToast();
+  const [search, setSearch] = useState(""); const [credView, setCredView] = useState<any>(null); const [copied, setCopied] = useState(false);
+  const { data, isLoading, refetch } = useQuery({ queryKey:["/api/admin/gift-card-orders"], queryFn:()=>fetch("/api/admin/gift-card-orders",{headers:authHeaders() as any}).then(r=>r.json()), refetchInterval:30000 });
+  const orders:any[]=data?.orders||[];
+  const filtered=orders.filter(o=>!search||[o.reference,o.product_name,o.brand,o.customer_email].some((v:string)=>(v||"").toLowerCase().includes(search.toLowerCase())));
+  const revenue=orders.filter((o:any)=>o.status==="delivered").reduce((s:number,o:any)=>s+(parseFloat(o.amount_kes)||0),0);
+  const sCls=(s:string)=>({pending:"text-amber-400 border-amber-500/30 bg-amber-500/10",delivered:"text-emerald-400 border-emerald-500/30 bg-emerald-500/10",failed:"text-red-400 border-red-500/30 bg-red-500/10"}[s]||"text-gray-400 border-gray-500/30 bg-gray-500/10");
+  const EMOJI: Record<string,string>={"Google Play":"🎮","iTunes":"🍎","Steam":"🎲","Amazon":"📦","Netflix":"🎬","Spotify":"🎵","Xbox":"🟢","PlayStation":"🎯","Roblox":"🟡","Other":"🎁"};
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold text-white">Gift Card Orders</h2><p className="text-sm text-gray-400">All gift card purchases and code deliveries</p></div><Button size="sm" variant="outline" onClick={()=>refetch()} className="border-white/10 text-gray-400 gap-1.5"><RefreshCw className="w-3.5 h-3.5"/>Refresh</Button></div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{[{label:"Total",value:orders.length,c:"text-white"},{label:"Delivered",value:orders.filter((o:any)=>o.status==="delivered").length,c:"text-emerald-400"},{label:"Pending",value:orders.filter((o:any)=>o.status==="pending").length,c:"text-amber-400"},{label:"Revenue",value:`KES ${revenue.toLocaleString()}`,c:"text-yellow-400"}].map(s=>(<div key={s.label} className="bg-white/5 border border-white/10 rounded-xl p-4"><p className="text-xs text-gray-400 mb-1">{s.label}</p><p className={`text-xl font-bold ${s.c}`}>{s.value}</p></div>))}</div>
+      <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500"/><Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search orders..." className="pl-8 bg-white/5 border-white/10 text-white text-sm h-9"/></div>
+      {isLoading?<div className="text-center py-8 text-gray-500">Loading...</div>:filtered.length===0?<div className="text-center py-10 text-gray-500"><Gift className="w-8 h-8 mx-auto mb-2 opacity-30"/><p>No orders</p></div>:(
+        <div className="overflow-x-auto rounded-xl border border-white/10"><Table><TableHeader><TableRow className="border-white/10 hover:bg-transparent">{["Ref","Brand","Product","Customer","Amount","Status","Code"].map(h=><TableHead key={h} className="text-gray-400 text-xs">{h}</TableHead>)}</TableRow></TableHeader><TableBody>{filtered.map((o:any)=>(
+          <TableRow key={o.id} className="border-white/5 hover:bg-white/3">
+            <TableCell className="font-mono text-xs text-gray-300">{(o.reference||"").slice(0,12)}…</TableCell>
+            <TableCell className="text-base">{EMOJI[o.brand]||"🎁"} <span className="text-xs text-gray-400">{o.brand}</span></TableCell>
+            <TableCell className="text-xs text-white max-w-28"><p className="truncate">{o.product_name}</p></TableCell>
+            <TableCell className="text-xs text-gray-400">{o.customer_email}</TableCell>
+            <TableCell className="text-sm text-yellow-400 font-medium">KES {parseFloat(o.amount_kes||0).toLocaleString()}</TableCell>
+            <TableCell><span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${sCls(o.status)}`}>{o.status}</span></TableCell>
+            <TableCell>{o.code?<Button size="sm" variant="outline" onClick={()=>setCredView(o)} className="border-yellow-500/20 text-yellow-400 hover:bg-yellow-500/10 h-7 px-2 text-xs"><Eye className="w-3 h-3"/></Button>:<span className="text-xs text-gray-600">—</span>}</TableCell>
+          </TableRow>
+        ))}</TableBody></Table></div>
+      )}
+      {credView&&(<div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={e=>{if(e.target===e.currentTarget)setCredView(null);}}><div className="bg-gray-900 border border-white/10 rounded-2xl w-full max-w-sm p-6"><h3 className="font-bold mb-1">Delivered Code</h3><p className="text-sm text-gray-400 mb-4">{credView.customer_email} — {credView.product_name}</p><div className="bg-black/40 border border-white/10 rounded-xl p-4 text-xl font-mono font-bold text-yellow-400 text-center tracking-widest mb-4">{credView.code}</div><div className="flex gap-2"><Button onClick={()=>{navigator.clipboard.writeText(credView.code);setCopied(true);setTimeout(()=>setCopied(false),2000);}} className="flex-1 bg-white/5 border border-white/10 text-white/70 text-sm">{copied?<Check className="w-4 h-4 text-green-400 mr-1"/>:<Copy className="w-4 h-4 mr-1"/>}Copy</Button><Button onClick={()=>setCredView(null)} className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-black font-bold text-sm">Close</Button></div></div></div>)}
+    </div>
+  );
+}
+
+// ─── SMS Plans Admin Tab ──────────────────────────────────────────────────────
+function SmsPlansAdminTab() {
+  const { toast } = useToast(); const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false); const [editing, setEditing] = useState<any>(null);
+  const [form, setForm] = useState({name:"",sms_count:"",price_kes:"",description:"",features:"",is_active:true,sort_order:"0",validity_days:"30"});
+  const { data, isLoading } = useQuery({ queryKey:["/api/admin/sms-plans"], queryFn:()=>fetch("/api/admin/sms-plans",{headers:authHeaders() as any}).then(r=>r.json()) });
+  const plans:any[]=data?.plans||[];
+  const inp="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-green-500/40";
+  const reset=()=>{setForm({name:"",sms_count:"",price_kes:"",description:"",features:"",is_active:true,sort_order:"0",validity_days:"30"});setEditing(null);setShowForm(false);};
+  const startEdit=(p:any)=>{setForm({name:p.name,sms_count:p.sms_count,price_kes:p.price_kes,description:p.description||"",features:p.features||"",is_active:p.is_active,sort_order:p.sort_order||"0",validity_days:p.validity_days||"30"});setEditing(p);setShowForm(true);};
+  const save=useMutation({mutationFn:()=>fetch(editing?`/api/admin/sms-plans/${editing.id}`:"/api/admin/sms-plans",{method:editing?"PUT":"POST",headers:{...authHeaders(),"Content-Type":"application/json"} as any,body:JSON.stringify({...form,sms_count:parseInt(form.sms_count as any),price_kes:parseFloat(form.price_kes as any),sort_order:parseInt(form.sort_order as any)||0,validity_days:parseInt(form.validity_days as any)||30})}).then(r=>r.json()),onSuccess:(r)=>{if(r.success){toast({title:editing?"Updated":"Created"});queryClient.invalidateQueries({queryKey:["/api/admin/sms-plans"]});reset();}else toast({title:"Error",description:r.error,variant:"destructive"});},});
+  const del=useMutation({mutationFn:(id:number)=>fetch(`/api/admin/sms-plans/${id}`,{method:"DELETE",headers:authHeaders() as any}).then(r=>r.json()),onSuccess:()=>{toast({title:"Deleted"});queryClient.invalidateQueries({queryKey:["/api/admin/sms-plans"]});}});
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold text-white">Bulk SMS Plans</h2><p className="text-sm text-gray-400">Manage SMS credit packages for customers</p></div><Button size="sm" onClick={()=>{reset();setShowForm(true);}} className="bg-green-600 hover:bg-green-700 gap-1.5"><Plus className="w-4 h-4"/>Add Plan</Button></div>
+      {showForm&&(<div className="bg-white/5 border border-green-500/20 rounded-2xl p-5 space-y-3"><h3 className="font-semibold">{editing?"Edit":"New"} SMS Plan</h3><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><div><label className="text-xs text-gray-400 mb-1 block">Plan Name</label><input className={inp} value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Starter 1000"/></div><div><label className="text-xs text-gray-400 mb-1 block">SMS Count</label><input type="number" className={inp} value={form.sms_count} onChange={e=>setForm(f=>({...f,sms_count:e.target.value}))} placeholder="1000"/></div><div><label className="text-xs text-gray-400 mb-1 block">Price (KES)</label><input type="number" className={inp} value={form.price_kes} onChange={e=>setForm(f=>({...f,price_kes:e.target.value}))} placeholder="500"/></div><div><label className="text-xs text-gray-400 mb-1 block">Validity (days)</label><input type="number" className={inp} value={form.validity_days} onChange={e=>setForm(f=>({...f,validity_days:e.target.value}))}/></div><div><label className="text-xs text-gray-400 mb-1 block">Sort Order</label><input type="number" className={inp} value={form.sort_order} onChange={e=>setForm(f=>({...f,sort_order:e.target.value}))}/></div><div className="flex items-center gap-2 self-end pb-2"><input type="checkbox" checked={form.is_active} onChange={e=>setForm(f=>({...f,is_active:e.target.checked}))} className="w-4 h-4"/><label className="text-sm text-gray-300">Active</label></div><div className="col-span-2 sm:col-span-3"><label className="text-xs text-gray-400 mb-1 block">Description</label><input className={inp} value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Great for small businesses"/></div><div className="col-span-2 sm:col-span-3"><label className="text-xs text-gray-400 mb-1 block">Features (one per line)</label><textarea className={inp} rows={3} value={form.features} onChange={e=>setForm(f=>({...f,features:e.target.value}))} placeholder={"Custom sender ID\nDelivery reports\nAPI access"}/></div></div><div className="flex gap-2"><Button onClick={()=>save.mutate()} disabled={save.isPending||!form.name||!form.sms_count||!form.price_kes} className="bg-green-600 hover:bg-green-700">{save.isPending?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:null}{editing?"Update":"Create"}</Button><Button variant="outline" onClick={reset} className="border-white/10 text-gray-400">Cancel</Button></div></div>)}
+      {isLoading?<div className="text-center py-8 text-gray-500">Loading...</div>:plans.length===0?<div className="text-center py-12 text-gray-500"><MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30"/><p>No SMS plans yet</p></div>:(
+        <div className="overflow-x-auto rounded-xl border border-white/10"><Table><TableHeader><TableRow className="border-white/10 hover:bg-transparent">{["Name","SMS Count","Price KES","Per SMS","Validity","Status","Actions"].map(h=><TableHead key={h} className="text-gray-400 text-xs">{h}</TableHead>)}</TableRow></TableHeader><TableBody>{plans.map((p:any)=>(
+          <TableRow key={p.id} className="border-white/5 hover:bg-white/3">
+            <TableCell className="text-sm text-white font-medium">{p.name}</TableCell>
+            <TableCell className="text-lg font-bold text-green-400">{(p.sms_count||0).toLocaleString()}</TableCell>
+            <TableCell className="text-sm text-yellow-400 font-medium">KES {(p.price_kes||0).toLocaleString()}</TableCell>
+            <TableCell className="text-xs text-white/50">KES {((p.price_kes||0)/(p.sms_count||1)).toFixed(2)}</TableCell>
+            <TableCell className="text-xs text-white/50">{p.validity_days||30} days</TableCell>
+            <TableCell><span className={`text-xs px-2 py-0.5 rounded-full border ${p.is_active?"bg-emerald-500/10 text-emerald-400 border-emerald-500/20":"bg-white/5 text-gray-500 border-white/10"}`}>{p.is_active?"Active":"Hidden"}</span></TableCell>
+            <TableCell><div className="flex gap-1.5"><Button size="sm" variant="outline" onClick={()=>startEdit(p)} className="border-white/10 text-gray-400 h-7 px-2 text-xs"><Edit2 className="w-3 h-3"/></Button><Button size="sm" variant="outline" onClick={()=>{if(confirm("Delete?"))del.mutate(p.id);}} className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-7 px-2 text-xs"><Trash2 className="w-3 h-3"/></Button></div></TableCell>
+          </TableRow>
+        ))}</TableBody></Table></div>
+      )}
+    </div>
+  );
+}
+
+// ─── SMS Orders Admin Tab ─────────────────────────────────────────────────────
+function SmsOrdersAdminTab() {
+  const { toast } = useToast(); const queryClient = useQueryClient();
+  const [search, setSearch] = useState(""); const [fulfillModal, setFulfillModal] = useState<any>(null); const [notes, setNotes] = useState(""); const [fulfilling, setFulfilling] = useState(false);
+  const { data, isLoading, refetch } = useQuery({ queryKey:["/api/admin/sms-orders"], queryFn:()=>fetch("/api/admin/sms-orders",{headers:authHeaders() as any}).then(r=>r.json()), refetchInterval:30000 });
+  const orders:any[]=data?.orders||[];
+  const filtered=orders.filter(o=>!search||[o.reference,o.plan_name,o.customer_email].some((v:string)=>(v||"").toLowerCase().includes(search.toLowerCase())));
+  const revenue=orders.filter((o:any)=>o.status==="fulfilled").reduce((s:number,o:any)=>s+(parseFloat(o.amount_kes)||0),0);
+  const sCls=(s:string)=>({pending:"text-amber-400 border-amber-500/30 bg-amber-500/10",fulfilled:"text-emerald-400 border-emerald-500/30 bg-emerald-500/10",failed:"text-red-400 border-red-500/30 bg-red-500/10"}[s]||"text-gray-400 border-gray-500/30 bg-gray-500/10");
+  const fulfill=async()=>{if(!fulfillModal)return;setFulfilling(true);try{const r=await fetch(`/api/admin/sms-orders/${fulfillModal.id}/fulfill`,{method:"PATCH",headers:{...authHeaders(),"Content-Type":"application/json"} as any,body:JSON.stringify({notes})}).then(r=>r.json());if(r.success){toast({title:"Order fulfilled"});queryClient.invalidateQueries({queryKey:["/api/admin/sms-orders"]});setFulfillModal(null);setNotes("");}else toast({title:"Error",description:r.error,variant:"destructive"});}catch{toast({title:"Error",variant:"destructive"});}setFulfilling(false);};
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold text-white">SMS Orders</h2><p className="text-sm text-gray-400">Manage bulk SMS purchases and fulfillment</p></div><Button size="sm" variant="outline" onClick={()=>refetch()} className="border-white/10 text-gray-400 gap-1.5"><RefreshCw className="w-3.5 h-3.5"/>Refresh</Button></div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{[{label:"Total",value:orders.length,c:"text-white"},{label:"Fulfilled",value:orders.filter((o:any)=>o.status==="fulfilled").length,c:"text-emerald-400"},{label:"Pending",value:orders.filter((o:any)=>o.status==="pending").length,c:"text-amber-400"},{label:"Revenue",value:`KES ${revenue.toLocaleString()}`,c:"text-green-400"}].map(s=>(<div key={s.label} className="bg-white/5 border border-white/10 rounded-xl p-4"><p className="text-xs text-gray-400 mb-1">{s.label}</p><p className={`text-xl font-bold ${s.c}`}>{s.value}</p></div>))}</div>
+      <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500"/><Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." className="pl-8 bg-white/5 border-white/10 text-white text-sm h-9"/></div>
+      {isLoading?<div className="text-center py-8 text-gray-500">Loading...</div>:filtered.length===0?<div className="text-center py-10 text-gray-500"><MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30"/><p>No orders</p></div>:(
+        <div className="overflow-x-auto rounded-xl border border-white/10"><Table><TableHeader><TableRow className="border-white/10 hover:bg-transparent">{["Reference","Plan","SMS","Customer","Sender ID","Amount","Status","Action"].map(h=><TableHead key={h} className="text-gray-400 text-xs">{h}</TableHead>)}</TableRow></TableHeader><TableBody>{filtered.map((o:any)=>(
+          <TableRow key={o.id} className="border-white/5 hover:bg-white/3">
+            <TableCell className="font-mono text-xs text-gray-300">{(o.reference||"").slice(0,12)}…</TableCell>
+            <TableCell className="text-sm text-white font-medium">{o.plan_name}</TableCell>
+            <TableCell className="text-sm text-green-400 font-bold">{(o.sms_count||0).toLocaleString()}</TableCell>
+            <TableCell className="text-xs text-gray-400">{o.customer_email}</TableCell>
+            <TableCell className="text-xs text-white/50">{o.sender_note||"—"}</TableCell>
+            <TableCell className="text-sm text-yellow-400 font-medium">KES {parseFloat(o.amount_kes||0).toLocaleString()}</TableCell>
+            <TableCell><span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${sCls(o.status)}`}>{o.status}</span></TableCell>
+            <TableCell>{o.status!=="fulfilled"&&<Button size="sm" onClick={()=>{setFulfillModal(o);setNotes(o.notes||"");}} className="bg-green-600 hover:bg-green-700 h-7 px-2 text-xs">Fulfill</Button>}</TableCell>
+          </TableRow>
+        ))}</TableBody></Table></div>
+      )}
+      {fulfillModal&&(<div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={e=>{if(e.target===e.currentTarget){setFulfillModal(null);setNotes("");}}}><div className="bg-gray-900 border border-white/10 rounded-2xl w-full max-w-md p-6"><h3 className="font-bold mb-1">Fulfill SMS Order</h3><p className="text-sm text-gray-400 mb-4">{fulfillModal.customer_email} — {fulfillModal.sms_count?.toLocaleString()} SMS</p>{fulfillModal.sender_note&&<p className="text-xs text-white/50 mb-3">Requested sender ID: <span className="text-green-400 font-medium">{fulfillModal.sender_note}</span></p>}<textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={4} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-green-500/40 mb-4" placeholder="Add notes (API credentials, login details, etc.)"/><div className="flex gap-2"><Button onClick={fulfill} disabled={fulfilling} className="flex-1 bg-green-600 hover:bg-green-700">{fulfilling?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:null}Mark Fulfilled</Button><Button variant="outline" onClick={()=>{setFulfillModal(null);setNotes("");}} className="flex-1 border-white/10 text-gray-400">Cancel</Button></div></div></div>)}
     </div>
   );
 }
