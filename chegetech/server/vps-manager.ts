@@ -94,25 +94,33 @@ export class VpsManager {
     return true;
   }
 
-  execCommand(server: VpsServer, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+  execCommand(server: VpsServer, command: string, cmdTimeoutMs = 300000): Promise<{ stdout: string; stderr: string; code: number }> {
     return new Promise((resolve, reject) => {
       const conn = new SshClient();
-      const timeout = setTimeout(() => {
+      // Short timeout just for establishing the TCP+SSH connection
+      const connectTimeout = setTimeout(() => {
         conn.end();
         reject(new Error("Connection timed out"));
-      }, 15000);
+      }, 20000);
 
       conn.on("ready", () => {
+        clearTimeout(connectTimeout); // connection succeeded — stop the connect timer
+        // Now set a generous timeout for the actual command to finish
+        const cmdTimeout = setTimeout(() => {
+          conn.end();
+          reject(new Error("Command timed out after " + Math.round(cmdTimeoutMs / 1000) + "s"));
+        }, cmdTimeoutMs);
+
         conn.exec(command, (err, stream) => {
           if (err) {
-            clearTimeout(timeout);
+            clearTimeout(cmdTimeout);
             conn.end();
             return reject(err);
           }
           let stdout = "";
           let stderr = "";
           stream.on("close", (code: number) => {
-            clearTimeout(timeout);
+            clearTimeout(cmdTimeout);
             conn.end();
             resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 });
           });
@@ -122,7 +130,7 @@ export class VpsManager {
       });
 
       conn.on("error", (err) => {
-        clearTimeout(timeout);
+        clearTimeout(connectTimeout);
         reject(err);
       });
 
