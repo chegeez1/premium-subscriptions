@@ -383,6 +383,22 @@ export async function initializeDatabase() {
         await pgPool.query("ALTER TABLE vps_orders ADD COLUMN IF NOT EXISTS paystack_reference TEXT");
       // Migrate: add reseller_id to transactions
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS smm_orders (
+        id SERIAL PRIMARY KEY,
+        reference TEXT NOT NULL UNIQUE,
+        customer_email TEXT,
+        service_id TEXT,
+        service_name TEXT,
+        platform TEXT,
+        quantity INTEGER,
+        link TEXT,
+        rate NUMERIC(10,6),
+        our_rate NUMERIC(10,6),
+        total_usd NUMERIC(10,4),
+        amount_kes INTEGER,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
 
       const drizzlePgModule = await import("drizzle-orm/node-postgres");
       const drizzlePg = drizzlePgModule.drizzle;
