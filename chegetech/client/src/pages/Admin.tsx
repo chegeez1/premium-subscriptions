@@ -6300,7 +6300,7 @@ function VpsTab() {
     setPingLoading((p) => ({ ...p, [id]: true }));
     try {
       const res = await authFetch(`/api/admin/vps/${id}/ping`);
-      setPingResults((p) => ({ ...p, [id]: res }));
+      setPingResults((p) => ({ ...p, [id]: { success: res.success, ...(res.ping || {}) } }));
     } catch { setPingResults((p) => ({ ...p, [id]: { success: false } })); }
     finally { setPingLoading((p) => ({ ...p, [id]: false })); }
   };
