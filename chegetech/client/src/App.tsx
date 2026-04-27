@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { Switch, Route, useLocation, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
@@ -22,26 +22,27 @@ import Track from "@/pages/Track";
 import BotStore from "@/pages/BotStore";
 import BotCheckout from "@/pages/BotCheckout";
 import BotOrder from "@/pages/BotOrder";
+import VpsPage from "@/pages/VpsPage";
+import Shell from "@/components/Shell";
 import ChatWidget from "@/components/ChatWidget";
 import CookieConsent from "@/components/CookieConsent";
 
 const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy", "/track", "/bots"];
 const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password"];
 const NO_COOKIE_PATHS = ["/admin"];
+const SHELL_PATHS = ["/", "/bots", "/vps", "/dashboard", "/checkout", "/cart-checkout", "/payment"];
 
 function Router() {
   const [location] = useLocation();
   const showChat = !NO_CHAT_PATHS.some((p) => location.startsWith(p));
   const showCookies = !NO_COOKIE_PATHS.some((p) => location.startsWith(p));
 
-  // null = still verifying via server, true/false = resolved
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(() => {
     const token = localStorage.getItem("customer_token");
     const data = localStorage.getItem("customer_data");
     return (token && data) ? true : null;
   });
 
-  // On mount: if localStorage is missing, check the persistent cookie session
   useEffect(() => {
     if (isAuthenticated !== null) return;
     const token = localStorage.getItem("customer_token");
@@ -63,7 +64,6 @@ function Router() {
       .catch(() => setIsAuthenticated(false));
   }, []);
 
-  // Keep watching localStorage so logout propagates across tabs
   useEffect(() => {
     const checkAuth = () => {
       setIsAuthenticated((prev) => {
@@ -81,7 +81,6 @@ function Router() {
 
   const isPublic = PUBLIC_PATHS.some((p) => location.startsWith(p));
 
-  // Still verifying cookie session — don't redirect yet
   if (isAuthenticated === null && !isPublic) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -94,8 +93,12 @@ function Router() {
     return <Redirect to="/auth" />;
   }
 
+  const useShell = isAuthenticated === true && SHELL_PATHS.some((p) =>
+    p === "/" ? location === "/" : location.startsWith(p)
+  );
+
   return (
-    <>
+    <Shell isAuthenticated={useShell}>
       <Switch>
         <Route path="/" component={Store} />
         <Route path="/checkout" component={Checkout} />
@@ -106,6 +109,7 @@ function Router() {
         <Route path="/verify-email" component={VerifyEmail} />
         <Route path="/reset-password" component={ResetPassword} />
         <Route path="/dashboard" component={Dashboard} />
+        <Route path="/vps" component={VpsPage} />
         <Route path="/admin/plan-previews" component={AdminPlanPreviews} />
         <Route path="/admin" component={Admin} />
         <Route path="/track" component={Track} />
@@ -118,7 +122,7 @@ function Router() {
       </Switch>
       {showChat && <ChatWidget />}
       {showCookies && <CookieConsent />}
-    </>
+    </Shell>
   );
 }
 
