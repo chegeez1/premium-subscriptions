@@ -339,9 +339,24 @@ export async function initializeDatabase() {
         await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS renewal_reminded TEXT");
         await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS deployment_log TEXT");
         await pgPool.query("CREATE TABLE IF NOT EXISTS bot_pings (id SERIAL PRIMARY KEY, bot_order_id INTEGER NOT NULL, pm2_status TEXT NOT NULL, checked_at TEXT DEFAULT (NOW()::text))");
+        await pgPool.query(`CREATE TABLE IF NOT EXISTS vps_plans (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          ram TEXT,
+          cpu TEXT,
+          storage TEXT,
+          bandwidth TEXT,
+          price_kes INTEGER NOT NULL DEFAULT 0,
+          popular BOOLEAN DEFAULT false,
+          active BOOLEAN DEFAULT true,
+          description TEXT,
+          sort_order INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (NOW()::text)
+        )`);
         await pgPool.query(`CREATE TABLE IF NOT EXISTS vps_orders (
           id SERIAL PRIMARY KEY,
           reference TEXT UNIQUE NOT NULL,
+          plan_id INTEGER,
           customer_name TEXT NOT NULL,
           customer_email TEXT NOT NULL,
           customer_phone TEXT,
@@ -352,6 +367,7 @@ export async function initializeDatabase() {
           bandwidth TEXT,
           price_kes INTEGER NOT NULL DEFAULT 0,
           status TEXT NOT NULL DEFAULT 'pending',
+          paystack_reference TEXT,
           assigned_ip TEXT,
           server_username TEXT,
           server_password TEXT,
@@ -363,6 +379,8 @@ export async function initializeDatabase() {
           created_at TEXT DEFAULT (NOW()::text),
           updated_at TEXT DEFAULT (NOW()::text)
         )`);
+        await pgPool.query("ALTER TABLE vps_orders ADD COLUMN IF NOT EXISTS plan_id INTEGER");
+        await pgPool.query("ALTER TABLE vps_orders ADD COLUMN IF NOT EXISTS paystack_reference TEXT");
       // Migrate: add reseller_id to transactions
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
 
