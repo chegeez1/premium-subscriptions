@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -270,6 +270,8 @@ export default function Admin() {
     { id: "smm-orders", label: "SMM Orders", icon: TrendingUp, alwaysVisible: true },
     { id: "proxy-plans", label: "Proxy Plans", icon: Shield, alwaysVisible: true },
     { id: "proxy-orders", label: "Proxy Orders", icon: Shield, alwaysVisible: true },
+    { id: "digital-products", label: "Aged Accounts", icon: Users, alwaysVisible: true },
+    { id: "digital-orders", label: "Acct Orders", icon: Users, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
@@ -408,6 +410,8 @@ export default function Admin() {
           {activeTab === "smm-orders" && <SmmOrdersAdminTab />}
           {activeTab === "proxy-plans" && <ProxyPlansAdminTab />}
           {activeTab === "proxy-orders" && <ProxyOrdersAdminTab />}
+          {activeTab === "digital-products" && <DigitalProductsAdminTab />}
+          {activeTab === "digital-orders" && <DigitalOrdersAdminTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
@@ -9704,6 +9708,242 @@ function ProxyOrdersAdminTab() {
                 {updateStatus.isPending?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:null}Save & Mark Active
               </Button>
               <Button variant="outline" onClick={()=>setCredModal(null)} className="border-white/10 text-gray-400">Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Digital Products Admin Tab ───────────────────────────────────────────────
+function DigitalProductsAdminTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
+  const [stockModal, setStockModal] = useState<any>(null);
+  const [stockText, setStockText] = useState("");
+  const [stockLoading, setStockLoading] = useState(false);
+  const [form, setForm] = useState({ name:"", platform:"Instagram", category:"social", price_kes:"", description:"", features:"", is_active:true, sort_order:"0" });
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey:["/api/admin/digital-products"],
+    queryFn:()=>fetch("/api/admin/digital-products",{headers:authHeaders() as any}).then(r=>r.json()),
+  });
+  const products:any[] = data?.products||[];
+
+  const SOCIAL_PLATS = ["Instagram","TikTok","Twitter","Facebook","LinkedIn","Other"];
+  const EMAIL_PLATS  = ["Gmail","Outlook","Yahoo","ProtonMail","Other"];
+
+  const reset = () => { setForm({name:"",platform:"Instagram",category:"social",price_kes:"",description:"",features:"",is_active:true,sort_order:"0"}); setEditing(null); setShowForm(false); };
+  const startEdit = (p:any) => { setForm({name:p.name,platform:p.platform,category:p.category,price_kes:p.price_kes,description:p.description||"",features:p.features||"",is_active:p.is_active,sort_order:p.sort_order||"0"}); setEditing(p); setShowForm(true); };
+
+  const save = useMutation({
+    mutationFn:()=>{
+      const body={...form,price_kes:parseFloat(form.price_kes as any),sort_order:parseInt(form.sort_order as any)||0};
+      const url=editing?`/api/admin/digital-products/${editing.id}`:"/api/admin/digital-products";
+      return fetch(url,{method:editing?"PUT":"POST",headers:{...authHeaders(),"Content-Type":"application/json"} as any,body:JSON.stringify(body)}).then(r=>r.json());
+    },
+    onSuccess:(res)=>{ if(res.success){toast({title:editing?"Product updated":"Product created"});queryClient.invalidateQueries({queryKey:["/api/admin/digital-products"]});reset();}else toast({title:"Error",description:res.error,variant:"destructive"}); },
+  });
+
+  const del = useMutation({
+    mutationFn:(id:number)=>fetch(`/api/admin/digital-products/${id}`,{method:"DELETE",headers:authHeaders() as any}).then(r=>r.json()),
+    onSuccess:()=>{toast({title:"Deleted"});queryClient.invalidateQueries({queryKey:["/api/admin/digital-products"]});},
+  });
+
+  const addStock = async () => {
+    if(!stockModal||!stockText.trim()) return;
+    setStockLoading(true);
+    try {
+      const res = await fetch(`/api/admin/digital-products/${stockModal.id}/stock`,{method:"POST",headers:{...authHeaders(),"Content-Type":"application/json"} as any,body:JSON.stringify({credentials:stockText})}).then(r=>r.json());
+      if(res.success){toast({title:`Added ${res.added} accounts`});queryClient.invalidateQueries({queryKey:["/api/admin/digital-products"]});setStockModal(null);setStockText("");}
+      else toast({title:"Error",description:res.error,variant:"destructive"});
+    }catch{toast({title:"Network error",variant:"destructive"});}
+    setStockLoading(false);
+  };
+
+  const inp = "w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-500/40";
+  const plats = form.category==="social" ? SOCIAL_PLATS : EMAIL_PLATS;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div><h2 className="text-xl font-bold text-white">Aged Accounts Products</h2><p className="text-sm text-gray-400">Manage social media and email account listings with stock</p></div>
+        <Button size="sm" onClick={()=>{reset();setShowForm(true);}} className="bg-violet-600 hover:bg-violet-700 gap-1.5"><Plus className="w-4 h-4"/>Add Product</Button>
+      </div>
+
+      {showForm && (
+        <div className="bg-white/5 border border-violet-500/20 rounded-2xl p-5 space-y-4">
+          <h3 className="font-semibold text-white">{editing?"Edit Product":"New Account Product"}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label className="text-xs text-gray-400 mb-1 block">Category *</label>
+              <select className={inp} value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value,platform:e.target.value==="social"?"Instagram":"Gmail"}))}>
+                <option value="social">Social Media</option><option value="email">Email Accounts</option>
+              </select>
+            </div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Platform *</label>
+              <select className={inp} value={form.platform} onChange={e=>setForm(f=>({...f,platform:e.target.value}))}>
+                {plats.map(p=><option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Product Name *</label><input className={inp} value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Aged Instagram (2yr+ PVA)"/></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Price (KES) *</label><input type="number" className={inp} value={form.price_kes} onChange={e=>setForm(f=>({...f,price_kes:e.target.value}))} placeholder="e.g. 800"/></div>
+            <div className="sm:col-span-2"><label className="text-xs text-gray-400 mb-1 block">Description</label><input className={inp} value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Brief description shown to customers"/></div>
+            <div className="sm:col-span-2"><label className="text-xs text-gray-400 mb-1 block">Features (one per line)</label>
+              <textarea className={inp} rows={4} value={form.features} onChange={e=>setForm(f=>({...f,features:e.target.value}))} placeholder={"Phone Verified (PVA)\n2+ Years Old\n500+ Followers\nFull account access\nEmail + password included"}/>
+            </div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Sort Order</label><input type="number" className={inp} value={form.sort_order} onChange={e=>setForm(f=>({...f,sort_order:e.target.value}))}/></div>
+            <div className="flex items-center gap-2 self-end pb-2">
+              <input type="checkbox" checked={form.is_active} onChange={e=>setForm(f=>({...f,is_active:e.target.checked}))} className="w-4 h-4 rounded"/>
+              <label className="text-sm text-gray-300">Active (visible to customers)</label>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={()=>save.mutate()} disabled={save.isPending||!form.name||!form.price_kes} className="bg-violet-600 hover:bg-violet-700">
+              {save.isPending?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:null}{editing?"Update":"Create"} Product
+            </Button>
+            <Button variant="outline" onClick={reset} className="border-white/10 text-gray-400">Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {isLoading?<div className="text-center py-8 text-gray-500">Loading...</div>:products.length===0?(
+        <div className="text-center py-12 text-gray-500"><Users className="w-8 h-8 mx-auto mb-2 opacity-30"/><p>No products yet. Add your first account product.</p></div>
+      ):(
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <Table>
+            <TableHeader><TableRow className="border-white/10 hover:bg-transparent">{["Platform","Name","Category","Price (KES)","Stock","Status","Actions"].map(h=><TableHead key={h} className="text-gray-400 text-xs">{h}</TableHead>)}</TableRow></TableHeader>
+            <TableBody>
+              {products.map((p:any)=>(
+                <TableRow key={p.id} className="border-white/5 hover:bg-white/3">
+                  <TableCell className="text-lg">{{"Instagram":"📸","TikTok":"🎵","Twitter":"🐦","Facebook":"📘","Gmail":"📧","Outlook":"📨","Yahoo":"📮"}[p.platform]||"📱"} <span className="text-xs text-gray-400 ml-1">{p.platform}</span></TableCell>
+                  <TableCell className="text-sm text-white font-medium max-w-40"><p className="truncate">{p.name}</p></TableCell>
+                  <TableCell><span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${p.category==="social"?"bg-violet-500/10 text-violet-400 border-violet-500/20":"bg-blue-500/10 text-blue-400 border-blue-500/20"}`}>{p.category}</span></TableCell>
+                  <TableCell className="text-sm text-emerald-400 font-medium">KES {(p.price_kes||0).toLocaleString()}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm font-bold ${p.stock_count>0?"text-emerald-400":"text-red-400"}`}>{p.stock_count}</span>
+                      <span className="text-xs text-gray-500">/ {p.total_stock} total</span>
+                    </div>
+                  </TableCell>
+                  <TableCell><span className={`text-xs px-2 py-0.5 rounded-full border ${p.is_active?"bg-emerald-500/10 text-emerald-400 border-emerald-500/20":"bg-white/5 text-gray-500 border-white/10"}`}>{p.is_active?"Active":"Hidden"}</span></TableCell>
+                  <TableCell>
+                    <div className="flex gap-1.5">
+                      <Button size="sm" variant="outline" onClick={()=>{setStockModal(p);setStockText("");}} className="border-violet-500/20 text-violet-400 hover:bg-violet-500/10 h-7 px-2 text-xs"><Plus className="w-3 h-3 mr-1"/>Stock</Button>
+                      <Button size="sm" variant="outline" onClick={()=>startEdit(p)} className="border-white/10 text-gray-400 h-7 px-2 text-xs"><Edit2 className="w-3 h-3"/></Button>
+                      <Button size="sm" variant="outline" onClick={()=>{if(confirm("Delete?"))del.mutate(p.id);}} className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-7 px-2 text-xs"><Trash2 className="w-3 h-3"/></Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {/* Add Stock Modal */}
+      {stockModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={e=>{if(e.target===e.currentTarget){setStockModal(null);setStockText("");}}}>
+          <div className="bg-gray-900 border border-white/10 rounded-2xl w-full max-w-lg p-6">
+            <h3 className="font-bold mb-1">Add Account Stock</h3>
+            <p className="text-sm text-gray-400 mb-1">{stockModal.name} — Current stock: <span className="text-emerald-400 font-bold">{stockModal.stock_count}</span></p>
+            <p className="text-xs text-gray-500 mb-3">Paste accounts below — one per line. Format: <code className="text-violet-400">username:password:email:recovery</code></p>
+            <textarea value={stockText} onChange={e=>setStockText(e.target.value)} rows={10}
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-green-400 font-mono focus:outline-none focus:border-violet-500/40 mb-4"
+              placeholder={"user1:pass1:backup@gmail.com\nuser2:pass2:backup@gmail.com\nuser3:pass3:backup@gmail.com"}/>
+            <p className="text-xs text-gray-500 mb-3">{stockText.split('\n').filter(l=>l.trim()).length} accounts ready to import</p>
+            <div className="flex gap-2">
+              <Button onClick={addStock} disabled={stockLoading||!stockText.trim()} className="bg-violet-600 hover:bg-violet-700 flex-1">
+                {stockLoading?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:<Plus className="w-4 h-4 mr-1"/>}Import Accounts
+              </Button>
+              <Button variant="outline" onClick={()=>{setStockModal(null);setStockText("");}} className="border-white/10 text-gray-400">Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Digital Orders Admin Tab ─────────────────────────────────────────────────
+function DigitalOrdersAdminTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey:["/api/admin/digital-orders"],
+    queryFn:()=>fetch("/api/admin/digital-orders",{headers:authHeaders() as any}).then(r=>r.json()),
+    refetchInterval:30000,
+  });
+  const orders:any[] = data?.orders||[];
+
+  const filtered = orders.filter(o=>{
+    const ms=statusFilter==="all"||o.status===statusFilter;
+    const mq=!search||[o.reference,o.product_name,o.platform,o.customer_email].some((v:string)=>(v||"").toLowerCase().includes(search.toLowerCase()));
+    return ms&&mq;
+  });
+  const totalKes=orders.filter((o:any)=>o.status==="delivered").reduce((s:number,o:any)=>s+(parseFloat(o.amount_kes)||0),0);
+  const sCls=(s:string)=>({pending:"text-amber-400 border-amber-500/30 bg-amber-500/10",delivered:"text-emerald-400 border-emerald-500/30 bg-emerald-500/10",failed:"text-red-400 border-red-500/30 bg-red-500/10"}[s]||"text-gray-400 border-gray-500/30 bg-gray-500/10");
+
+  const [credView, setCredView] = useState<any>(null);
+  const [copied, setCopied] = useState(false);
+  const copy=(t:string)=>{navigator.clipboard.writeText(t);setCopied(true);setTimeout(()=>setCopied(false),2000);};
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div><h2 className="text-xl font-bold text-white">Digital Account Orders</h2><p className="text-sm text-gray-400">All social media and email account purchases</p></div>
+        <Button size="sm" variant="outline" onClick={()=>refetch()} className="border-white/10 text-gray-400 gap-1.5"><RefreshCw className="w-3.5 h-3.5"/>Refresh</Button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[{label:"Total Orders",value:orders.length,c:"text-white"},{label:"Delivered",value:orders.filter((o:any)=>o.status==="delivered").length,c:"text-emerald-400"},{label:"Pending",value:orders.filter((o:any)=>o.status==="pending").length,c:"text-amber-400"},{label:"Revenue",value:`KES ${totalKes.toLocaleString()}`,c:"text-emerald-400"}].map(s=>(
+          <div key={s.label} className="bg-white/5 border border-white/10 rounded-xl p-4"><p className="text-xs text-gray-400 mb-1">{s.label}</p><p className={`text-xl font-bold ${s.c}`}>{s.value}</p></div>
+        ))}
+      </div>
+      <div className="flex gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-40"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500"/><Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." className="pl-8 bg-white/5 border-white/10 text-white text-sm h-9"/></div>
+        {["all","pending","delivered","failed"].map(s=><button key={s} onClick={()=>setStatusFilter(s)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors capitalize ${statusFilter===s?"bg-violet-500/20 border-violet-500/30 text-violet-300":"bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"}`}>{s}</button>)}
+      </div>
+      {isLoading?<div className="text-center py-8 text-gray-500">Loading...</div>:filtered.length===0?(
+        <div className="text-center py-12 text-gray-500"><Users className="w-8 h-8 mx-auto mb-2 opacity-30"/><p>No orders yet</p></div>
+      ):(
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <Table>
+            <TableHeader><TableRow className="border-white/10 hover:bg-transparent">{["Reference","Platform","Product","Customer","Amount","Status","Date","Creds"].map(h=><TableHead key={h} className="text-gray-400 text-xs">{h}</TableHead>)}</TableRow></TableHeader>
+            <TableBody>
+              {filtered.map((o:any)=>(
+                <TableRow key={o.id} className="border-white/5 hover:bg-white/3">
+                  <TableCell className="font-mono text-xs text-gray-300">{(o.reference||"").slice(0,14)}…</TableCell>
+                  <TableCell className="text-sm">{"📸📧🎵🐦📘".includes(o.platform)?"":<span className="text-base">{{Instagram:"📸",TikTok:"🎵",Twitter:"🐦",Facebook:"📘",Gmail:"📧",Outlook:"📨",Yahoo:"📮"}[o.platform]||"📱"}</span>}<span className="text-xs text-gray-400 ml-1">{o.platform}</span></TableCell>
+                  <TableCell className="text-xs text-white max-w-32"><p className="truncate">{o.product_name}</p></TableCell>
+                  <TableCell className="text-xs text-gray-400">{o.customer_email}</TableCell>
+                  <TableCell className="text-sm text-emerald-400 font-medium">KES {parseFloat(o.amount_kes||0).toLocaleString()}</TableCell>
+                  <TableCell><span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${sCls(o.status)}`}>{o.status}</span></TableCell>
+                  <TableCell className="text-xs text-gray-500">{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</TableCell>
+                  <TableCell>
+                    {o.credentials?<Button size="sm" variant="outline" onClick={()=>setCredView(o)} className="border-violet-500/20 text-violet-400 hover:bg-violet-500/10 h-7 px-2 text-xs"><Eye className="w-3 h-3"/></Button>:<span className="text-xs text-gray-600">—</span>}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      {credView && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={e=>{if(e.target===e.currentTarget)setCredView(null);}}>
+          <div className="bg-gray-900 border border-white/10 rounded-2xl w-full max-w-md p-6">
+            <h3 className="font-bold mb-1">Delivered Credentials</h3>
+            <p className="text-sm text-gray-400 mb-4">{credView.customer_email} — {credView.product_name}</p>
+            <pre className="bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-green-400 font-mono whitespace-pre-wrap break-all mb-4">{credView.credentials}</pre>
+            <div className="flex gap-2">
+              <Button onClick={()=>copy(credView.credentials)} className="flex-1 bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 text-sm">
+                {copied?<Check className="w-4 h-4 text-green-400 mr-1"/>:<Copy className="w-4 h-4 mr-1"/>}{copied?"Copied":"Copy"}
+              </Button>
+              <Button onClick={()=>setCredView(null)} className="flex-1 bg-violet-600 hover:bg-violet-700 text-sm">Close</Button>
             </div>
           </div>
         </div>
