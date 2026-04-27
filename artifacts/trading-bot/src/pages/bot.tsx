@@ -225,8 +225,6 @@ export default function BotPage() {
   const ticksRef = useRef<Tick[]>([]);
   const waitingRef = useRef(false);
   const tradeIdRef = useRef(1);
-  const consecutiveLossRef = useRef(0);   // count of consecutive losses
-  const cooldownTicksRef = useRef(0);     // ticks remaining in post-trade cooldown
 
   runningRef.current = running;
   sessionPnlRef.current = sessionPnl;
@@ -282,12 +280,6 @@ export default function BotPage() {
     });
 
     if (!runningRef.current || waitingRef.current) return;
-
-    // Post-trade cooldown: count down, skip until it hits 0
-    if (cooldownTicksRef.current > 0) {
-      cooldownTicksRef.current -= 1;
-      return;
-    }
 
     // Risk checks
     const spnl = sessionPnlRef.current;
@@ -391,24 +383,11 @@ export default function BotPage() {
             dailyLossRef.current = next;
             return next;
           });
-          consecutiveLossRef.current += 1;
-        } else {
-          consecutiveLossRef.current = 0;
         }
         setLastPnl(profit);
         lastPnlRef.current = profit;
 
-        // After 3 consecutive losses, enforce a 30-tick cooldown before next trade
-        if (consecutiveLossRef.current >= 3) {
-          cooldownTicksRef.current = 30;
-          addLog(`⏸ 3 consecutive losses — cooling down 30 ticks`, "warn");
-          consecutiveLossRef.current = 0;
-        } else {
-          // Normal cooldown: wait at least 10 ticks after every settled trade
-          cooldownTicksRef.current = 10;
-        }
-
-        // Release the lock — next trade can fire after cooldown
+        // Release the lock — next trade can fire on next signal
         setWaitingContract(false);
         waitingRef.current = false;
 
