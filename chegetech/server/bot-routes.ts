@@ -695,6 +695,25 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
     });
 
+    // Live logs: tail pm2 logs for a bot
+    app.get("/api/admin/bot-orders/:orderId/live-logs", adminAuthMiddleware, async (req, res) => {
+      try {
+        const info = await getOrderVps(parseInt(req.params.orderId));
+        if (!info) return res.status(404).json({ success: false, error: "No VPS process linked" });
+        const lines = Math.min(parseInt((req.query.lines as string) || "150"), 500);
+        const nvmSource = `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"`;
+        const { stdout } = await vpsManager.execCommand(
+          info.server,
+          `${nvmSource}; pm2 logs ${info.pm2Name} --lines ${lines} --nostream --raw 2>&1 | tail -${lines}`,
+          20000
+        );
+        const logLines = stdout.split("\n").filter(Boolean);
+        res.json({ success: true, logs: logLines, pm2Name: info.pm2Name });
+      } catch (e: any) {
+        res.json({ success: false, error: e.message, logs: [] });
+      }
+    });
+
     // Stop: pm2 stop
     app.post("/api/admin/bot-orders/:orderId/vps/stop", adminAuthMiddleware, async (req, res) => {
       try {
