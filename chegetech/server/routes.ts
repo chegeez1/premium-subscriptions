@@ -3840,6 +3840,220 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Agent: backfill tokens for existing VPS servers ───────────────────────
+  vpsManager.ensureAgentTokens();
+
+  // ─── Public: VPS deploy-agent endpoints (token-authenticated) ───────────────
+  // GET /api/agent/pending?token=<agentToken>  — returns orders for this agent to deploy
+  app.get("/api/agent/pending", async (req: any, res) => {
+    try {
+      const { token } = req.query;
+      if (!token) return res.status(401).json({ error: "Missing token" });
+      const server = vpsManager.getByAgentToken(String(token));
+      if (!server) return res.status(401).json({ error: "Invalid token" });
+
+      const dbT = dbType === "pg" ? "pg" : "sqlite";
+      const pending = await runQuery(
+        dbT === "pg"
+          ? `SELECT bo.*, b.repo_url, b.name as bot_name FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.status IN ('paid','deploy_failed') AND (bo.pm2_name IS NULL OR bo.pm2_name = '') ORDER BY bo.created_at LIMIT 5`
+          : `SELECT bo.*, b.repo_url, b.name as bot_name FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.status IN ('paid','deploy_failed') AND (bo.pm2_name IS NULL OR bo.pm2_name = '') ORDER BY bo.created_at LIMIT 5`,
+        []
+      );
+      res.json({ success: true, vpsId: server.id, orders: pending });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /api/agent/deployed  — agent reports successful deployment
+  app.post("/api/agent/deployed", async (req: any, res) => {
+    try {
+      const { token, orderId, pm2Name, error: deployError } = req.body;
+      if (!token) return res.status(401).json({ error: "Missing token" });
+      const server = vpsManager.getByAgentToken(String(token));
+      if (!server) return res.status(401).json({ error: "Invalid token" });
+
+      const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      if (deployError) {
+        await runMutation(
+          `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE id = ?`,
+          ["Agent deploy failed: " + String(deployError).slice(0, 200), orderId]
+        );
+        return res.json({ success: true, status: "failed" });
+      }
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await runMutation(
+        `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, expires_at = ?, updated_at = ${updNow} WHERE id = ?`,
+        [pm2Name, server.id, expiresAt, orderId]
+      );
+      console.log(`[Agent] ✓ Order ${orderId} → ${pm2Name} on ${server.label}`);
+      res.json({ success: true, status: "deployed" });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // GET /api/agent/script/:vpsId  — generate the bash install script for this VPS agent
+  app.get("/api/agent/script/:vpsId", adminAuthMiddleware, superAdminOnly, (req: any, res) => {
+    const server = vpsManager.getById(req.params.vpsId);
+    if (!server) return res.status(404).json({ error: "VPS not found" });
+
+    const appUrl = (process.env.APP_URL || `https://${req.get("host")}`).replace(/\/$/, "");
+    const token = server.agentToken!;
+    const osType = server.osType || "ubuntu";
+    const isRhel = ["almalinux","centos","rhel","fedora","rocky","oracle"].includes(osType);
+
+    const agentJs = `#!/usr/bin/env node
+// Chege Tech — VPS Deploy Agent
+// Auto-generated for: ${server.label} (${server.host})
+const https = require('https');
+const http  = require('http');
+const fs    = require('fs');
+const { execSync } = require('child_process');
+
+const API   = '${appUrl}';
+const TOKEN = '${token}';
+const POLL_MS = 60000; // poll every 60 seconds
+
+function apiRequest(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(API + path);
+    const lib = url.protocol === 'https:' ? https : http;
+    const data = body ? JSON.stringify(body) : null;
+    const opts = {
+      hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search, method,
+      headers: { 'Content-Type': 'application/json', ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}) },
+    };
+    const req = lib.request(opts, r => {
+      let d = ''; r.on('data', c => d += c);
+      r.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({}); } });
+    });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+function run(cmd) {
+  try { return execSync(cmd, { stdio: 'pipe', timeout: 300000 }).toString().trim(); }
+  catch (e) { return e.stdout?.toString().trim() || e.message; }
+}
+
+async function deployOrder(order) {
+  const pm2Name = 'bot-' + order.reference;
+  const botDir  = '/opt/bots/' + pm2Name;
+  const repoUrl = (order.repo_url || '').replace(/\\.git$/, '');
+  if (!repoUrl) throw new Error('No repo_url');
+
+  const nvmSrc = 'export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"';
+
+  // Ensure Node
+  const nodeVer = run('node --version 2>/dev/null || echo NOT_FOUND');
+  if (nodeVer.includes('NOT_FOUND') || !nodeVer.startsWith('v')) {
+    console.log('[Agent] Installing Node.js via nvm...');
+    run('curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash');
+    run(nvmSrc + ' && nvm install 20 && nvm alias default 20 && nvm use default && ln -sf $(which node) /usr/local/bin/node; ln -sf $(which npm) /usr/local/bin/npm; true');
+  }
+
+  // Ensure PM2
+  const pm2Ver = run('pm2 --version 2>/dev/null || echo NOT_FOUND');
+  if (pm2Ver.includes('NOT_FOUND')) {
+    console.log('[Agent] Installing PM2...');
+    run(nvmSrc + '; npm install -g pm2 && ln -sf $(which pm2) /usr/local/bin/pm2 2>/dev/null; true');
+  }
+
+  // Clone or pull
+  run('mkdir -p /opt/bots');
+  const pullOut = run('git -C ' + botDir + ' pull --ff-only 2>&1 || git clone ' + repoUrl + ' ' + botDir + ' 2>&1');
+  console.log('[Agent] Repo:', pullOut.slice(0, 80));
+
+  // Write .env
+  const envLines = [
+    'NODE_ENV=production',
+    order.session_id ? 'SESSION_ID=' + order.session_id : '',
+    order.db_url     ? 'DB_URL='     + order.db_url     : '',
+    order.mode       ? 'MODE='       + order.mode       : '',
+    order.timezone   ? 'TIMEZONE='   + order.timezone   : '',
+  ].filter(Boolean).join('\\n');
+  fs.writeFileSync(botDir + '/.env', envLines + '\\n');
+
+  // npm install
+  run(nvmSrc + '; cd ' + botDir + ' && npm install --production 2>&1');
+
+  // Start PM2
+  run(nvmSrc + '; pm2 delete ' + pm2Name + ' 2>/dev/null; true');
+  const startOut = run(nvmSrc + '; cd ' + botDir + ' && (pm2 start . --name ' + pm2Name + ' 2>&1 || pm2 start index.js --name ' + pm2Name + ' 2>&1)');
+  run(nvmSrc + '; pm2 save');
+  console.log('[Agent] PM2:', startOut.slice(0, 80));
+  return pm2Name;
+}
+
+async function poll() {
+  try {
+    const data = await apiRequest('GET', '/api/agent/pending?token=' + TOKEN, null);
+    if (!data.orders?.length) { console.log('[Agent] No pending orders at', new Date().toLocaleTimeString()); return; }
+    console.log('[Agent] Found', data.orders.length, 'pending order(s)');
+    for (const order of data.orders) {
+      console.log('[Agent] Deploying', order.reference, '...');
+      try {
+        const pm2Name = await deployOrder(order);
+        await apiRequest('POST', '/api/agent/deployed', { token: TOKEN, orderId: order.id, pm2Name });
+        console.log('[Agent] ✓', order.reference, '->', pm2Name);
+      } catch (e) {
+        console.error('[Agent] ✗', order.reference, e.message);
+        await apiRequest('POST', '/api/agent/deployed', { token: TOKEN, orderId: order.id, error: e.message });
+      }
+    }
+  } catch (e) { console.error('[Agent] Poll error:', e.message); }
+}
+
+console.log('[Agent] Started — polling ${appUrl} every', POLL_MS / 1000, 's');
+poll();
+setInterval(poll, POLL_MS);
+`;
+
+    const installGit = isRhel
+      ? "dnf install -y git curl 2>/dev/null || yum install -y git curl 2>/dev/null"
+      : "apt-get install -y git curl 2>/dev/null";
+
+    const bashScript = `#!/bin/bash
+set -e
+echo "==> Installing Chege Tech Deploy Agent for: ${server.label}"
+mkdir -p /opt/deploy-agent
+cat > /opt/deploy-agent/agent.js << 'AGENT_EOF'
+${agentJs}
+AGENT_EOF
+
+# Ensure git + curl
+which git &>/dev/null || (${installGit})
+
+# Ensure Node / PM2
+export NVM_DIR="$HOME/.nvm"
+if ! command -v node &>/dev/null; then
+  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+  nvm install 20 && nvm alias default 20 && nvm use default
+  ln -sf $(which node) /usr/local/bin/node
+  ln -sf $(which npm)  /usr/local/bin/npm
+fi
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+if ! command -v pm2 &>/dev/null; then
+  npm install -g pm2
+  ln -sf $(which pm2) /usr/local/bin/pm2 2>/dev/null || true
+fi
+
+pm2 delete chege-deploy-agent 2>/dev/null || true
+pm2 start /opt/deploy-agent/agent.js --name chege-deploy-agent --interpreter node
+pm2 save
+pm2 startup 2>/dev/null || true
+
+echo ""
+echo "✅  Deploy agent installed and running!"
+echo "    It polls every 60 s for new paid orders and deploys them automatically."
+echo "    Check logs: pm2 logs chege-deploy-agent"
+`;
+
+    res.setHeader("Content-Type", "text/plain");
+    res.send(bashScript);
+  });
+
   // ─── Admin: Deploy bot order to VPS via SSH ──────────────────────────────
   app.post("/api/admin/bot-orders/:id/deploy-vps", adminAuthMiddleware, async (req, res) => {
     try {
