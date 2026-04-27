@@ -110,16 +110,20 @@ function getSignal(
 
   if (strategy === "trend") {
     // Multi-timeframe: short EMA vs long EMA crossover + RSI filter + weighted momentum confirmation
-    if (ticks.length < 30) return null;
+    if (ticks.length < 35) return null;
     const shortEma = ema(ticks, 5);
-    const longEma  = ema(ticks, 20);
+    const longEma  = ema(ticks, 25);
     const rsi      = calcRSI(ticks, 14);
-    const momentum = weightedMomentum(ticks, 10);
+    const momentum = weightedMomentum(ticks, 12);
 
-    // Bullish: short EMA above long EMA, RSI not overbought (< 70), positive weighted momentum
-    if (shortEma > longEma && rsi > 40 && rsi < 70 && momentum > 0) return "CALL";
-    // Bearish: short EMA below long EMA, RSI not oversold (> 30), negative weighted momentum
-    if (shortEma < longEma && rsi > 30 && rsi < 60 && momentum < 0) return "PUT";
+    // Require EMA spread > tiny threshold to avoid flat-market trades
+    const emaSpread = Math.abs(shortEma - longEma) / longEma;
+    if (emaSpread < 0.00005) return null; // price too flat, skip
+
+    // Bullish: short above long, RSI between 45-68 (not overextended), momentum positive
+    if (shortEma > longEma && rsi >= 45 && rsi <= 68 && momentum > 5) return "CALL";
+    // Bearish: short below long, RSI between 32-55, momentum clearly negative
+    if (shortEma < longEma && rsi >= 32 && rsi <= 55 && momentum < -5) return "PUT";
     return null;
   }
 
@@ -128,31 +132,31 @@ function getSignal(
     const momentum = weightedMomentum(ticks, 8);
 
     if (lastPnl !== null && lastPnl < 0) {
-      // After a loss: mean reversion — bet against the recent extreme
-      if (rsi > 65 && momentum > 0) return "PUT";   // overbought → fade up-move
-      if (rsi < 35 && momentum < 0) return "CALL";  // oversold  → fade down-move
-      return null; // no clear reversal setup, skip
+      // After a loss: mean reversion — only enter when RSI is clearly at an extreme
+      if (rsi > 68 && momentum > 0) return "PUT";   // strongly overbought → fade up-move
+      if (rsi < 32 && momentum < 0) return "CALL";  // strongly oversold  → fade down-move
+      return null; // no clear reversal setup, wait
     }
-    // Normal / after win: short-term momentum
-    if (rsi > 55 && momentum > 0) return "CALL";
-    if (rsi < 45 && momentum < 0) return "PUT";
+    // Normal / after win: require clearer momentum signal
+    if (rsi > 60 && momentum > 3) return "CALL";
+    if (rsi < 40 && momentum < -3) return "PUT";
     return null;
   }
 
   if (strategy === "anti_martingale") {
-    // RSI + momentum: only enter when trend is confirmed and not overextended
+    // RSI + momentum: only enter when trend is clearly confirmed
     const rsi      = calcRSI(ticks, 14);
     const momentum = weightedMomentum(ticks, 12);
 
     if (lastPnl !== null && lastPnl > 0) {
-      // On a winning streak: stay in the direction of the trend if it's still strong
-      if (rsi > 52 && momentum > 0) return "CALL";
-      if (rsi < 48 && momentum < 0) return "PUT";
+      // On a winning streak: stay in trend only if RSI still healthy
+      if (rsi > 54 && rsi < 72 && momentum > 3) return "CALL";
+      if (rsi < 46 && rsi > 28 && momentum < -3) return "PUT";
       return null;
     }
-    // First trade: enter only on strong confirmed signal
-    if (rsi > 58 && momentum > 0) return "CALL";
-    if (rsi < 42 && momentum < 0) return "PUT";
+    // First trade: require strong signal
+    if (rsi > 60 && momentum > 5) return "CALL";
+    if (rsi < 40 && momentum < -5) return "PUT";
     return null;
   }
 
@@ -221,6 +225,8 @@ export default function BotPage() {
   const ticksRef = useRef<Tick[]>([]);
   const waitingRef = useRef(false);
   const tradeIdRef = useRef(1);
+  const consecutiveLossRef = useRef(0);   // count of consecutive losses
+  const cooldownTicksRef = useRef(0);     // ticks remaining in post-trade cooldown
 
   runningRef.current = running;
   sessionPnlRef.current = sessionPnl;
@@ -277,6 +283,12 @@ export default function BotPage() {
 
     if (!runningRef.current || waitingRef.current) return;
 
+    // Post-trade cooldown: count down, skip until it hits 0
+    if (cooldownTicksRef.current > 0) {
+      cooldownTicksRef.current -= 1;
+      return;
+    }
+
     // Risk checks
     const spnl = sessionPnlRef.current;
     const dl = dailyLossRef.current;
@@ -331,7 +343,8 @@ export default function BotPage() {
       }
 
       case "buy": {
-        setWaitingContract(false);
+        // Keep waitingContract=true — do NOT release the lock here.
+        // The lock is only released when the contract settles (proposal_open_contract with is_sold).
         const b = data.buy;
         const contractId = b.contract_id;
         setOpenContracts(prev => [...prev, contractId]);
@@ -378,9 +391,27 @@ export default function BotPage() {
             dailyLossRef.current = next;
             return next;
           });
+          consecutiveLossRef.current += 1;
+        } else {
+          consecutiveLossRef.current = 0;
         }
         setLastPnl(profit);
         lastPnlRef.current = profit;
+
+        // After 3 consecutive losses, enforce a 30-tick cooldown before next trade
+        if (consecutiveLossRef.current >= 3) {
+          cooldownTicksRef.current = 30;
+          addLog(`⏸ 3 consecutive losses — cooling down 30 ticks`, "warn");
+          consecutiveLossRef.current = 0;
+        } else {
+          // Normal cooldown: wait at least 10 ticks after every settled trade
+          cooldownTicksRef.current = 10;
+        }
+
+        // Release the lock — next trade can fire after cooldown
+        setWaitingContract(false);
+        waitingRef.current = false;
+
         addLog(
           won
             ? `✅ WON  #${contractId} | +$${profit.toFixed(2)}`
@@ -431,6 +462,9 @@ export default function BotPage() {
     setLastPnl(null);
     setLastStake(baseStake);
     setWaitingContract(false);
+    consecutiveLossRef.current = 0;
+    cooldownTicksRef.current = 0;
+    waitingRef.current = false;
     send({ ticks: symbol, subscribe: 1 });
     addLog(`🚀 Bot started | Strategy: ${strategy} | Symbol: ${SYMBOLS[symbol]} | Base stake: $${baseStake}`);
   }, [connStatus, symbol, strategy, baseStake, send, addLog]);
