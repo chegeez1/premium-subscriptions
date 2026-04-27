@@ -1571,6 +1571,62 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
+
+  // ── Free Temp Numbers (sms-online.co scraper) ──────────────────────────────
+  function fetchSmsHtml(path: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const https = require('https') as typeof import('https');
+      const req = https.request({
+        hostname: 'sms-online.co',
+        path,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'identity',
+        },
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk: Buffer) => data += chunk.toString());
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  app.get('/api/free-numbers', async (_req, res) => {
+    try {
+      const html = await fetchSmsHtml('/receive-free-sms');
+      const numbers: { number: string; country: string; digits: string }[] = [];
+      const rx = /number-boxes-item-number">([^<]+)</h4>s*<h5[^>]*>([^<]+)</h5>[sS]*?href="[^"]+/receive-free-sms/(d+)"/g;
+      let m: RegExpExecArray | null;
+      while ((m = rx.exec(html)) !== null) {
+        numbers.push({ number: m[1].trim(), country: m[2].trim(), digits: m[3].trim() });
+      }
+      res.json({ success: true, numbers });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.get('/api/free-numbers/:digits/sms', async (req, res) => {
+    try {
+      const { digits } = req.params;
+      if (!/^d{5,20}$/.test(digits)) return res.status(400).json({ success: false, error: 'Invalid digits' });
+      const html = await fetchSmsHtml(`/receive-free-sms/${digits}`);
+      const messages: { sender: string; time: string; body: string }[] = [];
+      const rx = /list-item-title">s*([sS]*?)s*</h3>[sS]*?list-item-meta[^>]*>[sS]*?<span>([^<]+)</span>[sS]*?list-item-content break-word">([sS]*?)</div>/g;
+      let m: RegExpExecArray | null;
+      while ((m = rx.exec(html)) !== null) {
+        const sender = m[1].replace(/<[^>]+>/g, '').trim();
+        const time = m[2].trim();
+        const body = m[3].replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&#039;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+        if (sender && body) messages.push({ sender, time, body });
+      }
+      res.json({ success: true, messages });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
   // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
