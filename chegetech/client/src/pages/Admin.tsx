@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -268,6 +268,8 @@ export default function Admin() {
     { id: "bot-store", label: "Bot Store", icon: Bot, alwaysVisible: true },
     { id: "bot-orders", label: "Bot Orders", icon: Package, alwaysVisible: true },
     { id: "smm-orders", label: "SMM Orders", icon: TrendingUp, alwaysVisible: true },
+    { id: "proxy-plans", label: "Proxy Plans", icon: Shield, alwaysVisible: true },
+    { id: "proxy-orders", label: "Proxy Orders", icon: Shield, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
@@ -404,6 +406,8 @@ export default function Admin() {
           {activeTab === "bot-store" && <BotStoreAdminTab />}
           {activeTab === "bot-orders" && <BotOrdersAdminTab />}
           {activeTab === "smm-orders" && <SmmOrdersAdminTab />}
+          {activeTab === "proxy-plans" && <ProxyPlansAdminTab />}
+          {activeTab === "proxy-orders" && <ProxyOrdersAdminTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
@@ -9447,6 +9451,261 @@ function SmmOrdersAdminTab() {
               ))}
             </TableBody>
           </Table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Proxy Plans Admin Tab ────────────────────────────────────────────────────
+function ProxyPlansAdminTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
+  const [form, setForm] = useState({ name:"", description:"", type:"residential", gb_amount:"", country:"", price_kes:"", bandwidth:"Unlimited", speed:"100Mbps", features:"", is_active:true, sort_order:"0" });
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["/api/admin/proxy-plans"],
+    queryFn: () => fetch("/api/admin/proxy-plans", { headers: authHeaders() as any }).then(r => r.json()),
+  });
+  const plans: any[] = data?.plans || [];
+
+  const reset = () => { setForm({ name:"", description:"", type:"residential", gb_amount:"", country:"", price_kes:"", bandwidth:"Unlimited", speed:"100Mbps", features:"", is_active:true, sort_order:"0" }); setEditing(null); setShowForm(false); };
+
+  const startEdit = (p: any) => {
+    setForm({ name:p.name, description:p.description||"", type:p.type, gb_amount:p.gb_amount||"", country:p.country||"", price_kes:p.price_kes, bandwidth:p.bandwidth||"Unlimited", speed:p.speed||"100Mbps", features:p.features||"", is_active:p.is_active, sort_order:p.sort_order||"0" });
+    setEditing(p); setShowForm(true);
+  };
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body = { ...form, price_kes: parseFloat(form.price_kes as any), gb_amount: form.gb_amount ? parseFloat(form.gb_amount as any) : null, sort_order: parseInt(form.sort_order as any)||0 };
+      const url = editing ? `/api/admin/proxy-plans/${editing.id}` : "/api/admin/proxy-plans";
+      return fetch(url, { method: editing ? "PUT" : "POST", headers: { ...authHeaders(), "Content-Type":"application/json" } as any, body: JSON.stringify(body) }).then(r => r.json());
+    },
+    onSuccess: (res) => {
+      if (res.success) { toast({ title: editing ? "Plan updated" : "Plan created" }); queryClient.invalidateQueries({ queryKey:["/api/admin/proxy-plans"] }); reset(); }
+      else toast({ title:"Error", description:res.error, variant:"destructive" });
+    },
+  });
+
+  const del = useMutation({
+    mutationFn: (id: number) => fetch(`/api/admin/proxy-plans/${id}`, { method:"DELETE", headers: authHeaders() as any }).then(r=>r.json()),
+    onSuccess: () => { toast({ title:"Plan deleted" }); queryClient.invalidateQueries({ queryKey:["/api/admin/proxy-plans"] }); },
+  });
+
+  const toggle = useMutation({
+    mutationFn: ({ id, is_active }: any) => fetch(`/api/admin/proxy-plans/${id}`, { method:"PUT", headers:{...authHeaders(),"Content-Type":"application/json"} as any, body:JSON.stringify({ is_active:!is_active }) }).then(r=>r.json()),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey:["/api/admin/proxy-plans"] }),
+  });
+
+  const inp = "w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/40";
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div><h2 className="text-xl font-bold text-white">Proxy Plans</h2><p className="text-sm text-gray-400">Create and manage proxy packages customers can purchase</p></div>
+        <Button size="sm" onClick={() => { reset(); setShowForm(true); }} className="bg-emerald-600 hover:bg-emerald-700 gap-1.5"><Plus className="w-4 h-4"/>Add Plan</Button>
+      </div>
+
+      {showForm && (
+        <div className="bg-white/5 border border-emerald-500/20 rounded-2xl p-5 space-y-4">
+          <h3 className="font-semibold text-white">{editing ? "Edit Plan" : "New Proxy Plan"}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label className="text-xs text-gray-400 mb-1 block">Plan Name *</label><input className={inp} value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Kenya Residential 5GB" /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Type *</label>
+              <select className={inp} value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}>
+                <option value="residential">Residential</option><option value="rotating">Rotating</option><option value="datacenter">Datacenter</option><option value="static">Static</option>
+              </select>
+            </div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Price (KES) *</label><input type="number" className={inp} value={form.price_kes} onChange={e=>setForm(f=>({...f,price_kes:e.target.value}))} placeholder="e.g. 1500" /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Country (optional)</label><input className={inp} value={form.country} onChange={e=>setForm(f=>({...f,country:e.target.value}))} placeholder="e.g. Kenya, USA, Global" /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">GB Amount (optional)</label><input type="number" className={inp} value={form.gb_amount} onChange={e=>setForm(f=>({...f,gb_amount:e.target.value}))} placeholder="e.g. 5" /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Bandwidth</label><input className={inp} value={form.bandwidth} onChange={e=>setForm(f=>({...f,bandwidth:e.target.value}))} placeholder="e.g. Unlimited, 5GB" /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Speed</label><input className={inp} value={form.speed} onChange={e=>setForm(f=>({...f,speed:e.target.value}))} placeholder="e.g. 100Mbps" /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Sort Order</label><input type="number" className={inp} value={form.sort_order} onChange={e=>setForm(f=>({...f,sort_order:e.target.value}))} /></div>
+            <div className="sm:col-span-2"><label className="text-xs text-gray-400 mb-1 block">Description</label><textarea className={inp} rows={2} value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Brief plan description..." /></div>
+            <div className="sm:col-span-2"><label className="text-xs text-gray-400 mb-1 block">Features (one per line)</label><textarea className={inp} rows={3} value={form.features} onChange={e=>setForm(f=>({...f,features:e.target.value}))} placeholder={"HTTP/HTTPS/SOCKS5 support\nUnlimited threads\n99.9% uptime"} /></div>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input type="checkbox" checked={form.is_active} onChange={e=>setForm(f=>({...f,is_active:e.target.checked}))} className="w-4 h-4 rounded" />
+              Active (visible to customers)
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={() => save.mutate()} disabled={save.isPending || !form.name || !form.price_kes} className="bg-emerald-600 hover:bg-emerald-700">
+              {save.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}{editing ? "Update" : "Create"} Plan
+            </Button>
+            <Button variant="outline" onClick={reset} className="border-white/10 text-gray-400">Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? <div className="text-center py-8 text-gray-500">Loading plans...</div> : plans.length === 0 ? (
+        <div className="text-center py-12 text-gray-500"><Shield className="w-8 h-8 mx-auto mb-2 opacity-30" /><p>No plans yet. Add your first proxy plan.</p></div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-white/10 hover:bg-transparent">
+                {["Name","Type","Country","Data","Price (KES)","Speed","Status","Actions"].map(h=>(
+                  <TableHead key={h} className="text-gray-400 text-xs">{h}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {plans.map((p:any) => (
+                <TableRow key={p.id} className="border-white/5 hover:bg-white/3">
+                  <TableCell className="text-sm text-white font-medium">{p.name}</TableCell>
+                  <TableCell><span className="text-xs px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 capitalize">{p.type}</span></TableCell>
+                  <TableCell className="text-xs text-gray-400">{p.country||"Global"}</TableCell>
+                  <TableCell className="text-xs text-gray-400">{p.gb_amount ? p.gb_amount+"GB" : p.bandwidth||"—"}</TableCell>
+                  <TableCell className="text-sm text-emerald-400 font-medium">KES {(p.price_kes||0).toLocaleString()}</TableCell>
+                  <TableCell className="text-xs text-gray-400">{p.speed||"—"}</TableCell>
+                  <TableCell>
+                    <button onClick={() => toggle.mutate({ id:p.id, is_active:p.is_active })}
+                      className={`text-xs px-2 py-0.5 rounded-full border cursor-pointer transition-colors ${p.is_active ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-white/5 text-gray-500 border-white/10"}`}>
+                      {p.is_active ? "Active" : "Hidden"}
+                    </button>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1.5">
+                      <Button size="sm" variant="outline" onClick={() => startEdit(p)} className="border-white/10 text-gray-400 h-7 px-2 text-xs"><Edit2 className="w-3 h-3"/></Button>
+                      <Button size="sm" variant="outline" onClick={() => { if(confirm("Delete this plan?")) del.mutate(p.id); }} className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-7 px-2 text-xs"><Trash2 className="w-3 h-3"/></Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Proxy Orders Admin Tab ───────────────────────────────────────────────────
+function ProxyOrdersAdminTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [credModal, setCredModal] = useState<any>(null);
+  const [credText, setCredText] = useState("");
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["/api/admin/proxy-orders"],
+    queryFn: () => fetch("/api/admin/proxy-orders", { headers: authHeaders() as any }).then(r=>r.json()),
+    refetchInterval: 30000,
+  });
+  const orders: any[] = data?.orders || [];
+
+  const updateStatus = useMutation({
+    mutationFn: ({ id, status, credentials }: any) =>
+      fetch(`/api/admin/proxy-orders/${id}/status`, { method:"PATCH", headers:{...authHeaders(),"Content-Type":"application/json"} as any, body:JSON.stringify({ status, credentials }) }).then(r=>r.json()),
+    onSuccess: (res) => { if(res.success){toast({title:"Updated"});queryClient.invalidateQueries({queryKey:["/api/admin/proxy-orders"]});setCredModal(null);}else toast({title:"Error",description:res.error,variant:"destructive"}); },
+  });
+
+  const filtered = orders.filter(o => {
+    const ms = statusFilter==="all"||o.status===statusFilter;
+    const mq = !search||[o.reference,o.plan_name,o.customer_email].some(v=>(v||"").toLowerCase().includes(search.toLowerCase()));
+    return ms && mq;
+  });
+
+  const totalKes = orders.filter(o=>o.status!=="failed").reduce((s:number,o:any)=>s+(o.amount_kes||0),0);
+  const statusCls = (s:string) => ({ pending:"text-amber-400 border-amber-500/30 bg-amber-500/10", processing:"text-blue-400 border-blue-500/30 bg-blue-500/10", active:"text-emerald-400 border-emerald-500/30 bg-emerald-500/10", completed:"text-gray-400 border-gray-500/30 bg-gray-500/10", failed:"text-red-400 border-red-500/30 bg-red-500/10" }[s] || "text-gray-400 border-gray-500/30");
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div><h2 className="text-xl font-bold text-white">Proxy Orders</h2><p className="text-sm text-gray-400">Manage customer proxy orders and deliver credentials</p></div>
+        <Button size="sm" variant="outline" onClick={()=>refetch()} className="border-white/10 text-gray-400 gap-1.5"><RefreshCw className="w-3.5 h-3.5"/>Refresh</Button>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          {label:"Total Orders",value:orders.length,color:"text-white"},
+          {label:"Pending",value:orders.filter((o:any)=>o.status==="pending").length,color:"text-amber-400"},
+          {label:"Active",value:orders.filter((o:any)=>o.status==="active").length,color:"text-emerald-400"},
+          {label:"Revenue (KES)",value:`KES ${totalKes.toLocaleString()}`,color:"text-emerald-400"},
+        ].map(s=>(
+          <div key={s.label} className="bg-white/5 border border-white/10 rounded-xl p-4">
+            <p className="text-xs text-gray-400 mb-1">{s.label}</p>
+            <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-40">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500"/>
+          <Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search orders..." className="pl-8 bg-white/5 border-white/10 text-white text-sm h-9"/>
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {["all","pending","processing","active","completed","failed"].map(s=>(
+            <button key={s} onClick={()=>setStatusFilter(s)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors capitalize ${statusFilter===s?"bg-emerald-500/20 border-emerald-500/30 text-emerald-300":"bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"}`}>{s}</button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading ? <div className="text-center py-8 text-gray-500">Loading...</div> : filtered.length===0 ? (
+        <div className="text-center py-12 text-gray-500"><Shield className="w-8 h-8 mx-auto mb-2 opacity-30"/><p>No proxy orders yet</p></div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-white/10 hover:bg-transparent">
+                {["Reference","Plan","Customer","Amount","Status","Date","Actions"].map(h=>(
+                  <TableHead key={h} className="text-gray-400 text-xs">{h}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((o:any)=>(
+                <TableRow key={o.id} className="border-white/5 hover:bg-white/3">
+                  <TableCell className="font-mono text-xs text-gray-300">{(o.reference||"").slice(0,14)}…</TableCell>
+                  <TableCell className="text-sm text-white">{o.plan_name}</TableCell>
+                  <TableCell className="text-xs text-gray-400">{o.customer_email}</TableCell>
+                  <TableCell className="text-sm text-emerald-400 font-medium">KES {(o.amount_kes||0).toLocaleString()}</TableCell>
+                  <TableCell><span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${statusCls(o.status)}`}>{o.status}</span></TableCell>
+                  <TableCell className="text-xs text-gray-500">{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1.5">
+                      <select value={o.status} onChange={e=>updateStatus.mutate({id:o.id,status:e.target.value})}
+                        className="text-xs bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-gray-300 focus:outline-none">
+                        <option value="pending">Pending</option><option value="processing">Processing</option>
+                        <option value="active">Active</option><option value="completed">Completed</option><option value="failed">Failed</option>
+                      </select>
+                      <Button size="sm" variant="outline" onClick={()=>{setCredModal(o);setCredText(o.credentials||"");}}
+                        className="border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/10 h-7 px-2 text-xs">
+                        <Key className="w-3 h-3 mr-1"/>Creds
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {credModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={e=>{if(e.target===e.currentTarget)setCredModal(null);}}>
+          <div className="bg-gray-900 border border-white/10 rounded-2xl w-full max-w-md p-6">
+            <h3 className="font-bold mb-1">Deliver Credentials</h3>
+            <p className="text-sm text-gray-400 mb-4">{credModal.customer_email} — {credModal.plan_name}</p>
+            <textarea value={credText} onChange={e=>setCredText(e.target.value)} rows={6}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-emerald-500/40 mb-4"
+              placeholder={"host: proxy.example.com\nport: 8080\nusername: user123\npassword: pass456\nprotocol: HTTP/HTTPS/SOCKS5"} />
+            <div className="flex gap-2">
+              <Button onClick={()=>updateStatus.mutate({id:credModal.id,status:"active",credentials:credText})} disabled={updateStatus.isPending} className="bg-emerald-600 hover:bg-emerald-700 flex-1">
+                {updateStatus.isPending?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:null}Save & Mark Active
+              </Button>
+              <Button variant="outline" onClick={()=>setCredModal(null)} className="border-white/10 text-gray-400">Cancel</Button>
+            </div>
+          </div>
         </div>
       )}
     </div>
