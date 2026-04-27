@@ -28,6 +28,7 @@ import ProxyPage from "./pages/ProxyPage";
 import AccountsPage from "./pages/AccountsPage";
 import TempMailPage from "./pages/TempMailPage";
 import GiftCardsPage from "./pages/GiftCardsPage";
+import TradingBotPage from "./pages/TradingBotPage";
 import SmsPage from "./pages/SmsPage";
 import TempNumbers from "@/pages/TempNumbers";
 import Shell from "@/components/Shell";
@@ -35,9 +36,9 @@ import ChatWidget from "@/components/ChatWidget";
 import CookieConsent from "@/components/CookieConsent";
 
 const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy", "/track", "/bots"];
-const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password", "/smm", "/numbers", "/proxy", "/accounts", "/tempmail", "/giftcards", "/sms"];
+const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password", "/smm", "/numbers", "/proxy", "/accounts", "/tempmail", "/giftcards", "/sms", "/tradingbot"];
 const NO_COOKIE_PATHS = ["/admin"];
-const SHELL_PATHS = ["/", "/bots", "/vps", "/dashboard", "/numbers", "/smm", "/proxy", "/checkout", "/cart-checkout", "/payment", "/accounts", "/tempmail", "/giftcards", "/sms"];
+const SHELL_PATHS = ["/", "/bots", "/vps", "/dashboard", "/numbers", "/smm", "/proxy", "/checkout", "/cart-checkout", "/payment", "/accounts", "/tempmail", "/giftcards", "/sms", "/tradingbot"];
 
 function Router() {
   const [location] = useLocation();
@@ -123,6 +124,7 @@ function Router() {
         <Route path="/accounts" component={AccountsPage} />
         <Route path="/tempmail" component={TempMailPage} />
                 <Route path="/giftcards" component={GiftCardsPage} />
+                <Route path="/tradingbot" component={TradingBotPage} />
                 <Route path="/sms" component={SmsPage} />
         <Route path="/admin/plan-previews" component={AdminPlanPreviews} />
         <Route path="/admin" component={Admin} />
