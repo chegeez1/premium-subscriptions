@@ -674,12 +674,18 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       return { order, server, pm2Name: order.pm2_name as string };
     }
 
-    // Reboot: pm2 restart
+    // Reboot: pm2 restart with fallback to pm2 start for failed/stopped bots
     app.post("/api/admin/bot-orders/:orderId/vps/reboot", adminAuthMiddleware, async (req, res) => {
       try {
-        const info = await getOrderVps(parseInt(req.params.orderId));
+        const id = parseInt(req.params.orderId);
+        const info = await getOrderVps(id);
         if (!info) return res.status(404).json({ success: false, error: "No VPS process linked to this order" });
-        await vpsManager.execCommand(info.server, `pm2 restart ${info.pm2Name}`);
+        const botDir = `/home/bots/${info.pm2Name}`;
+        const nvmSource = `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"`;
+        const smartRestart = `${nvmSource}; pm2 restart ${info.pm2Name} 2>/dev/null || (cd ${botDir} && (pm2 start . --name ${info.pm2Name} 2>/dev/null || pm2 start index.js --name ${info.pm2Name}) && pm2 save)`;
+        await vpsManager.execCommand(info.server, smartRestart);
+        const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+        await m(`UPDATE bot_orders SET status = 'deployed', updated_at = ${updNow} WHERE id = ?`, [id]);
         res.json({ success: true, message: "Bot restarted" });
       } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
     });
@@ -1020,9 +1026,22 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         try {
           const svr = vpsManager.getById(req.params.vpsId);
           if (!svr) return res.status(404).json({ success: false, error: "VPS not found" });
-          const orders = await q("SELECT * FROM bot_orders WHERE vps_server_id = ? AND status = 'deployed' AND pm2_name IS NOT NULL", [req.params.vpsId]);
+          const orders = await q(
+            "SELECT * FROM bot_orders WHERE vps_server_id = ? AND status IN ('deployed','stopped','deploy_failed') AND pm2_name IS NOT NULL AND pm2_name != ''",
+            [req.params.vpsId]
+          );
+          const nvmSource = `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"`;
+          const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
           let restarted = 0;
-          for (const o of orders) { try { await vpsManager.execCommand(svr, `pm2 restart ${o.pm2_name}`); restarted++; } catch {} }
+          for (const o of orders) {
+            try {
+              const botDir = `/home/bots/${o.pm2_name}`;
+              const smartRestart = `${nvmSource}; pm2 restart ${o.pm2_name} 2>/dev/null || (cd ${botDir} && (pm2 start . --name ${o.pm2_name} 2>/dev/null || pm2 start index.js --name ${o.pm2_name}) && pm2 save)`;
+              await vpsManager.execCommand(svr, smartRestart);
+              await m(`UPDATE bot_orders SET status = 'deployed', updated_at = ${updNow} WHERE id = ?`, [o.id]);
+              restarted++;
+            } catch {}
+          }
           return res.json({ success: true, restarted, total: orders.length });
         } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
       });
@@ -1047,13 +1066,23 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
 
       app.post("/api/admin/bots/bulk/restart-all", async (req, res) => {
         try {
-          const orders = await q("SELECT * FROM bot_orders WHERE status = 'deployed' AND pm2_name IS NOT NULL AND vps_server_id IS NOT NULL");
+          const orders = await q(
+            "SELECT * FROM bot_orders WHERE status IN ('deployed','stopped','deploy_failed') AND pm2_name IS NOT NULL AND pm2_name != '' AND vps_server_id IS NOT NULL"
+          );
           const svrs = vpsManager.getAll();
+          const nvmSource = `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"`;
+          const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
           let restarted = 0;
           for (const o of orders) {
             const svr = svrs.find((s: any) => s.id === o.vps_server_id);
             if (!svr) continue;
-            try { await vpsManager.execCommand(svr, `pm2 restart ${o.pm2_name}`); restarted++; } catch {}
+            try {
+              const botDir = `/home/bots/${o.pm2_name}`;
+              const smartRestart = `${nvmSource}; pm2 restart ${o.pm2_name} 2>/dev/null || (cd ${botDir} && (pm2 start . --name ${o.pm2_name} 2>/dev/null || pm2 start index.js --name ${o.pm2_name}) && pm2 save)`;
+              await vpsManager.execCommand(svr, smartRestart);
+              await m(`UPDATE bot_orders SET status = 'deployed', updated_at = ${updNow} WHERE id = ?`, [o.id]);
+              restarted++;
+            } catch {}
           }
           return res.json({ success: true, restarted, total: orders.length });
         } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
