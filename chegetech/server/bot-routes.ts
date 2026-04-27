@@ -2343,6 +2343,158 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   });
 
 
+
+  // ── Proxy Auto-Scheduler ──────────────────────────────────────────────────
+  const proxyScheduler = {
+    enabled: true,
+    running: false,
+    lastRun: null as string|null,
+    nextRun: null as string|null,
+    lastStats: { fetched:0, added:0, alive:0, dead:0, deleted:0 } as Record<string,number>,
+    intervalMs: 6 * 60 * 60 * 1000, // 6 hours
+    timer: null as any,
+  };
+
+  async function fetchProxyScrape(protocol: string): Promise<string[]> {
+    return new Promise((resolve) => {
+      const httpsM = require('https') as typeof import('https');
+      const url = `/v2/?request=displayproxies&protocol=${protocol}&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true`;
+      const r = httpsM.get({ hostname:'api.proxyscrape.com', path:url, timeout:15000 }, (res) => {
+        let b=''; res.on('data',(d:Buffer)=>b+=d);
+        res.on('end',()=>resolve(b.split('\n').map((l:string)=>l.trim()).filter((l:string)=>/^\d+\.\d+\.\d+\.\d+:\d+$/.test(l))));
+      }); r.on('error',()=>resolve([])); r.on('timeout',()=>{r.destroy();resolve([]);});
+    });
+  }
+
+  async function fetchGeonode(protocol: string): Promise<string[]> {
+    return new Promise((resolve) => {
+      const httpsM = require('https') as typeof import('https');
+      const path = `/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc&protocols=${protocol}`;
+      const r = httpsM.get({ hostname:'proxylist.geonode.com', path, timeout:15000, headers:{'User-Agent':'Mozilla/5.0'} }, (res) => {
+        let b=''; res.on('data',(d:Buffer)=>b+=d);
+        res.on('end',()=>{
+          try { const j=JSON.parse(b); resolve((j.data||[]).map((p:any)=>`${p.ip}:${p.port}`)); }
+          catch { resolve([]); }
+        });
+      }); r.on('error',()=>resolve([])); r.on('timeout',()=>{r.destroy();resolve([]);});
+    });
+  }
+
+  async function runProxyScheduler() {
+    if (proxyScheduler.running) return;
+    proxyScheduler.running = true;
+    const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+    const stats = { fetched:0, added:0, alive:0, dead:0, deleted:0 };
+    try {
+      console.log('[ProxyScheduler] Starting fetch run...');
+
+      // 1. Fetch from all sources in parallel
+      const [http1, http2, socks4_1, socks5_1, geoHttp, geoSocks4, geoSocks5] = await Promise.all([
+        fetchProxyScrape('http'),
+        fetchProxyScrape('https'),
+        fetchProxyScrape('socks4'),
+        fetchProxyScrape('socks5'),
+        fetchGeonode('http'),
+        fetchGeonode('socks4'),
+        fetchGeonode('socks5'),
+      ]);
+
+      const sources = [
+        { list: http1, type: 'HTTP' }, { list: http2, type: 'HTTPS' },
+        { list: socks4_1, type: 'SOCKS4' }, { list: socks5_1, type: 'SOCKS5' },
+        { list: geoHttp, type: 'HTTP' }, { list: geoSocks4, type: 'SOCKS4' },
+        { list: geoSocks5, type: 'SOCKS5' },
+      ];
+
+      // 2. Insert into DB, skip duplicates
+      for (const { list, type } of sources) {
+        stats.fetched += list.length;
+        for (const raw of list) {
+          const parts = raw.split(':');
+          if (parts.length !== 2) continue;
+          const [ip, port] = parts;
+          try {
+            const res = await pg.query(
+              'INSERT INTO free_proxies (raw,ip,port,username,password,type,status) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (raw) DO NOTHING',
+              [raw, ip, port, '', '', type, 'unchecked']
+            );
+            if ((res.rowCount||0) > 0) stats.added++;
+          } catch {}
+        }
+      }
+      console.log(`[ProxyScheduler] Fetched ${stats.fetched}, added ${stats.added} new proxies`);
+
+      // 3. Check up to 300 unchecked proxies (12 concurrent for scheduler)
+      const { rows: unchecked } = await pg.query("SELECT * FROM free_proxies WHERE status='unchecked' ORDER BY id DESC LIMIT 300");
+      const CONCURRENCY = 12;
+      for (let i=0; i<unchecked.length; i+=CONCURRENCY) {
+        const batch = unchecked.slice(i, i+CONCURRENCY);
+        await Promise.all(batch.map(async (proxy: any) => {
+          const result = await checkSingleProxy(proxy.ip, proxy.port);
+          const status = result.alive ? 'alive' : 'dead';
+          if (result.alive) stats.alive++; else stats.dead++;
+          await pg.query(
+            'UPDATE free_proxies SET status=$1,speed_ms=$2,country=$3,country_code=$4,anonymity=$5,last_checked=NOW()::text WHERE id=$6',
+            [status, result.speed_ms, result.country, result.country_code, result.anonymity, proxy.id]
+          ).catch(()=>{});
+        }));
+      }
+      console.log(`[ProxyScheduler] Checked ${unchecked.length}: ${stats.alive} alive, ${stats.dead} dead`);
+
+      // 4. Delete dead proxies older than 48 hours
+      const { rowCount } = await pg.query(
+        "DELETE FROM free_proxies WHERE status='dead' AND last_checked < (NOW() - INTERVAL '48 hours')::text"
+      );
+      stats.deleted = rowCount||0;
+      console.log(`[ProxyScheduler] Deleted ${stats.deleted} stale dead proxies`);
+
+    } catch (e:any) { console.error('[ProxyScheduler] Error:', e.message); }
+    finally {
+      proxyScheduler.running = false;
+      proxyScheduler.lastRun = new Date().toISOString();
+      proxyScheduler.lastStats = stats;
+      // Set next run
+      const next = new Date(Date.now() + proxyScheduler.intervalMs);
+      proxyScheduler.nextRun = next.toISOString();
+    }
+  }
+
+  function startProxySchedulerTimer() {
+    if (proxyScheduler.timer) clearInterval(proxyScheduler.timer);
+    proxyScheduler.timer = setInterval(() => {
+      if (proxyScheduler.enabled) runProxyScheduler();
+    }, proxyScheduler.intervalMs);
+    proxyScheduler.nextRun = new Date(Date.now() + proxyScheduler.intervalMs).toISOString();
+  }
+
+  // Start scheduler: first run after 2 minutes, then every 6 hours
+  setTimeout(() => {
+    if (proxyScheduler.enabled) runProxyScheduler();
+    startProxySchedulerTimer();
+  }, 2 * 60 * 1000);
+  console.log('[ProxyScheduler] Started — first run in 2 min, then every 6 hours');
+
+  // Admin endpoints for scheduler control
+  app.get('/api/admin/proxy-scheduler/status', (_req: any, res: any) => {
+    res.json({ success: true, ...proxyScheduler, timer: undefined });
+  });
+  app.post('/api/admin/proxy-scheduler/toggle', (req: any, res: any) => {
+    proxyScheduler.enabled = req.body.enabled !== false ? !proxyScheduler.enabled : false;
+    if (req.body.enabled !== undefined) proxyScheduler.enabled = !!req.body.enabled;
+    if (!proxyScheduler.enabled) {
+      if (proxyScheduler.timer) clearInterval(proxyScheduler.timer);
+      proxyScheduler.timer = null; proxyScheduler.nextRun = null;
+    } else { startProxySchedulerTimer(); }
+    res.json({ success: true, enabled: proxyScheduler.enabled });
+  });
+  app.post('/api/admin/proxy-scheduler/run', (_req: any, res: any) => {
+    if (proxyScheduler.running) return res.json({ success: false, error: 'Already running' });
+    runProxyScheduler().catch(()=>{});
+    res.json({ success: true, message: 'Scheduler triggered — check status in a few minutes' });
+  });
+
+
+
   // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
