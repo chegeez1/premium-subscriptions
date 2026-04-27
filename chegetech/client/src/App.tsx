@@ -27,15 +27,17 @@ import SmmPage from "./pages/SmmPage";
 import ProxyPage from "./pages/ProxyPage";
 import AccountsPage from "./pages/AccountsPage";
 import TempMailPage from "./pages/TempMailPage";
+import GiftCardsPage from "./pages/GiftCardsPage";
+import SmsPage from "./pages/SmsPage";
 import TempNumbers from "@/pages/TempNumbers";
 import Shell from "@/components/Shell";
 import ChatWidget from "@/components/ChatWidget";
 import CookieConsent from "@/components/CookieConsent";
 
 const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy", "/track", "/bots"];
-const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password", "/smm", "/numbers", "/proxy", "/accounts", "/tempmail"];
+const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password", "/smm", "/numbers", "/proxy", "/accounts", "/tempmail", "/giftcards", "/sms"];
 const NO_COOKIE_PATHS = ["/admin"];
-const SHELL_PATHS = ["/", "/bots", "/vps", "/dashboard", "/numbers", "/smm", "/proxy", "/checkout", "/cart-checkout", "/payment"];
+const SHELL_PATHS = ["/", "/bots", "/vps", "/dashboard", "/numbers", "/smm", "/proxy", "/checkout", "/cart-checkout", "/payment", "/accounts", "/tempmail", "/giftcards", "/sms"];
 
 function Router() {
   const [location] = useLocation();
