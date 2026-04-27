@@ -8712,10 +8712,15 @@ const deployLogRef = useRef<HTMLDivElement>(null);
                   <TableCell className="text-white font-semibold text-sm">KES {order.amount}</TableCell>
                   <TableCell>
                     {order.status === "deploying" ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                        <span className="w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin" />
-                        deploying
-                      </span>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                          <span className="w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin" />
+                          deploying
+                        </span>
+                        {order.deploymentNotes && (
+                          <span className="text-[10px] text-purple-300/70 pl-1 max-w-[140px] truncate">{order.deploymentNotes}</span>
+                        )}
+                      </div>
                     ) : (
                       <Badge className={`text-xs border ${STATUS_BADGES[order.status] || "bg-gray-500/10 text-gray-400"}`}>
                         {order.status}
