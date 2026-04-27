@@ -209,6 +209,9 @@ export async function deployPendingOrders(): Promise<void> {
   }
 }
 
+// Per-VPS deploy lock — prevents simultaneous npm install on the same server
+const vpsDeployLock = new Set<string>();
+
 export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
 
   // ── Public: validate promo code for bots ───────────────────────────────────
@@ -1087,6 +1090,14 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const pm2Name = `bot-${order.reference}`;
       const botDir = `/opt/bots/${pm2Name}`;
 
+      // VPS deploy lock — only one deploy per VPS at a time
+      if (vpsDeployLock.has(server.id)) {
+        emit(`⏳ VPS ${server.label} is already running a deployment. Please wait for it to finish before starting another.`);
+        emit("__DONE__:failed");
+        return res.end();
+      }
+      vpsDeployLock.add(server.id);
+
       emit(`🎯 VPS: ${server.label} (${server.host}) — OS: ${osType}`);
       emit(`📦 Bot: ${bot.name || bot.id}`);
       emit(`📋 Ref: ${order.reference}`);
@@ -1171,7 +1182,9 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       emit(`   PM2: ${pm2Name}`);
       emit(`   VPS: ${server.label} (${server.host})`);
       emit("__DONE__:success");
+      vpsDeployLock.delete(server.id);
     } catch (e: any) {
+      vpsDeployLock.delete(server?.id);
       const updNow2 = dbType === "pg" ? "NOW()::text" : "datetime('now')";
       await m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow2} WHERE id = ?`,
         ["Deploy failed: " + e.message.slice(0, 200), req.params.id]).catch(() => {});
