@@ -385,6 +385,23 @@ export async function initializeDatabase() {
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
       
       
+      
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS free_proxies (
+        id SERIAL PRIMARY KEY,
+        raw TEXT NOT NULL UNIQUE,
+        ip TEXT NOT NULL,
+        port TEXT NOT NULL,
+        username TEXT DEFAULT '',
+        password TEXT DEFAULT '',
+        type TEXT DEFAULT 'HTTP',
+        status TEXT DEFAULT 'unchecked',
+        country TEXT DEFAULT '',
+        country_code TEXT DEFAULT '',
+        anonymity TEXT DEFAULT '',
+        speed_ms INTEGER DEFAULT 0,
+        last_checked TEXT,
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
       await pgPool.query(`CREATE TABLE IF NOT EXISTS digital_products (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
