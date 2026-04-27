@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -272,6 +272,7 @@ export default function Admin() {
     { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
     { id: "geo-restrict", label: "Geo Restrict", icon: Globe, superOnly: true },
     { id: "vps", label: "VPS Manager", icon: Server, superOnly: true },
+    { id: "vps-sales", label: "VPS Sales", icon: ShoppingBag },
     { id: "domains", label: "Domains", icon: Link2, superOnly: true },
     { id: "settings", label: "Settings", icon: Settings, superOnly: true },
   ];
@@ -405,6 +406,7 @@ export default function Admin() {
           {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
           {activeTab === "vps" && adminRole === "super" && <VpsTab />}
+          {activeTab === "vps-sales" && <VpsSellerTab />}
           {activeTab === "domains" && adminRole === "super" && <DomainsTab />}
           {activeTab === "settings" && adminRole === "super" && <SettingsErrorBoundary><SettingsTab /></SettingsErrorBoundary>}
         </div>
@@ -6248,6 +6250,323 @@ function GeoRestrictTab() {
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// ─── VPS SELLER DASHBOARD TAB ───────────────────────────────────────────────
+const VPS_PLANS = [
+  { name: "Starter",  ram: "1 GB",  cpu: "1 vCPU",  storage: "25 GB SSD",  bandwidth: "1 TB/mo",  price: 800 },
+  { name: "Standard", ram: "2 GB",  cpu: "2 vCPU",  storage: "50 GB SSD",  bandwidth: "2 TB/mo",  price: 1500 },
+  { name: "Pro",      ram: "4 GB",  cpu: "4 vCPU",  storage: "100 GB SSD", bandwidth: "4 TB/mo",  price: 2800 },
+  { name: "Custom",   ram: "",      cpu: "",         storage: "",           bandwidth: "",          price: 0 },
+];
+
+const VPS_STATUS_COLORS: Record<string, string> = {
+  pending:   "bg-yellow-500/15 text-yellow-400 border-yellow-500/25",
+  active:    "bg-green-500/15 text-green-400 border-green-500/25",
+  expired:   "bg-red-500/15 text-red-400 border-red-500/25",
+  suspended: "bg-orange-500/15 text-orange-400 border-orange-500/25",
+  cancelled: "bg-gray-500/15 text-gray-400 border-gray-500/25",
+};
+
+function VpsSellerTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  function aFetch(url: string, opts: any = {}) {
+    return fetch(url, {
+      ...opts,
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("admin_token") || ""}`, ...(opts.headers || {}) },
+      body: opts.body,
+    }).then((r) => r.json());
+  }
+
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/vps-orders"],
+    queryFn: () => aFetch("/api/admin/vps-orders"),
+    refetchInterval: 30000,
+  });
+
+  const orders: any[] = data?.orders || [];
+  const stats = data?.stats || {};
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [showCreate, setShowCreate] = useState(false);
+  const [editOrder, setEditOrder] = useState<any | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [showPass, setShowPass] = useState<Record<number, boolean>>({});
+
+  const emptyForm = { customer_name: "", customer_email: "", customer_phone: "", plan_name: "Standard", ram: "2 GB", cpu: "2 vCPU", storage: "50 GB SSD", bandwidth: "2 TB/mo", price_kes: "1500", status: "pending", assigned_ip: "", server_username: "root", server_password: "", ssh_port: "22", os_type: "ubuntu", notes: "", paid_at: "", expires_at: "" };
+  const [form, setForm] = useState({ ...emptyForm });
+
+  function applyPlanPreset(planName: string) {
+    const plan = VPS_PLANS.find(p => p.name === planName);
+    if (plan) setForm(f => ({ ...f, plan_name: plan.name, ram: plan.ram, cpu: plan.cpu, storage: plan.storage, bandwidth: plan.bandwidth, price_kes: String(plan.price) }));
+  }
+
+  const filtered = orders.filter(o => {
+    const q = search.toLowerCase();
+    const matchQ = !q || o.customer_name?.toLowerCase().includes(q) || o.customer_email?.toLowerCase().includes(q) || o.assigned_ip?.includes(q) || o.reference?.toLowerCase().includes(q);
+    const matchS = statusFilter === "all" || o.status === statusFilter;
+    return matchQ && matchS;
+  });
+
+  async function handleCreate() {
+    setSaving(true);
+    try {
+      const d = await aFetch("/api/admin/vps-orders", { method: "POST", body: JSON.stringify({ ...form, price_kes: Number(form.price_kes) || 0, ssh_port: Number(form.ssh_port) || 22 }) });
+      if (d.success) { toast({ title: "Order created", description: d.order.reference }); setShowCreate(false); setForm({ ...emptyForm }); qc.invalidateQueries({ queryKey: ["/api/admin/vps-orders"] }); }
+      else toast({ title: "Error", description: d.error, variant: "destructive" });
+    } finally { setSaving(false); }
+  }
+
+  async function handleUpdate() {
+    if (!editOrder) return;
+    setSaving(true);
+    try {
+      const d = await aFetch(`/api/admin/vps-orders/${editOrder.id}`, { method: "PUT", body: JSON.stringify({ ...form, price_kes: Number(form.price_kes) || 0, ssh_port: Number(form.ssh_port) || 22 }) });
+      if (d.success) { toast({ title: "Updated" }); setEditOrder(null); qc.invalidateQueries({ queryKey: ["/api/admin/vps-orders"] }); }
+      else toast({ title: "Error", description: d.error, variant: "destructive" });
+    } finally { setSaving(false); }
+  }
+
+  async function handleDelete(id: number) {
+    const d = await aFetch(`/api/admin/vps-orders/${id}`, { method: "DELETE" });
+    if (d.success) { toast({ title: "Deleted" }); setConfirmDelete(null); qc.invalidateQueries({ queryKey: ["/api/admin/vps-orders"] }); }
+    else toast({ title: "Error", description: d.error, variant: "destructive" });
+  }
+
+  function openEdit(o: any) {
+    setForm({ customer_name: o.customer_name || "", customer_email: o.customer_email || "", customer_phone: o.customer_phone || "", plan_name: o.plan_name || "Custom", ram: o.ram || "", cpu: o.cpu || "", storage: o.storage || "", bandwidth: o.bandwidth || "", price_kes: String(o.price_kes || ""), status: o.status || "pending", assigned_ip: o.assigned_ip || "", server_username: o.server_username || "root", server_password: o.server_password || "", ssh_port: String(o.ssh_port || 22), os_type: o.os_type || "ubuntu", notes: o.notes || "", paid_at: o.paid_at ? o.paid_at.slice(0, 10) : "", expires_at: o.expires_at ? o.expires_at.slice(0, 10) : "" });
+    setEditOrder(o);
+  }
+
+  const FormModal = ({ title, onSubmit, onClose }: { title: string; onSubmit: () => void; onClose: () => void }) => (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-gray-900 border border-white/10 rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-white/8">
+          <h3 className="font-bold text-white text-base">{title}</h3>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {/* Plan preset */}
+          <div>
+            <label className="text-xs text-white/50 block mb-1.5">Plan Preset</label>
+            <div className="flex flex-wrap gap-2">
+              {VPS_PLANS.map(p => (
+                <button key={p.name} onClick={() => applyPlanPreset(p.name)} className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${form.plan_name === p.name ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-300" : "border-white/10 text-white/50 hover:border-white/20"}`}>{p.name}</button>
+              ))}
+            </div>
+          </div>
+          {/* Customer */}
+          <div className="grid grid-cols-2 gap-3">
+            {[["customer_name","Customer Name"],["customer_email","Email"],["customer_phone","Phone (optional)"],["price_kes","Price (KES)"]].map(([k,l]) => (
+              <div key={k}>
+                <label className="text-xs text-white/50 block mb-1">{l}</label>
+                <input className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-cyan-500/50" value={(form as any)[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} placeholder={l} />
+              </div>
+            ))}
+          </div>
+          {/* Specs */}
+          <div className="grid grid-cols-2 gap-3">
+            {[["ram","RAM"],["cpu","CPU"],["storage","Storage"],["bandwidth","Bandwidth"]].map(([k,l]) => (
+              <div key={k}>
+                <label className="text-xs text-white/50 block mb-1">{l}</label>
+                <input className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-cyan-500/50" value={(form as any)[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} placeholder={l} />
+              </div>
+            ))}
+          </div>
+          {/* Server credentials */}
+          <div className="border-t border-white/6 pt-3">
+            <p className="text-xs text-white/40 mb-2 font-semibold uppercase tracking-wider">Server Credentials</p>
+            <div className="grid grid-cols-2 gap-3">
+              {[["assigned_ip","Server IP"],["server_username","Username"],["ssh_port","SSH Port"],["os_type","OS Type"]].map(([k,l]) => (
+                <div key={k}>
+                  <label className="text-xs text-white/50 block mb-1">{l}</label>
+                  <input className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-cyan-500/50" value={(form as any)[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} placeholder={l} />
+                </div>
+              ))}
+            </div>
+            <div className="mt-2">
+              <label className="text-xs text-white/50 block mb-1">Password / Key</label>
+              <input type="password" className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-cyan-500/50" value={form.server_password} onChange={e => setForm(f => ({ ...f, server_password: e.target.value }))} placeholder="Server password" />
+            </div>
+          </div>
+          {/* Status & dates */}
+          <div className="grid grid-cols-3 gap-3 border-t border-white/6 pt-3">
+            <div>
+              <label className="text-xs text-white/50 block mb-1">Status</label>
+              <select className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500/50" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                {["pending","active","expired","suspended","cancelled"].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            {[["paid_at","Paid Date"],["expires_at","Expires"]].map(([k,l]) => (
+              <div key={k}>
+                <label className="text-xs text-white/50 block mb-1">{l}</label>
+                <input type="date" className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500/50" value={(form as any)[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} />
+              </div>
+            ))}
+          </div>
+          {/* Notes */}
+          <div>
+            <label className="text-xs text-white/50 block mb-1">Notes</label>
+            <textarea rows={2} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-cyan-500/50 resize-none" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Internal notes…" />
+          </div>
+        </div>
+        <div className="flex gap-3 p-5 border-t border-white/8">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-white/10 text-white/60 hover:text-white text-sm transition-colors">Cancel</button>
+          <button onClick={onSubmit} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}{saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white flex items-center gap-2"><Server className="w-5 h-5 text-cyan-400" /> VPS Sales Dashboard</h2>
+          <p className="text-white/40 text-sm mt-0.5">Manage customer VPS orders and subscriptions</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => refetch()} className="px-3 py-2 rounded-xl border border-white/10 text-white/60 hover:text-white text-sm flex items-center gap-1.5 transition-colors"><RefreshCw className="w-3.5 h-3.5" />Refresh</button>
+          <button onClick={() => { setForm({ ...emptyForm }); setShowCreate(true); }} className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-sm flex items-center gap-1.5 transition-colors"><Plus className="w-4 h-4" />New Order</button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        {[
+          { label: "Total Orders",    val: stats.total ?? 0,      color: "text-white",        bg: "bg-white/4" },
+          { label: "Active",          val: stats.active ?? 0,     color: "text-green-400",    bg: "bg-green-500/8" },
+          { label: "Pending",         val: stats.pending ?? 0,    color: "text-yellow-400",   bg: "bg-yellow-500/8" },
+          { label: "Expiring 7d",     val: stats.expiring7d ?? 0, color: "text-orange-400",   bg: "bg-orange-500/8" },
+          { label: "Active Revenue",  val: `KES ${(stats.revenueKes ?? 0).toLocaleString()}`, color: "text-cyan-400", bg: "bg-cyan-500/8" },
+        ].map(({ label, val, color, bg }) => (
+          <div key={label} className={`${bg} border border-white/6 rounded-2xl p-4 text-center`}>
+            <p className={`text-2xl font-bold ${color}`}>{val}</p>
+            <p className="text-xs text-white/40 mt-1">{label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="relative flex-1 min-w-48">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+          <input className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder-white/25 focus:outline-none focus:border-cyan-500/40" placeholder="Search name, email, IP…" value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="flex gap-2">
+          {["all","pending","active","expired","suspended","cancelled"].map(s => (
+            <button key={s} onClick={() => setStatusFilter(s)} className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all capitalize ${statusFilter === s ? "bg-cyan-500/20 border-cyan-500/30 text-cyan-300" : "border-white/8 text-white/40 hover:text-white/60"}`}>{s}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Orders table */}
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-cyan-400 animate-spin" /></div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16 text-white/30">
+          <Server className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="font-medium">No VPS orders yet</p>
+          <p className="text-sm mt-1">Click "New Order" to create the first one.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-white/8">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-white/3 border-b border-white/8">
+                {["Reference","Customer","Plan","IP / Credentials","Status","Expires","Actions"].map(h => (
+                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-white/40 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((o: any) => (
+                <tr key={o.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
+                  <td className="px-4 py-3">
+                    <span className="font-mono text-xs text-cyan-400/80">{o.reference}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="text-white text-sm font-medium">{o.customer_name}</p>
+                    <p className="text-white/40 text-xs">{o.customer_email}</p>
+                    {o.customer_phone && <p className="text-white/30 text-xs">{o.customer_phone}</p>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="text-white font-medium">{o.plan_name}</p>
+                    <p className="text-white/40 text-xs">{[o.ram, o.cpu, o.storage].filter(Boolean).join(" · ")}</p>
+                    <p className="text-cyan-400 text-xs font-semibold">KES {Number(o.price_kes || 0).toLocaleString()}/mo</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    {o.assigned_ip ? (
+                      <div>
+                        <span className="font-mono text-xs text-green-400">{o.assigned_ip}</span>
+                        {o.server_username && <p className="text-white/40 text-xs">user: {o.server_username}</p>}
+                        {o.server_password && (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className="font-mono text-xs text-white/30">{showPass[o.id] ? o.server_password : "••••••••"}</span>
+                            <button onClick={() => setShowPass(p => ({ ...p, [o.id]: !p[o.id] }))} className="text-white/20 hover:text-white/50">
+                              <Eye className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : <span className="text-white/20 text-xs italic">Not assigned</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border capitalize ${VPS_STATUS_COLORS[o.status] || "bg-gray-500/15 text-gray-400 border-gray-500/25"}`}>{o.status}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {o.expires_at ? (
+                      <span className={`text-xs ${new Date(o.expires_at) <= new Date(Date.now() + 7*24*60*60*1000) && o.status === "active" ? "text-orange-400 font-semibold" : "text-white/50"}`}>
+                        {new Date(o.expires_at).toLocaleDateString()}
+                      </span>
+                    ) : <span className="text-white/20 text-xs">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => openEdit(o)} className="p-1.5 rounded-lg hover:bg-white/8 text-white/40 hover:text-white transition-colors" title="Edit">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => setConfirmDelete(o.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 text-white/30 hover:text-red-400 transition-colors" title="Delete">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Create modal */}
+      {showCreate && <FormModal title="New VPS Order" onSubmit={handleCreate} onClose={() => setShowCreate(false)} />}
+
+      {/* Edit modal */}
+      {editOrder && <FormModal title={`Edit — ${editOrder.reference}`} onSubmit={handleUpdate} onClose={() => setEditOrder(null)} />}
+
+      {/* Delete confirm */}
+      {confirmDelete !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-red-500/20 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center">
+            <Trash2 className="w-10 h-10 text-red-400 mx-auto mb-3" />
+            <h3 className="text-white font-bold text-base mb-2">Delete this order?</h3>
+            <p className="text-white/40 text-sm mb-5">This action cannot be undone.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmDelete(null)} className="flex-1 py-2.5 rounded-xl border border-white/10 text-white/60 text-sm">Cancel</button>
+              <button onClick={() => handleDelete(confirmDelete!)} className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm transition-colors">Delete</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
