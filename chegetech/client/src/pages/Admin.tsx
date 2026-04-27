@@ -8293,9 +8293,20 @@ const deployLogRef = useRef<HTMLDivElement>(null);
     setNotes(order.deploymentNotes || "");
     setVpsStatus(null);
     setConfigEditing(false);
-    setDeployStreamLog([]);
     setDeployStreaming(false);
-    setDeployStreamStatus("idle");
+    // Restore persisted deployment log from DB if available
+    if (order.deploymentLog) {
+      const lines = order.deploymentLog.split("\n").filter((l: string) => !l.startsWith("__DONE__"));
+      setDeployStreamLog(lines);
+      setDeployStreamStatus(
+        order.status === "deployed" ? "success"
+        : order.status === "deploy_failed" ? "failed"
+        : "idle"
+      );
+    } else {
+      setDeployStreamLog([]);
+      setDeployStreamStatus("idle");
+    }
     loadVpsStatus(order);
   };
 
