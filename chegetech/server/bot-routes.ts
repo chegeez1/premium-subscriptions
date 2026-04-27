@@ -556,6 +556,14 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   // ── Admin: list all bot orders ──────────────────────────────────────────────
   app.get("/api/admin/bot-orders", adminAuthMiddleware, async (req, res) => {
     try {
+      // Auto-reset orders stuck in 'deploying' for > 5 minutes (Render redeployed mid-deploy)
+      const stuckCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const updN = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      await m(
+        `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = 'Auto-reset: deployment process was interrupted', updated_at = ${updN} WHERE status = 'deploying' AND updated_at < ?`,
+        [stuckCutoff]
+      ).catch(() => {});
+
       const { status } = req.query;
       let rows: any[];
       if (status && typeof status === "string") {
