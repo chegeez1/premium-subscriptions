@@ -1135,13 +1135,20 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const servers = vpsManager.getAll();
       if (!servers.length) { emit("❌ No VPS servers configured. Add one in VPS Manager first."); emit("__DONE__:failed"); return res.end(); }
 
-      // Auto-pick least-loaded VPS
-      const deployedCountRows = await q(`SELECT vps_server_id, COUNT(*) as cnt FROM bot_orders WHERE status = 'deployed' AND vps_server_id IS NOT NULL GROUP BY vps_server_id`).catch(() => []);
-      const deployedCounts: Record<string, number> = {};
-      for (const row of deployedCountRows) deployedCounts[row.vps_server_id] = Number(row.cnt ?? 0);
-      const server = servers.reduce((best: any, s: any) =>
-        (deployedCounts[s.id] ?? 0) < (deployedCounts[best.id] ?? 0) ? s : best
-      , servers[0]);
+      // Use explicitly selected VPS if provided, otherwise auto-pick least-loaded
+      let server: any;
+      const requestedVpsId = req.body?.vpsId;
+      if (requestedVpsId) {
+        server = servers.find((s: any) => s.id === requestedVpsId);
+        if (!server) { emit(`❌ VPS server "${requestedVpsId}" not found`); emit("__DONE__:failed"); return res.end(); }
+      } else {
+        const deployedCountRows = await q(`SELECT vps_server_id, COUNT(*) as cnt FROM bot_orders WHERE status = 'deployed' AND vps_server_id IS NOT NULL GROUP BY vps_server_id`).catch(() => []);
+        const deployedCounts: Record<string, number> = {};
+        for (const row of deployedCountRows) deployedCounts[row.vps_server_id] = Number(row.cnt ?? 0);
+        server = servers.reduce((best: any, s: any) =>
+          (deployedCounts[s.id] ?? 0) < (deployedCounts[best.id] ?? 0) ? s : best
+        , servers[0]);
+      }
 
       const osType = (server as any).osType || "ubuntu";
       const isRhel = ["almalinux","centos","rhel","fedora","rocky","oracle"].includes(osType);
