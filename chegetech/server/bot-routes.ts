@@ -171,27 +171,42 @@ async function deployBotToVps(
     return { pm2Name, vpsServerId: server.id };
   }
 
-// ── Exported: deploy all paid/deploy_failed orders that haven't launched yet ─
+// Global lock — prevents the scheduler from running two instances at once
+let autoDeployRunning = false;
+
+// ── Exported: deploy ONE pending order per run (sequential, never parallel) ──
 export async function deployPendingOrders(): Promise<void> {
-  const servers = vpsManager.getAll();
-  if (!servers.length) {
-    console.log("[Auto Deploy] No VPS servers configured — skipping");
+  if (autoDeployRunning) {
+    console.log("[Auto Deploy] Already running — skipping this tick");
     return;
   }
-  const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
-  const pending = await q(
-    "SELECT * FROM bot_orders WHERE status IN ('paid', 'deploy_failed') AND (pm2_name IS NULL OR pm2_name = '')"
-  ).catch(() => []);
-  if (!pending.length) { console.log("[Auto Deploy] No pending orders"); return; }
-  console.log(`[Auto Deploy] Processing ${pending.length} pending orders`);
-  for (const order of pending) {
+  autoDeployRunning = true;
+  try {
+    const servers = vpsManager.getAll();
+    if (!servers.length) {
+      console.log("[Auto Deploy] No VPS servers configured — skipping");
+      return;
+    }
+    const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+
+    // Only grab ONE pending order per run — avoids flooding the VPS
+    const pending = await q(
+      "SELECT * FROM bot_orders WHERE status IN ('paid', 'deploy_failed') AND (pm2_name IS NULL OR pm2_name = '') ORDER BY created_at ASC LIMIT 1"
+    ).catch(() => []);
+    if (!pending.length) { console.log("[Auto Deploy] No pending orders"); return; }
+
+    const order = pending[0];
+    console.log(`[Auto Deploy] Processing ${order.reference}`);
+
     const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]).catch(() => []);
-    if (!bots.length) continue;
+    if (!bots.length) { console.log(`[Auto Deploy] Bot not found for ${order.reference}`); return; }
+
     const autoEnv: Record<string, string> = { NODE_ENV: "production" };
     if (order.session_id) autoEnv["SESSION_ID"] = order.session_id;
     if (order.db_url) autoEnv["DB_URL"] = order.db_url;
     if (order.mode) autoEnv["MODE"] = order.mode;
     if (order.timezone) autoEnv["TIMEZONE"] = order.timezone;
+
     try {
       const result = await deployBotToVps(order, bots[0], autoEnv);
       if (result) {
@@ -207,6 +222,8 @@ export async function deployPendingOrders(): Promise<void> {
       await m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE id = ?`,
         ["Auto-deploy failed: " + e.message.slice(0, 200), order.id]).catch(() => {});
     }
+  } finally {
+    autoDeployRunning = false;
   }
 }
 
