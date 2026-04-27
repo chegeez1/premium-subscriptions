@@ -1172,9 +1172,12 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       emit("\n🔍 Checking git...");
       await execStep("Ensure git", `which git 2>/dev/null || git --version 2>/dev/null || (${installGit}); echo "git ready"`, 60000);
 
-      // 4. Clone or pull
+      // 4. Clone or pull — shallow clone for speed
       emit("\n📂 Cloning / updating repo...");
-      await execStep("Clone or pull", `mkdir -p /opt/bots && (git -C ${botDir} pull --ff-only 2>&1 || git clone ${repoUrl} ${botDir} 2>&1)`);
+      await execStep("Clone or pull",
+        `mkdir -p /opt/bots && (git -C ${botDir} fetch --depth=1 origin 2>&1 && git -C ${botDir} reset --hard FETCH_HEAD 2>&1 || git clone --depth=1 ${repoUrl} ${botDir} 2>&1)`,
+        120000  // 2 min max for git
+      );
 
       // 5. .env
       const envVars: Record<string, string> = { NODE_ENV: "production" };
@@ -1187,10 +1190,10 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       await vpsManager.execCommand(server, `printf '%s\\n' ${JSON.stringify(envLines)} > ${botDir}/.env`);
       emit("   ✓ .env written");
 
-      // 6. npm install — 10 min timeout, offline-first for speed
+      // 6. npm install — wipe node_modules first to avoid stale/corrupt cache issues
       await execStep(
         "npm install --production",
-        `${nvmSource}; cd ${botDir} && npm install --production --prefer-offline --no-audit --no-fund --loglevel=error 2>&1 | tail -8`,
+        `${nvmSource}; cd ${botDir} && rm -rf node_modules package-lock.json 2>/dev/null; npm install --production --no-audit --no-fund --loglevel=error 2>&1 | tail -10`,
         600000 // 10 minutes
       );
 
