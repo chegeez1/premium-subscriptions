@@ -122,6 +122,8 @@ function Router() {
         <Route path="/proxy" component={ProxyPage} />
         <Route path="/accounts" component={AccountsPage} />
         <Route path="/tempmail" component={TempMailPage} />
+                <Route path="/giftcards" component={GiftCardsPage} />
+                <Route path="/sms" component={SmsPage} />
         <Route path="/admin/plan-previews" component={AdminPlanPreviews} />
         <Route path="/admin" component={Admin} />
         <Route path="/track" component={Track} />
