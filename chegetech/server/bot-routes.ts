@@ -1858,42 +1858,159 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
 
   // Customer: list active plans
 
-  // ── Free Proxy List (geonode.com public API, 5-min cache) ────────────────
-  let freeProxyCache: { data: any[]; ts: number } | null = null;
+
+
+  // ── Free Proxies Admin — DB-backed with checker ──────────────────────────
+
+  function parseProxyLine(line: string): { ip: string; port: string; user: string; pass: string; raw: string } | null {
+    line = line.trim().replace(/^https?:\/\//, '');
+    if (!line) return null;
+    // user:pass@ip:port
+    const authAt = line.match(/^([^:]+):([^@]+)@([\d.]+):(\d+)$/);
+    if (authAt) return { user: authAt[1], pass: authAt[2], ip: authAt[3], port: authAt[4], raw: line };
+    // ip:port:user:pass
+    const parts = line.split(':');
+    if (parts.length === 4 && /^\d+$/.test(parts[1])) return { ip: parts[0], port: parts[1], user: parts[2], pass: parts[3], raw: line };
+    if (parts.length === 4 && /^\d+$/.test(parts[3])) return { ip: parts[2], port: parts[3], user: parts[0], pass: parts[1], raw: line };
+    // ip:port
+    if (parts.length === 2 && /^\d+$/.test(parts[1])) return { ip: parts[0], port: parts[1], user: '', pass: '', raw: line };
+    return null;
+  }
+
+  async function checkSingleProxy(ip: string, port: string): Promise<{ alive: boolean; speed_ms: number; country: string; country_code: string; anonymity: string }> {
+    return new Promise((resolve) => {
+      const httpM = require('http') as typeof import('http');
+      const start = Date.now();
+      try {
+        const req = httpM.request({
+          host: ip, port: parseInt(port), method: 'GET',
+          path: 'http://ip-api.com/json?fields=country,countryCode,proxy,hosting',
+          headers: { 'Host': 'ip-api.com', 'User-Agent': 'Mozilla/5.0', 'Proxy-Connection': 'Keep-Alive' },
+          timeout: 9000,
+        }, (res) => {
+          let data = '';
+          res.on('data', (d: Buffer) => data += d);
+          res.on('end', () => {
+            const ms = Date.now() - start;
+            try {
+              const j = JSON.parse(data);
+              const anonymity = j.proxy || j.hosting ? 'anonymous' : 'transparent';
+              resolve({ alive: true, speed_ms: ms, country: j.country || 'Unknown', country_code: j.countryCode || '', anonymity });
+            } catch { resolve({ alive: true, speed_ms: ms, country: 'Unknown', country_code: '', anonymity: 'anonymous' }); }
+          });
+        });
+        req.on('timeout', () => { req.destroy(); resolve({ alive: false, speed_ms: 0, country: '', country_code: '', anonymity: '' }); });
+        req.on('error', () => resolve({ alive: false, speed_ms: 0, country: '', country_code: '', anonymity: '' }));
+        req.end();
+      } catch { resolve({ alive: false, speed_ms: 0, country: '', country_code: '', anonymity: '' }); }
+    });
+  }
+
+  // Admin: list all free proxies
+  app.get('/api/admin/free-proxies', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query('SELECT * FROM free_proxies ORDER BY id DESC LIMIT 2000');
+      res.json({ success: true, proxies: rows });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: bulk import
+  app.post('/api/admin/free-proxies/bulk', async (req, res) => {
+    try {
+      const { proxies: raw, type: proxyType } = req.body;
+      if (!raw) return res.status(400).json({ success: false, error: 'No proxies provided' });
+      const lines = (raw as string).split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      let added = 0, dupes = 0;
+      for (const line of lines) {
+        const p = parseProxyLine(line);
+        if (!p) continue;
+        try {
+          await pg.query(
+            'INSERT INTO free_proxies (raw, ip, port, username, password, type, status) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (raw) DO NOTHING',
+            [p.raw, p.ip, p.port, p.user, p.pass, (proxyType || 'HTTP').toUpperCase(), 'unchecked']
+          );
+          added++;
+        } catch { dupes++; }
+      }
+      res.json({ success: true, added, dupes, total: lines.length });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: check proxies (batch, up to 100 at a time, 8 concurrent)
+  app.post('/api/admin/free-proxies/check', async (req, res) => {
+    try {
+      const { ids } = req.body; // optional: array of ids, else check all unchecked
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      let rows: any[];
+      if (ids && ids.length) {
+        const { rows: r } = await pg.query('SELECT * FROM free_proxies WHERE id = ANY($1) LIMIT 200', [ids]);
+        rows = r;
+      } else {
+        const { rows: r } = await pg.query("SELECT * FROM free_proxies WHERE status='unchecked' OR status='alive' ORDER BY id DESC LIMIT 200");
+        rows = r;
+      }
+      if (!rows.length) return res.json({ success: true, checked: 0, alive: 0 });
+
+      // Run 8 concurrent checks
+      const CONCURRENCY = 8;
+      let alive = 0, dead = 0;
+      for (let i = 0; i < rows.length; i += CONCURRENCY) {
+        const batch = rows.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(async (proxy: any) => {
+          const result = await checkSingleProxy(proxy.ip, proxy.port);
+          const status = result.alive ? 'alive' : 'dead';
+          if (result.alive) alive++; else dead++;
+          await pg.query(
+            'UPDATE free_proxies SET status=$1,speed_ms=$2,country=$3,country_code=$4,anonymity=$5,last_checked=NOW()::text WHERE id=$6',
+            [status, result.speed_ms, result.country, result.country_code, result.anonymity, proxy.id]
+          );
+        }));
+      }
+      res.json({ success: true, checked: rows.length, alive, dead });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: delete one
+  app.delete('/api/admin/free-proxies/:id', async (req, res) => {
+    try {
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      await pg.query('DELETE FROM free_proxies WHERE id=$1', [req.params.id]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Admin: delete all dead
+  app.delete('/api/admin/free-proxies/bulk/dead', async (_req, res) => {
+    try {
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rowCount } = await pg.query("DELETE FROM free_proxies WHERE status='dead'");
+      res.json({ success: true, deleted: rowCount });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  // Public: free proxies — DB-backed first, fallback to geonode
+  let freeProxyCacheGeo: { data: any[]; ts: number } | null = null;
   app.get('/api/proxy/free', async (_req, res) => {
     try {
-      if (freeProxyCache && Date.now() - freeProxyCache.ts < 5 * 60 * 1000) {
-        return res.json({ success: true, proxies: freeProxyCache.data, cached: true });
+      const pgMod = await import('./storage'); const pg = (pgMod as any).pgPool;
+      const { rows } = await pg.query("SELECT ip,port,type,country,country_code,anonymity,speed_ms FROM free_proxies WHERE status='alive' ORDER BY speed_ms ASC, id DESC LIMIT 300");
+      if (rows.length > 0) {
+        return res.json({ success: true, proxies: rows.map((r: any) => ({ ip: r.ip, port: r.port, type: r.type || 'HTTP', country: r.country || 'Unknown', countryCode: r.country_code || '', anonymity: r.anonymity || 'anonymous', speed: r.speed_ms || 0, upTime: 100 })) });
+      }
+    } catch {}
+    // Fallback to geonode cache
+    try {
+      if (freeProxyCacheGeo && Date.now() - freeProxyCacheGeo.ts < 5 * 60 * 1000) {
+        return res.json({ success: true, proxies: freeProxyCacheGeo.data, cached: true });
       }
       const axiosM = require('axios');
-      const r = await axiosM.get(
-        'https://proxylist.geonode.com/api/proxy-list?limit=200&page=1&sort_by=lastChecked&sort_type=desc&filterUpTime=50',
-        { headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' }, timeout: 12000 }
-      );
-      const raw: any[] = r.data?.data || [];
-      const proxies = raw.map((p: any) => ({
-        ip: p.ip, port: p.port,
-        type: (p.protocols?.[0] || 'http').toUpperCase(),
-        country: p.country || 'Unknown',
-        countryCode: p.country_code || p.countryCode || '',
-        anonymity: (p.anonymityLevel || 'transparent').toLowerCase(),
-        speed: p.speed || 0,
-        upTime: p.upTime || 0,
-      }));
-      freeProxyCache = { data: proxies, ts: Date.now() };
+      const r = await axiosM.get('https://proxylist.geonode.com/api/proxy-list?limit=200&page=1&sort_by=lastChecked&sort_type=desc&filterUpTime=50', { headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' }, timeout: 12000 });
+      const proxies = (r.data?.data || []).map((p: any) => ({ ip: p.ip, port: p.port, type: (p.protocols?.[0] || 'http').toUpperCase(), country: p.country || 'Unknown', countryCode: p.country_code || p.countryCode || '', anonymity: (p.anonymityLevel || 'transparent').toLowerCase(), speed: p.speed || 0, upTime: p.upTime || 0 }));
+      freeProxyCacheGeo = { data: proxies, ts: Date.now() };
       res.json({ success: true, proxies });
-    } catch (e: any) {
-      // fallback to proxyscrape if geonode fails
-      try {
-        const axiosM = require('axios');
-        const r2 = await axiosM.get('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all', { timeout: 10000, responseType: 'text' });
-        const lines: string[] = (r2.data as string).split('\n').map((l: string) => l.trim()).filter((l: string) => l.includes(':'));
-        const proxies = lines.slice(0,150).map((l: string) => { const [ip,port]=l.split(':'); return { ip, port, type:'HTTP', country:'Unknown', countryCode:'', anonymity:'transparent', speed:0, upTime:0 }; });
-        freeProxyCache = { data: proxies, ts: Date.now() };
-        return res.json({ success: true, proxies });
-      } catch {}
-      res.status(500).json({ success: false, error: e.message });
-    }
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
 
