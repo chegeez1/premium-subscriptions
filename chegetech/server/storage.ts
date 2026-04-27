@@ -337,6 +337,7 @@ export async function initializeDatabase() {
         await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS pm2_name TEXT");
         await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS expires_at TEXT");
         await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS renewal_reminded TEXT");
+        await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS deployment_log TEXT");
         await pgPool.query("CREATE TABLE IF NOT EXISTS bot_pings (id SERIAL PRIMARY KEY, bot_order_id INTEGER NOT NULL, pm2_status TEXT NOT NULL, checked_at TEXT DEFAULT (NOW()::text))");
       // Migrate: add reseller_id to transactions
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
@@ -664,6 +665,7 @@ function initSqlite() {
     try { sqliteInstance!.prepare("ALTER TABLE bot_orders ADD COLUMN pm2_name TEXT").run(); } catch {}
     try { sqliteInstance!.prepare("ALTER TABLE bot_orders ADD COLUMN expires_at TEXT").run(); } catch {}
     try { sqliteInstance!.prepare("ALTER TABLE bot_orders ADD COLUMN renewal_reminded TEXT").run(); } catch {}
+    try { sqliteInstance!.prepare("ALTER TABLE bot_orders ADD COLUMN deployment_log TEXT").run(); } catch {}
     try { sqliteInstance!.prepare("CREATE TABLE IF NOT EXISTS bot_pings (id INTEGER PRIMARY KEY AUTOINCREMENT, bot_order_id INTEGER NOT NULL, pm2_status TEXT NOT NULL, checked_at TEXT DEFAULT (datetime('now')))").run(); } catch {}
   console.log("[db] Connected to SQLite");
 }
