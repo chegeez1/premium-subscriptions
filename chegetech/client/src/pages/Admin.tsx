@@ -8044,6 +8044,10 @@ function BotOrdersAdminTab() {
 const [bulkLoading, setBulkLoading] = useState<string | null>(null);
 const [bulkResult, setBulkResult] = useState<string | null>(null);
 const [bulkVpsId, setBulkVpsId] = useState("");
+const [deployStreamLog, setDeployStreamLog] = useState<string[]>([]);
+const [deployStreaming, setDeployStreaming] = useState(false);
+const [deployStreamStatus, setDeployStreamStatus] = useState<"idle"|"running"|"success"|"failed">("idle");
+const deployLogRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading } = useQuery<{ success: boolean; orders: any[] }>({
     queryKey: ["/api/admin/bot-orders"],
@@ -8143,6 +8147,45 @@ const [bulkVpsId, setBulkVpsId] = useState("");
     }
   }
 
+  async function deployWithStream(orderId: number) {
+    setDeployStreamLog([]);
+    setDeployStreaming(true);
+    setDeployStreamStatus("running");
+    try {
+      const res = await fetch(`/api/admin/bot-orders/${orderId}/deploy-stream`, {
+        method: "POST",
+        headers: authHeaders() as any,
+      });
+      if (!res.body) throw new Error("No response stream");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (line === "__DONE__:success") {
+            setDeployStreamStatus("success");
+            queryClient.invalidateQueries({ queryKey: ["/api/admin/bot-orders"] });
+            setSelectedOrder((o: any) => o ? { ...o, status: "deployed" } : null);
+          } else if (line === "__DONE__:failed") {
+            setDeployStreamStatus("failed");
+          } else {
+            setDeployStreamLog(prev => { const next = [...prev, line]; setTimeout(() => { deployLogRef.current?.scrollTo({ top: 99999, behavior: "smooth" }); }, 30); return next; });
+          }
+        }
+      }
+    } catch (e: any) {
+      setDeployStreamLog(prev => [...prev, "❌ " + e.message]);
+      setDeployStreamStatus("failed");
+    } finally {
+      setDeployStreaming(false);
+    }
+  }
+
   const loadVpsStatus = async (order: any) => {
     if (!order?.id) return;
     setVpsLoading(true);
@@ -8192,6 +8235,9 @@ const [bulkVpsId, setBulkVpsId] = useState("");
     setNotes(order.deploymentNotes || "");
     setVpsStatus(null);
     setConfigEditing(false);
+    setDeployStreamLog([]);
+    setDeployStreaming(false);
+    setDeployStreamStatus("idle");
     loadVpsStatus(order);
   };
 
@@ -8315,6 +8361,52 @@ const [bulkVpsId, setBulkVpsId] = useState("");
             {selectedOrder.deployedAt && (
               <div><p className="text-xs text-gray-500">Deployed</p><p className="text-gray-200 text-xs">{new Date(selectedOrder.deployedAt).toLocaleString()}</p></div>
             )}
+          </div>
+
+          {/* ── Live Deploy Terminal ───────────────────────────────── */}
+          <div className="rounded-2xl border border-violet-500/20 bg-black/30 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />
+                <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 inline-block" />
+                <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" />
+                <span className="text-xs text-white/40 ml-1 font-mono">deployment — {selectedOrder.reference}</span>
+              </div>
+              <button
+                onClick={() => deployWithStream(selectedOrder.id)}
+                disabled={deployStreaming}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  deployStreaming ? "bg-violet-800/50 text-violet-400 cursor-not-allowed"
+                  : deployStreamStatus === "success" ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                  : deployStreamStatus === "failed" ? "bg-red-600 hover:bg-red-500 text-white"
+                  : "bg-violet-600 hover:bg-violet-500 text-white"
+                }`}
+              >
+                {deployStreaming
+                  ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />Deploying...</>
+                  : deployStreamStatus === "success" ? <><Zap className="w-3 h-3" />Redeploy</>
+                  : deployStreamStatus === "failed" ? <><Zap className="w-3 h-3" />Retry Deploy</>
+                  : <><Zap className="w-3 h-3" />Deploy to VPS</>}
+              </button>
+            </div>
+            <div ref={deployLogRef} className="font-mono text-xs p-4 h-52 overflow-y-auto space-y-0.5 scroll-smooth">
+              {deployStreamLog.length === 0 && !deployStreaming ? (
+                <span className="text-white/20">Click "Deploy to VPS" to start — VPS is auto-selected, logs stream here live.</span>
+              ) : (
+                deployStreamLog.map((line, i) => (
+                  <div key={i} className={`leading-relaxed whitespace-pre ${
+                    line.startsWith("✅") ? "text-emerald-400 font-bold"
+                    : line.startsWith("   ✓") ? "text-emerald-400"
+                    : line.startsWith("❌") || line.startsWith("   ⚠") ? "text-red-400"
+                    : line.startsWith("🎯") || line.startsWith("📦") || line.startsWith("📋") ? "text-sky-300"
+                    : line.startsWith("⚡") || line.startsWith("🔍") || line.startsWith("📂") || line.startsWith("📝") || line.startsWith("🚀") ? "text-amber-300"
+                    : line.startsWith("─") ? "text-white/20"
+                    : "text-white/65"
+                  }`}>{line || "\u00a0"}</div>
+                ))
+              )}
+              {deployStreaming && <div className="text-violet-400 animate-pulse mt-1">▋</div>}
+            </div>
           </div>
 
           {/* Heroku live status */}
