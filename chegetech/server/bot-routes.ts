@@ -1041,6 +1041,142 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
       });
 
+  // ── Admin: streaming deploy with live SSH logs ───────────────────────────────
+  app.post("/api/admin/bot-orders/:id/deploy-stream", adminAuthMiddleware, async (req: any, res: any) => {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    const emit = (msg: string) => { try { res.write(msg + "\n"); } catch {} };
+    const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+
+    try {
+      const orders = await q("SELECT * FROM bot_orders WHERE id = ?", [req.params.id]);
+      if (!orders.length) { emit("❌ Order not found"); emit("__DONE__:failed"); return res.end(); }
+      const order = orders[0];
+
+      const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]);
+      if (!bots.length) { emit("❌ Bot not found"); emit("__DONE__:failed"); return res.end(); }
+      const bot = bots[0];
+
+      const servers = vpsManager.getAll();
+      if (!servers.length) { emit("❌ No VPS servers configured. Add one in VPS Manager first."); emit("__DONE__:failed"); return res.end(); }
+
+      // Auto-pick least-loaded VPS
+      const deployedCountRows = await q(`SELECT vps_server_id, COUNT(*) as cnt FROM bot_orders WHERE status = 'deployed' AND vps_server_id IS NOT NULL GROUP BY vps_server_id`).catch(() => []);
+      const deployedCounts: Record<string, number> = {};
+      for (const row of deployedCountRows) deployedCounts[row.vps_server_id] = Number(row.cnt ?? 0);
+      const server = servers.reduce((best: any, s: any) =>
+        (deployedCounts[s.id] ?? 0) < (deployedCounts[best.id] ?? 0) ? s : best
+      , servers[0]);
+
+      const osType = (server as any).osType || "ubuntu";
+      const isRhel = ["almalinux","centos","rhel","fedora","rocky","oracle"].includes(osType);
+      const isArch = osType === "arch";
+      const isWindows = osType === "windows";
+      const installGit = isRhel ? "dnf install -y git 2>/dev/null || yum install -y git 2>/dev/null"
+                        : isArch ? "pacman -S --noconfirm git 2>/dev/null"
+                        : isWindows ? "echo Windows: ensure git is pre-installed"
+                        : "DEBIAN_FRONTEND=noninteractive apt-get install -y git 2>/dev/null";
+      const nvmSource = `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"`;
+
+      const repoUrl = (bot.repo_url || "").replace(/\.git$/, "");
+      if (!repoUrl) { emit("❌ Bot has no GitHub repo URL configured"); emit("__DONE__:failed"); return res.end(); }
+
+      const pm2Name = `bot-${order.reference}`;
+      const botDir = `/opt/bots/${pm2Name}`;
+
+      emit(`🎯 VPS: ${server.label} (${server.host}) — OS: ${osType}`);
+      emit(`📦 Bot: ${bot.name || bot.id}`);
+      emit(`📋 Ref: ${order.reference}`);
+      emit("─────────────────────────────────────────────────");
+
+      await m(`UPDATE bot_orders SET status = 'deploying', updated_at = ${updNow} WHERE id = ?`, [req.params.id]);
+
+      const execStep = async (label: string, cmd: string) => {
+        emit(`\n⚡ ${label}...`);
+        const r = await vpsManager.execCommand(server, cmd);
+        const outLines = (r.stdout || "").split("\n").filter((l: string) => l.trim()).slice(0, 12);
+        if (outLines.length) emit("   " + outLines.join("\n   "));
+        if (r.stderr) {
+          const errLines = r.stderr.split("\n").filter((l: string) => l.trim()).slice(0, 5);
+          if (errLines.length) emit("   ⚠ " + errLines.join("\n   ⚠ "));
+        }
+        return r;
+      };
+
+      // 1. Check Node.js
+      emit("\n🔍 Checking Node.js...");
+      const nodeCheck = await vpsManager.execCommand(server, `node --version 2>/dev/null || echo "NOT_FOUND"`);
+      if (nodeCheck.stdout.includes("NOT_FOUND") || !nodeCheck.stdout.trim().startsWith("v")) {
+        emit("   ⬇ Node.js not found — installing via nvm (1-3 min)...");
+        await execStep("Installing Node.js 20 via nvm",
+          `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && ${nvmSource} && nvm install 20 && nvm alias default 20 && nvm use default && ln -sf $(which node) /usr/local/bin/node 2>/dev/null; ln -sf $(which npm) /usr/local/bin/npm 2>/dev/null; true`
+        );
+        emit("   ✓ Node.js installed");
+      } else {
+        emit(`   ✓ Node.js ${nodeCheck.stdout.trim()}`);
+      }
+
+      // 2. Check PM2
+      emit("\n🔍 Checking PM2...");
+      const pm2Check = await vpsManager.execCommand(server, `pm2 --version 2>/dev/null || echo "NOT_FOUND"`);
+      if (pm2Check.stdout.includes("NOT_FOUND")) {
+        await execStep("Installing PM2 globally", `${nvmSource}; npm install -g pm2 && ln -sf $(which pm2) /usr/local/bin/pm2 2>/dev/null; true`);
+        emit("   ✓ PM2 installed");
+      } else {
+        emit(`   ✓ PM2 ${pm2Check.stdout.trim()}`);
+      }
+
+      // 3. Git
+      emit("\n🔍 Checking git...");
+      await execStep("Ensure git", `which git 2>/dev/null || git --version 2>/dev/null || (${installGit}); echo "git ready"`);
+
+      // 4. Clone or pull
+      emit("\n📂 Cloning / updating repo...");
+      await execStep("Clone or pull", `mkdir -p /opt/bots && (git -C ${botDir} pull --ff-only 2>&1 || git clone ${repoUrl} ${botDir} 2>&1)`);
+
+      // 5. .env
+      const envVars: Record<string, string> = { NODE_ENV: "production" };
+      if (order.session_id) envVars["SESSION_ID"] = order.session_id;
+      if (order.db_url) envVars["DB_URL"] = order.db_url;
+      if (order.mode) envVars["MODE"] = order.mode;
+      if (order.timezone) envVars["TIMEZONE"] = order.timezone;
+      const envLines = Object.entries(envVars).map(([k, v]) => `${k}=${String(v).replace(/\r?\n/g, "\\n")}`).join("\n");
+      emit("\n📝 Writing .env file...");
+      await vpsManager.execCommand(server, `printf '%s\\n' ${JSON.stringify(envLines)} > ${botDir}/.env`);
+      emit("   ✓ .env written");
+
+      // 6. npm install
+      await execStep("npm install --production", `${nvmSource}; cd ${botDir} && npm install --production 2>&1 | tail -8`);
+
+      // 7. Start PM2
+      await execStep("Start with PM2",
+        `${nvmSource}; pm2 delete ${pm2Name} 2>/dev/null || true; cd ${botDir} && (pm2 start . --name ${pm2Name} 2>&1 || pm2 start index.js --name ${pm2Name} 2>&1); pm2 save 2>&1`
+      );
+
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await m(
+        `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, expires_at = ?, updated_at = ${updNow} WHERE id = ?`,
+        [pm2Name, server.id, expiresAt, req.params.id]
+      );
+
+      emit("\n─────────────────────────────────────────────────");
+      emit("✅ DEPLOYMENT COMPLETE! Bot is live.");
+      emit(`   PM2: ${pm2Name}`);
+      emit(`   VPS: ${server.label} (${server.host})`);
+      emit("__DONE__:success");
+    } catch (e: any) {
+      const updNow2 = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+      await m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow2} WHERE id = ?`,
+        ["Deploy failed: " + e.message.slice(0, 200), req.params.id]).catch(() => {});
+      emit(`\n❌ FAILED: ${e.message}`);
+      emit("__DONE__:failed");
+    }
+    res.end();
+  });
+
   // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
