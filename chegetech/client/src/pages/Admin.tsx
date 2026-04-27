@@ -10039,6 +10039,24 @@ function FreeProxiesAdminTab() {
     queryFn:()=>fetch("/api/admin/free-proxies",{headers:authHeaders() as any}).then(r=>r.json()),
     refetchInterval: checking ? 5000 : false,
   });
+  const { data: schedData, refetch: refetchSched } = useQuery({
+    queryKey:["/api/admin/proxy-scheduler/status"],
+    queryFn:()=>fetch("/api/admin/proxy-scheduler/status",{headers:authHeaders() as any}).then(r=>r.json()),
+    refetchInterval: 8000,
+  });
+  const sched = schedData || {};
+  const [triggering, setTriggering] = useState(false);
+  const toggleScheduler = async () => {
+    await fetch("/api/admin/proxy-scheduler/toggle",{method:"POST",headers:{...authHeaders(),"Content-Type":"application/json"} as any,body:JSON.stringify({enabled:!sched.enabled})});
+    refetchSched();
+  };
+  const triggerNow = async () => {
+    if(triggering||sched.running) return;
+    setTriggering(true);
+    const r = await fetch("/api/admin/proxy-scheduler/run",{method:"POST",headers:authHeaders() as any}).then(r=>r.json()).catch(()=>({}));
+    toast({title: r.success ? "Scheduler triggered!" : (r.error||"Error"), description: r.success ? "Fetching + checking proxies now..." : undefined});
+    setTriggering(false); setTimeout(()=>refetchSched(),3000);
+  };
   const proxies: any[] = data?.proxies || [];
 
   const alive    = proxies.filter(p=>p.status==='alive').length;
@@ -10114,6 +10132,44 @@ function FreeProxiesAdminTab() {
 
   return (
     <div className="space-y-5">
+      {/* Scheduler Status */}
+      <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/8">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${sched.running?"bg-blue-400 animate-pulse":sched.enabled?"bg-emerald-400":"bg-white/20"}`}/>
+            <span className="text-sm font-semibold text-white">Auto-Scraper</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full border ${sched.running?"bg-blue-500/10 border-blue-500/20 text-blue-400":sched.enabled?"bg-emerald-500/10 border-emerald-500/20 text-emerald-400":"bg-white/5 border-white/10 text-white/30"}`}>
+              {sched.running?"Running…":sched.enabled?"Active":"Disabled"}
+            </span>
+          </div>
+          <div className="flex gap-2 items-center">
+            <Button size="sm" variant="outline" onClick={triggerNow} disabled={triggering||sched.running} className="border-white/10 text-gray-300 h-7 px-3 text-xs gap-1.5">
+              {triggering||sched.running?<Loader2 className="w-3 h-3 animate-spin"/>:<Zap className="w-3 h-3"/>}
+              {sched.running?"Running…":"Run Now"}
+            </Button>
+            <button onClick={toggleScheduler} className={`relative w-10 h-5 rounded-full transition-colors ${sched.enabled?"bg-emerald-500":"bg-white/15"}`}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${sched.enabled?"left-5":"left-0.5"}`}/>
+            </button>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-white/8">
+          {([
+            {label:"Last Run", value: sched.lastRun ? new Date(sched.lastRun).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})+" · "+new Date(sched.lastRun).toLocaleDateString([],{month:"short",day:"numeric"}) : "Never"},
+            {label:"Next Run", value: sched.nextRun ? new Date(sched.nextRun).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})+" · "+new Date(sched.nextRun).toLocaleDateString([],{month:"short",day:"numeric"}) : "—"},
+            {label:"Added Last Run", value: sched.lastStats?.added ?? "—"},
+            {label:"Alive / Checked", value: sched.lastStats ? `${sched.lastStats.alive||0} / ${(sched.lastStats.alive||0)+(sched.lastStats.dead||0)}` : "—"},
+          ] as const).map((s:any)=>(
+            <div key={s.label} className="px-3 py-2 text-center">
+              <p className="text-xs text-gray-500 mb-0.5">{s.label}</p>
+              <p className="text-xs font-semibold text-white">{String(s.value)}</p>
+            </div>
+          ))}
+        </div>
+        <div className="px-4 py-2 border-t border-white/8 text-xs text-white/25 flex justify-between">
+          <span>Sources: ProxyScrape + Geonode (HTTP · HTTPS · SOCKS4 · SOCKS5)</span>
+          <span>Every 6 h · 300 checked · 12 concurrent · dead cleared after 48 h</span>
+        </div>
+      </div>
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
