@@ -48,11 +48,11 @@ const DURATIONS = [
 ];
 
 const STRATEGIES = [
-  { id: "trend", label: "Trend Follow", desc: "Follows last 5 tick direction" },
-  { id: "martingale", label: "Martingale", desc: "Double stake after loss" },
-  { id: "anti_martingale", label: "Anti-Martingale", desc: "Double stake after win" },
-  { id: "digit_over", label: "Digit > 5", desc: "Last digit over 5 (DIGITOVER)" },
-  { id: "digit_under", label: "Digit < 5", desc: "Last digit under 5 (DIGITUNDER)" },
+  { id: "trend", label: "Trend Follow", desc: "Weighted multi-timeframe momentum + RSI filter" },
+  { id: "martingale", label: "Martingale", desc: "Reversion after loss, momentum on win" },
+  { id: "anti_martingale", label: "Anti-Martingale", desc: "RSI momentum ride on winning streak" },
+  { id: "digit_over", label: "Digit > 4", desc: "Last digit over 4 — 50% base probability" },
+  { id: "digit_under", label: "Digit < 5", desc: "Last digit under 5 — 50% base probability" },
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -66,36 +66,97 @@ type Tick = { epoch: number; quote: number; pip_size?: number };
 type AccountInfo = { loginid: string; balance: number; currency: string; is_virtual: boolean };
 
 // ─── Strategy engine ──────────────────────────────────────────────────────────
+
+/** Weighted RSI over a tick array (0–100). Uses price changes, not just direction. */
+function calcRSI(ticks: Tick[], period = 14): number {
+  if (ticks.length < period + 1) return 50;
+  const changes = ticks.slice(-(period + 1)).map((t, i, a) =>
+    i === 0 ? 0 : t.quote - a[i - 1].quote
+  ).slice(1);
+  const gains = changes.filter(c => c > 0).reduce((s, c) => s + c, 0) / period;
+  const losses = Math.abs(changes.filter(c => c < 0).reduce((s, c) => s + c, 0)) / period;
+  if (losses === 0) return 100;
+  return 100 - 100 / (1 + gains / losses);
+}
+
+/** Weighted momentum score: recent ticks count more (linear weight). Returns positive = bullish, negative = bearish. */
+function weightedMomentum(ticks: Tick[], window: number): number {
+  const slice = ticks.slice(-window);
+  let score = 0;
+  for (let i = 1; i < slice.length; i++) {
+    const weight = i; // more recent = higher weight
+    if (slice[i].quote > slice[i - 1].quote) score += weight;
+    else if (slice[i].quote < slice[i - 1].quote) score -= weight;
+  }
+  return score;
+}
+
+/** EMA of last N ticks. */
+function ema(ticks: Tick[], period: number): number {
+  const k = 2 / (period + 1);
+  let val = ticks[ticks.length - period].quote;
+  for (let i = ticks.length - period + 1; i < ticks.length; i++) {
+    val = ticks[i].quote * k + val * (1 - k);
+  }
+  return val;
+}
+
 function getSignal(
   strategy: string,
   ticks: Tick[],
   lastPnl: number | null,
 ): "CALL" | "PUT" | "DIGITOVER" | "DIGITUNDER" | null {
-  if (ticks.length < 6) return null;
-  const recent = ticks.slice(-6);
+  if (ticks.length < 25) return null; // need enough data for quality signals
 
   if (strategy === "trend") {
-    const ups = recent.filter((t, i) => i > 0 && t.quote > recent[i - 1].quote).length;
-    const downs = 5 - ups;
-    if (ups >= 4) return "CALL";
-    if (downs >= 4) return "PUT";
+    // Multi-timeframe: short EMA vs long EMA crossover + RSI filter + weighted momentum confirmation
+    if (ticks.length < 30) return null;
+    const shortEma = ema(ticks, 5);
+    const longEma  = ema(ticks, 20);
+    const rsi      = calcRSI(ticks, 14);
+    const momentum = weightedMomentum(ticks, 10);
+
+    // Bullish: short EMA above long EMA, RSI not overbought (< 70), positive weighted momentum
+    if (shortEma > longEma && rsi > 40 && rsi < 70 && momentum > 0) return "CALL";
+    // Bearish: short EMA below long EMA, RSI not oversold (> 30), negative weighted momentum
+    if (shortEma < longEma && rsi > 30 && rsi < 60 && momentum < 0) return "PUT";
     return null;
   }
 
   if (strategy === "martingale") {
-    if (lastPnl === null || lastPnl >= 0) {
-      const ups = recent.filter((t, i) => i > 0 && t.quote > recent[i - 1].quote).length;
-      return ups >= 3 ? "CALL" : "PUT";
+    const rsi      = calcRSI(ticks, 10);
+    const momentum = weightedMomentum(ticks, 8);
+
+    if (lastPnl !== null && lastPnl < 0) {
+      // After a loss: mean reversion — bet against the recent extreme
+      if (rsi > 65 && momentum > 0) return "PUT";   // overbought → fade up-move
+      if (rsi < 35 && momentum < 0) return "CALL";  // oversold  → fade down-move
+      return null; // no clear reversal setup, skip
     }
-    const ups = recent.filter((t, i) => i > 0 && t.quote > recent[i - 1].quote).length;
-    return ups >= 3 ? "CALL" : "PUT";
+    // Normal / after win: short-term momentum
+    if (rsi > 55 && momentum > 0) return "CALL";
+    if (rsi < 45 && momentum < 0) return "PUT";
+    return null;
   }
 
   if (strategy === "anti_martingale") {
-    const ups = recent.filter((t, i) => i > 0 && t.quote > recent[i - 1].quote).length;
-    return ups >= 3 ? "CALL" : "PUT";
+    // RSI + momentum: only enter when trend is confirmed and not overextended
+    const rsi      = calcRSI(ticks, 14);
+    const momentum = weightedMomentum(ticks, 12);
+
+    if (lastPnl !== null && lastPnl > 0) {
+      // On a winning streak: stay in the direction of the trend if it's still strong
+      if (rsi > 52 && momentum > 0) return "CALL";
+      if (rsi < 48 && momentum < 0) return "PUT";
+      return null;
+    }
+    // First trade: enter only on strong confirmed signal
+    if (rsi > 58 && momentum > 0) return "CALL";
+    if (rsi < 42 && momentum < 0) return "PUT";
+    return null;
   }
 
+  // Digit strategies: always fire (signal quality comes from barrier choice)
   if (strategy === "digit_over") return "DIGITOVER";
   if (strategy === "digit_under") return "DIGITUNDER";
 
@@ -112,7 +173,7 @@ function getMartingaleStake(
     return Math.min(lastStake * 2, baseStake * 16);
   }
   if (strategy === "anti_martingale" && lastPnl !== null && lastPnl > 0) {
-    return Math.min(lastStake * 2, baseStake * 16);
+    return Math.min(lastStake * 2, baseStake * 8); // cap at 8x (less aggressive)
   }
   return baseStake;
 }
@@ -187,7 +248,8 @@ export default function BotPage() {
     const dur = DURATIONS[durIdx];
     const contractType = signal;
     const isDigit = signal.startsWith("DIGIT");
-    const barrier = isDigit ? (signal === "DIGITOVER" ? "5" : "4") : undefined;
+    // DIGITOVER "4" → win if last digit is 5-9 (50%). DIGITUNDER "5" → win if digit 0-4 (50%).
+    const barrier = isDigit ? (signal === "DIGITOVER" ? "4" : "5") : undefined;
 
     const params: any = {
       amount: stake,
