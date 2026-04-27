@@ -6283,14 +6283,22 @@ function VpsSellerTab() {
     }).then((r) => r.json());
   }
 
+  const [view, setView] = useState<"orders" | "plans">("orders");
+
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["/api/admin/vps-orders"],
     queryFn: () => aFetch("/api/admin/vps-orders"),
     refetchInterval: 30000,
   });
 
+  const { data: plansData, isLoading: plansLoading, refetch: refetchPlans } = useQuery<any>({
+    queryKey: ["/api/admin/vps-plans"],
+    queryFn: () => aFetch("/api/admin/vps-plans"),
+  });
+
   const orders: any[] = data?.orders || [];
   const stats = data?.stats || {};
+  const allPlans: any[] = plansData?.plans || [];
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -6299,6 +6307,76 @@ function VpsSellerTab() {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [showPass, setShowPass] = useState<Record<number, boolean>>({});
+
+  // Plans CRUD state
+  const emptyPlanForm = { name: "", ram: "", cpu: "", storage: "", bandwidth: "", price_kes: "", popular: false, active: true, description: "", sort_order: "0" };
+  const [planForm, setPlanForm] = useState({ ...emptyPlanForm });
+  const [showPlanCreate, setShowPlanCreate] = useState(false);
+  const [editPlan, setEditPlan] = useState<any | null>(null);
+  const [savingPlan, setSavingPlan] = useState(false);
+  const [confirmDeletePlan, setConfirmDeletePlan] = useState<number | null>(null);
+
+  async function handleCreatePlan() {
+    setSavingPlan(true);
+    try {
+      const d = await aFetch("/api/admin/vps-plans", { method: "POST", body: JSON.stringify({ ...planForm, price_kes: Number(planForm.price_kes) || 0, sort_order: Number(planForm.sort_order) || 0 }) });
+      if (d.success) { toast({ title: "Plan created" }); setShowPlanCreate(false); setPlanForm({ ...emptyPlanForm }); qc.invalidateQueries({ queryKey: ["/api/admin/vps-plans"] }); }
+      else toast({ title: "Error", description: d.error, variant: "destructive" });
+    } finally { setSavingPlan(false); }
+  }
+  async function handleUpdatePlan() {
+    if (!editPlan) return;
+    setSavingPlan(true);
+    try {
+      const d = await aFetch(`/api/admin/vps-plans/${editPlan.id}`, { method: "PUT", body: JSON.stringify({ ...planForm, price_kes: Number(planForm.price_kes) || 0, sort_order: Number(planForm.sort_order) || 0 }) });
+      if (d.success) { toast({ title: "Plan updated" }); setEditPlan(null); qc.invalidateQueries({ queryKey: ["/api/admin/vps-plans"] }); }
+      else toast({ title: "Error", description: d.error, variant: "destructive" });
+    } finally { setSavingPlan(false); }
+  }
+  async function handleDeletePlan(id: number) {
+    const d = await aFetch(`/api/admin/vps-plans/${id}`, { method: "DELETE" });
+    if (d.success) { toast({ title: "Plan deleted" }); setConfirmDeletePlan(null); qc.invalidateQueries({ queryKey: ["/api/admin/vps-plans"] }); }
+    else toast({ title: "Error", description: d.error, variant: "destructive" });
+  }
+  function openEditPlan(p: any) {
+    setPlanForm({ name: p.name || "", ram: p.ram || "", cpu: p.cpu || "", storage: p.storage || "", bandwidth: p.bandwidth || "", price_kes: String(p.price_kes || ""), popular: !!p.popular, active: p.active !== false && p.active !== 0, description: p.description || "", sort_order: String(p.sort_order || 0) });
+    setEditPlan(p);
+  }
+
+  const PlanFormModal = ({ title, onSubmit, onClose }: { title: string; onSubmit: () => void; onClose: () => void }) => (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="w-full max-w-md bg-gray-900 border border-white/10 rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between p-5 border-b border-white/8">
+          <h3 className="font-bold text-white">{title}</h3>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            {([["name","Plan Name"],["price_kes","Price (KES)"],["ram","RAM"],["cpu","CPU"],["storage","Storage"],["bandwidth","Bandwidth"],["sort_order","Sort Order"],["description","Description"]] as [string,string][]).map(([k,l]) => (
+              <div key={k} className={k === "description" || k === "name" ? "col-span-2" : ""}>
+                <label className="text-xs text-white/50 block mb-1">{l}</label>
+                <input className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-cyan-500/50" value={(planForm as any)[k]} onChange={e => setPlanForm(f => ({ ...f, [k]: e.target.value }))} placeholder={l} />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-4 pt-1">
+            {([["popular","⭐ Mark as Popular"],["active","✅ Active (visible)"]] as [string,string][]).map(([k,l]) => (
+              <label key={k} className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4 accent-cyan-500" checked={(planForm as any)[k]} onChange={e => setPlanForm(f => ({ ...f, [k]: e.target.checked }))} />
+                <span className="text-sm text-white/60">{l}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="flex gap-3 p-5 border-t border-white/8">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-white/10 text-white/60 text-sm">Cancel</button>
+          <button onClick={onSubmit} disabled={savingPlan} className="flex-1 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+            {savingPlan && <Loader2 className="w-4 h-4 animate-spin" />}{savingPlan ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   const emptyForm = { customer_name: "", customer_email: "", customer_phone: "", plan_name: "Standard", ram: "2 GB", cpu: "2 vCPU", storage: "50 GB SSD", bandwidth: "2 TB/mo", price_kes: "1500", status: "pending", assigned_ip: "", server_username: "root", server_password: "", ssh_port: "22", os_type: "ubuntu", notes: "", paid_at: "", expires_at: "" };
   const [form, setForm] = useState({ ...emptyForm });
@@ -6430,17 +6508,86 @@ function VpsSellerTab() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2"><Server className="w-5 h-5 text-cyan-400" /> VPS Sales Dashboard</h2>
-          <p className="text-white/40 text-sm mt-0.5">Manage customer VPS orders and subscriptions</p>
+          <p className="text-white/40 text-sm mt-0.5">Manage VPS plans and customer orders</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => refetch()} className="px-3 py-2 rounded-xl border border-white/10 text-white/60 hover:text-white text-sm flex items-center gap-1.5 transition-colors"><RefreshCw className="w-3.5 h-3.5" />Refresh</button>
-          <button onClick={() => { setForm({ ...emptyForm }); setShowCreate(true); }} className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-sm flex items-center gap-1.5 transition-colors"><Plus className="w-4 h-4" />New Order</button>
+          {/* View toggle */}
+          <div className="flex bg-white/5 rounded-xl p-1 border border-white/8">
+            <button onClick={() => setView("orders")} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${view === "orders" ? "bg-cyan-600 text-white" : "text-white/50 hover:text-white"}`}>Orders</button>
+            <button onClick={() => setView("plans")} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${view === "plans" ? "bg-cyan-600 text-white" : "text-white/50 hover:text-white"}`}>Plans</button>
+          </div>
+          {view === "orders" && <>
+            <button onClick={() => refetch()} className="px-3 py-2 rounded-xl border border-white/10 text-white/60 hover:text-white text-sm flex items-center gap-1.5 transition-colors"><RefreshCw className="w-3.5 h-3.5" />Refresh</button>
+            <button onClick={() => { setForm({ ...emptyForm }); setShowCreate(true); }} className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-sm flex items-center gap-1.5 transition-colors"><Plus className="w-4 h-4" />New Order</button>
+          </>}
+          {view === "plans" && <>
+            <button onClick={() => refetchPlans()} className="px-3 py-2 rounded-xl border border-white/10 text-white/60 hover:text-white text-sm flex items-center gap-1.5 transition-colors"><RefreshCw className="w-3.5 h-3.5" />Refresh</button>
+            <button onClick={() => { setPlanForm({ ...emptyPlanForm }); setShowPlanCreate(true); }} className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-sm flex items-center gap-1.5 transition-colors"><Plus className="w-4 h-4" />New Plan</button>
+          </>}
         </div>
       </div>
 
+      {/* ── PLANS VIEW ─────────────────────────────────────────────── */}
+      {view === "plans" && (
+        <div className="space-y-4">
+          {plansLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-cyan-400 animate-spin" /></div>
+          ) : allPlans.length === 0 ? (
+            <div className="text-center py-16 text-white/30">
+              <Server className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">No VPS plans yet</p>
+              <p className="text-sm mt-1">Click "New Plan" to create your first plan. It'll appear on the VPS page for customers to purchase.</p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {allPlans.map((p: any) => (
+                <div key={p.id} className={`relative rounded-2xl border p-5 flex flex-col gap-3 ${p.popular ? "border-cyan-500/30 bg-cyan-950/20" : "border-white/8 bg-white/3"}`}>
+                  {p.popular && <span className="absolute -top-2 left-4 bg-cyan-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Popular</span>}
+                  {!p.active && <span className="absolute -top-2 right-4 bg-gray-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Hidden</span>}
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="font-bold text-white text-base">{p.name}</h3>
+                      {p.description && <p className="text-white/40 text-xs mt-0.5">{p.description}</p>}
+                    </div>
+                    <span className="text-cyan-400 font-bold text-sm whitespace-nowrap">KES {Number(p.price_kes || 0).toLocaleString()}/mo</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 text-xs text-white/50">
+                    {[["CPU", p.cpu],["RAM", p.ram],["Storage", p.storage],["Bandwidth", p.bandwidth]].filter(([,v]) => v).map(([k,v]) => (
+                      <span key={k} className="flex gap-1"><span className="text-white/25">{k}:</span>{v}</span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-auto pt-1">
+                    <button onClick={() => openEditPlan(p)} className="flex-1 py-2 rounded-lg bg-white/6 hover:bg-white/10 text-white/70 hover:text-white text-xs font-medium flex items-center justify-center gap-1 transition-colors"><Pencil className="w-3.5 h-3.5" />Edit</button>
+                    <button onClick={() => setConfirmDeletePlan(p.id)} className="py-2 px-3 rounded-lg hover:bg-red-500/10 text-white/30 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Plan modals */}
+          {showPlanCreate && <PlanFormModal title="New VPS Plan" onSubmit={handleCreatePlan} onClose={() => setShowPlanCreate(false)} />}
+          {editPlan && <PlanFormModal title={`Edit — ${editPlan.name}`} onSubmit={handleUpdatePlan} onClose={() => setEditPlan(null)} />}
+          {confirmDeletePlan !== null && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+              <div className="bg-gray-900 border border-red-500/20 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
+                <Trash2 className="w-10 h-10 text-red-400 mx-auto mb-3" />
+                <h3 className="text-white font-bold mb-2">Delete this plan?</h3>
+                <p className="text-white/40 text-sm mb-5">Existing orders will not be affected.</p>
+                <div className="flex gap-3">
+                  <button onClick={() => setConfirmDeletePlan(null)} className="flex-1 py-2.5 rounded-xl border border-white/10 text-white/60 text-sm">Cancel</button>
+                  <button onClick={() => handleDeletePlan(confirmDeletePlan!)} className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm">Delete</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ORDERS VIEW ────────────────────────────────────────────── */}
+      {view === "orders" && <>
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
@@ -6568,6 +6715,7 @@ function VpsSellerTab() {
           </div>
         </div>
       )}
+      </>}
     </div>
   );
 }
