@@ -1127,6 +1127,17 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         return r;
       };
 
+      // 0. Kill any leftover npm/git processes from previous failed deploys
+      emit("\n🧹 Clearing any stuck processes from previous deploys...");
+      const loadInfo = await vpsManager.execCommand(server,
+        `cat /proc/loadavg 2>/dev/null; pkill -TERM -f "npm install" 2>/dev/null; pkill -TERM -f "npm ci" 2>/dev/null; pkill -TERM -f "git clone" 2>/dev/null; sleep 2; pkill -KILL -f "npm install" 2>/dev/null; pkill -KILL -f "npm ci" 2>/dev/null; echo "cleanup_done"`,
+        30000
+      );
+      const loadLine = (loadInfo.stdout || "").split("\n")[0] || "";
+      const loadAvg = loadLine.split(" ")[0];
+      if (loadAvg) emit(`   📊 VPS load: ${loadAvg} (1min avg)`);
+      emit("   ✓ Cleanup done");
+
       // 1. Ensure Node.js + PM2 — source nvm first so PATH is always correct
       emit("\n🔍 Checking Node.js & PM2...");
       const envCheck = await vpsManager.execCommand(
