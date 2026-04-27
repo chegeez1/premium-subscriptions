@@ -8447,8 +8447,11 @@ const deployLogRef = useRef<HTMLDivElement>(null);
             {selectedOrder.pm2Name && (
               <div><p className="text-xs text-gray-500">PM2 Name</p><p className="text-emerald-400 text-xs">{selectedOrder.pm2Name || selectedOrder.pm2_name}</p></div>
             )}
+            {selectedOrder.vpsLabel && (
+              <div><p className="text-xs text-gray-500">VPS Server</p><p className="text-sky-300 text-xs font-medium">{selectedOrder.vpsLabel}</p></div>
+            )}
             {selectedOrder.deployedAt && (
-              <div><p className="text-xs text-gray-500">Deployed</p><p className="text-gray-200 text-xs">{new Date(selectedOrder.deployedAt).toLocaleString()}</p></div>
+              <div><p className="text-xs text-gray-500">Last Deployed</p><p className="text-gray-200 text-xs">{new Date(selectedOrder.deployedAt).toLocaleString()}</p></div>
             )}
           </div>
 
