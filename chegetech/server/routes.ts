@@ -32,6 +32,8 @@ import {
   primarySuperAdminOnly,
   requirePermission,
   setStorageRef,
+  createCustomerJwt,
+  verifyCustomerJwt,
 } from "./auth";
 import { getPaystackSecretKey, getPaystackPublicKey, getSecretsStatus, getResendApiKey, getResendFrom, getResendOtpFrom, getEmailUser, getEmailPass, getCloudflareApiToken } from "./secrets";
 import nodemailer from "nodemailer";
@@ -250,11 +252,23 @@ async function sendWalletTransferEmail(opts: {
 }
 
 async function customerAuthMiddleware(req: any, res: any, next: any) {
-  // Cookie-first: read HttpOnly cookie set on login; fall back to Bearer header for API clients
+  // Cookie-first; fall back to Bearer header for API clients
   const token: string =
     req.cookies?.customer_token ||
     (req.headers.authorization ? req.headers.authorization.replace("Bearer ", "") : "");
   if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+  // ── JWT path (fast — no DB session lookup) ──
+  const jwtPayload = verifyCustomerJwt(token);
+  if (jwtPayload) {
+    const customer = await storage.getCustomerById(jwtPayload.customerId);
+    if (!customer) return res.status(401).json({ error: "Unauthorized" });
+    if (customer.suspended) return res.status(403).json({ error: "Account suspended. Contact support." });
+    req.customer = customer;
+    return next();
+  }
+
+  // ── Legacy UUID session fallback ──
   const session = await storage.getCustomerSession(token);
   if (!session) return res.status(401).json({ error: "Unauthorized" });
   if (new Date(session.expiresAt) < new Date()) {
@@ -2096,7 +2110,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       await storage.updateCustomer(customer.id, { emailVerified: true, verificationCode: null, verificationExpires: null });
 
-      const sessionToken = uuidv4();
+      const sessionToken = createCustomerJwt(customer.id, customer.email);
       const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
       const ua = req.headers["user-agent"] || "";
       await storage.createCustomerSession(customer.id, sessionToken, expiresAt, {
@@ -2135,7 +2149,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       await storage.updateCustomer(customer.id, { emailVerified: true, verificationCode: null, verificationExpires: null });
 
-      const token = uuidv4();
+      const token = createCustomerJwt(customer.id, customer.email);
       const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
       const regUa = req.headers["user-agent"] || "";
       await storage.createCustomerSession(customer.id, token, expiresAt, {
@@ -2174,7 +2188,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const valid = await bcrypt.compare(password, customer.passwordHash);
       if (!valid) return res.status(401).json({ success: false, error: "Invalid email or password" });
 
-      const token = uuidv4();
+      const token = createCustomerJwt(customer.id, customer.email);
       const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
 
       // ─── Login IP & geo detection ─────────────────────────────────────
