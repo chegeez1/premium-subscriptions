@@ -2097,7 +2097,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await storage.updateCustomer(customer.id, { emailVerified: true, verificationCode: null, verificationExpires: null });
 
       const sessionToken = uuidv4();
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
       const ua = req.headers["user-agent"] || "";
       await storage.createCustomerSession(customer.id, sessionToken, expiresAt, {
         ip: getReqIp(req), userAgent: ua, deviceName: parseDeviceName(ua),
@@ -2107,7 +2107,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         httpOnly: true,
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
-        maxAge: 30 * 24 * 60 * 60 * 1000,
+        maxAge: 3 * 24 * 60 * 60 * 1000,
         path: "/",
       });
 
@@ -2136,18 +2136,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await storage.updateCustomer(customer.id, { emailVerified: true, verificationCode: null, verificationExpires: null });
 
       const token = uuidv4();
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
       const regUa = req.headers["user-agent"] || "";
       await storage.createCustomerSession(customer.id, token, expiresAt, {
         ip: getReqIp(req), userAgent: regUa, deviceName: parseDeviceName(regUa),
       });
 
-      // Set persistent HttpOnly cookie (30 days)
+      // Set persistent HttpOnly cookie (3 days)
       res.cookie("customer_token", token, {
         httpOnly: true,
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
-        maxAge: 30 * 24 * 60 * 60 * 1000,
+        maxAge: 3 * 24 * 60 * 60 * 1000,
         path: "/",
       });
 
@@ -2175,7 +2175,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!valid) return res.status(401).json({ success: false, error: "Invalid email or password" });
 
       const token = uuidv4();
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
 
       // ─── Login IP & geo detection ─────────────────────────────────────
       const rawIp = getReqIp(req);
@@ -2184,12 +2184,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ip: rawIp, userAgent, deviceName: parseDeviceName(userAgent),
       });
 
-      // Set persistent HttpOnly cookie (30 days, same lifetime as the session)
+      // Set persistent HttpOnly cookie (3 days, same lifetime as the session)
       res.cookie("customer_token", token, {
         httpOnly: true,
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
-        maxAge: 30 * 24 * 60 * 60 * 1000,
+        maxAge: 3 * 24 * 60 * 60 * 1000,
         path: "/",
       });
 
@@ -3888,7 +3888,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         );
         return res.json({ success: true, status: "failed" });
       }
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
       await runMutation(
         `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, expires_at = ?, updated_at = ${updNow} WHERE id = ?`,
         [pm2Name, server.id, expiresAt, orderId]
@@ -5699,9 +5699,9 @@ echo "    Check logs: pm2 logs chege-deploy-agent"
       if (reseller.status !== "approved") return res.status(403).json({ success: false, error: "Account not yet approved" });
       if (reseller.suspended) return res.status(403).json({ success: false, error: "Account suspended" });
       const token = crypto.randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
       await storage.createResellerSession(reseller.reseller_id || reseller.id, token, expiresAt);
-      res.cookie("reseller_token", token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 30 * 24 * 60 * 60 * 1000 });
+      res.cookie("reseller_token", token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 3 * 24 * 60 * 60 * 1000 });
       const { passwordHash: _ph, ...safe } = reseller;
       res.json({ success: true, reseller: safe });
     } catch (err: any) {
