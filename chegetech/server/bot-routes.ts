@@ -1573,19 +1573,19 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
 
 
 
-  // ── Free Temp Numbers (sms-online.co scraper) ──────────────────────────────
-  function fetchSmsHtml(urlPath: string): Promise<string> {
+
+  // ── Free Temp Numbers — multi-source scraper ────────────────────────────────
+  function fetchPageHtml(hostname: string, urlPath: string, extraHeaders?: Record<string,string>): Promise<string> {
     return new Promise((resolve, reject) => {
       const httpsModule = require('https') as typeof import('https');
       const req = httpsModule.request({
-        hostname: 'sms-online.co',
-        path: urlPath,
-        method: 'GET',
+        hostname, path: urlPath, method: 'GET',
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.5',
           'Accept-Encoding': 'identity',
+          ...(extraHeaders || {}),
         },
       }, (res) => {
         let data = '';
@@ -1597,33 +1597,111 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     });
   }
 
-  app.get('/api/free-numbers', async (_req, res) => {
+  // Numbers list cache — 10 minutes
+  let numbersCache: { data: any[]; ts: number } | null = null;
+
+  async function scrapeAllNumbers(): Promise<any[]> {
+    if (numbersCache && Date.now() - numbersCache.ts < 10 * 60 * 1000) return numbersCache.data;
+    const results: any[] = [];
+
+    // ── sms-online.co ─────────────────────────────────────────────────────────
     try {
-      const html = await fetchSmsHtml('/receive-free-sms');
-      const numbers: { number: string; country: string; digits: string }[] = [];
+      const html = await fetchPageHtml('sms-online.co', '/receive-free-sms');
       const rx = /number-boxes-item-number">([^<]+)<\/h4>\s*<h5[^>]*>([^<]+)<\/h5>[\s\S]*?href="[^"]+\/receive-free-sms\/(\d+)"/g;
       let m: RegExpExecArray | null;
+      while ((m = rx.exec(html)) !== null)
+        results.push({ number: m[1].trim(), country: m[2].trim(), digits: m[3].trim(), source: 'sms-online' });
+    } catch (e: any) { console.error('[numbers] sms-online.co:', e.message); }
+
+    // ── receive-sms-online.info ───────────────────────────────────────────────
+    try {
+      const html = await fetchPageHtml('receive-sms-online.info', '/');
+      const seen = new Set<string>();
+      const rx = /href="((\d{8,15})-([^"]{2,30}))"/g;
+      let m: RegExpExecArray | null;
       while ((m = rx.exec(html)) !== null) {
-        numbers.push({ number: m[1].trim(), country: m[2].trim(), digits: m[3].trim() });
+        const digits = m[2];
+        if (seen.has(digits)) continue;
+        seen.add(digits);
+        const country = m[3].replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+        results.push({ number: '+' + digits, country, digits, source: 'rsoi' });
       }
-      res.json({ success: true, numbers });
+    } catch (e: any) { console.error('[numbers] receive-sms-online.info:', e.message); }
+
+    // ── receive-sms.cc ────────────────────────────────────────────────────────
+    try {
+      const html = await fetchPageHtml('receive-sms.cc', '/');
+      const rx = /href="(\/[A-Z]{2}-Phone-Number\/([\d]+))"[\s\S]{0,300}?<p class="text-muted mb-1">([^<]+)<\/p>\s*<h4>\+?([\d ]+)<\/h4>/g;
+      let m: RegExpExecArray | null;
+      while ((m = rx.exec(html)) !== null) {
+        const digits = m[2];
+        const country = m[3].replace(' Phone Number', '').trim();
+        const number = '+' + m[4].replace(/\s/g, '');
+        results.push({ number, country, digits, source: 'rscc', rsccPath: m[1] });
+      }
+    } catch (e: any) { console.error('[numbers] receive-sms.cc:', e.message); }
+
+    numbersCache = { data: results, ts: Date.now() };
+    console.log(`[numbers] total scraped: ${results.length}`);
+    return results;
+  }
+
+  app.get('/api/free-numbers', async (_req, res) => {
+    try {
+      const numbers = await scrapeAllNumbers();
+      res.json({ success: true, numbers, total: numbers.length });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
   app.get('/api/free-numbers/:digits/sms', async (req, res) => {
     try {
       const { digits } = req.params;
+      const source = (req.query.source as string) || 'sms-online';
       if (!/^\d{5,20}$/.test(digits)) return res.status(400).json({ success: false, error: 'Invalid digits' });
-      const html = await fetchSmsHtml(`/receive-free-sms/${digits}`);
+
       const messages: { sender: string; time: string; body: string }[] = [];
-      const rx = /list-item-title">\s*([\s\S]*?)\s*<\/h3>[\s\S]*?list-item-meta[^>]*>[\s\S]*?<span>([^<]+)<\/span>[\s\S]*?list-item-content break-word">([\s\S]*?)<\/div>/g;
-      let m: RegExpExecArray | null;
-      while ((m = rx.exec(html)) !== null) {
-        const sender = m[1].replace(/<[^>]+>/g, '').trim();
-        const time = m[2].trim();
-        const body = m[3].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
-        if (sender && body) messages.push({ sender, time, body });
+
+      if (source === 'rsoi') {
+        // receive-sms-online.info AJAX endpoint
+        const ts = Math.floor(Date.now() / 1000).toString();
+        const data = await fetchPageHtml('receive-sms-online.info', `/get_sms_register.php?phone=${digits}`, {
+          'Referer': `https://receive-sms-online.info/${digits}`,
+          'X-Alt-Data': ts,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json, text/javascript, */*; q=0.01',
+        });
+        try {
+          const json = JSON.parse(data) as any[];
+          for (const item of json) {
+            if (item.mesaj && item.mesaj !== 'no result') {
+              messages.push({ sender: item.telefon || 'Unknown', time: item.data || '', body: item.mesaj });
+            }
+          }
+        } catch {}
+      } else if (source === 'rscc') {
+        // receive-sms.cc — try to scrape the number page
+        const numbers = await scrapeAllNumbers();
+        const found = numbers.find((n: any) => n.digits === digits && n.source === 'rscc');
+        if (found && found.rsccPath) {
+          const html = await fetchPageHtml('receive-sms.cc', found.rsccPath);
+          const rx = /<div class="card-body">\s*<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>([^<]+)<\/p>/g;
+          let m: RegExpExecArray | null;
+          while ((m = rx.exec(html)) !== null)
+            messages.push({ sender: m[1].trim(), time: m[3].trim(), body: m[2].trim() });
+        }
+      } else {
+        // sms-online.co — server-rendered HTML
+        const html = await fetchPageHtml('sms-online.co', `/receive-free-sms/${digits}`);
+        const rx = /list-item-title">\s*([\s\S]*?)\s*<\/h3>[\s\S]*?list-item-meta[^>]*>[\s\S]*?<span>([^<]+)<\/span>[\s\S]*?list-item-content break-word">([\s\S]*?)<\/div>/g;
+        let m: RegExpExecArray | null;
+        while ((m = rx.exec(html)) !== null) {
+          const sender = m[1].replace(/<[^>]+>/g, '').trim();
+          const time = m[2].trim();
+          const body = m[3].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+          if (sender && body) messages.push({ sender, time, body });
+        }
       }
+
       res.json({ success: true, messages });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
