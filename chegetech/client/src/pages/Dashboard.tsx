@@ -1264,10 +1264,27 @@ export default function Dashboard() {
                           </div>
                           <div>
                             <p className="font-semibold text-white text-sm">{bot.bot_name || "WhatsApp Bot"}</p>
-                            <p className="text-xs text-white/40 mt-0.5">Deployed {new Date(bot.created_at).toLocaleDateString()}</p>
+                            {bot.deployed_at ? (
+                              <p className="text-xs text-white/40 mt-0.5">
+                                Last updated: {(() => {
+                                  const diff = Date.now() - new Date(bot.deployed_at).getTime();
+                                  if (diff < 60000) return "just now";
+                                  if (diff < 3600000) return `${Math.floor(diff/60000)}m ago`;
+                                  if (diff < 86400000) return `${Math.floor(diff/3600000)}h ago`;
+                                  return new Date(bot.deployed_at).toLocaleDateString();
+                                })()}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-white/40 mt-0.5">Ordered {new Date(bot.created_at).toLocaleDateString()}</p>
+                            )}
                           </div>
                         </div>
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${s.bg} ${s.color}`}>{s.label}</span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${s.bg} ${s.color}`}>{s.label}</span>
+                          {bot.deployed_at && Date.now() - new Date(bot.deployed_at).getTime() < 86400000 && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">🆕 Updated</span>
+                          )}
+                        </div>
                       </div>
                       {bot.pm2_name && (
                         <div className="mt-3 flex items-center gap-2 text-xs text-white/40">
