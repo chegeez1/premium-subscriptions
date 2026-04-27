@@ -11,7 +11,7 @@ import {
   MessageCircle, Send, PlusCircle, Ticket,
   Bell, BellDot, ShoppingCart, TrendingDown, Star, Sparkles,
   MapPin, Monitor, Globe, Wifi, Camera, X, Download, Trophy, ThumbsUp,
-  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal, Edit3, RefreshCw
+  Bot, Play, Square, RotateCw, FileText, Server, Mail, Terminal, Edit3, RefreshCw, Zap
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -206,6 +206,8 @@ export default function Dashboard() {
   const [botStatus, setBotStatus] = useState<any>(null);
   const [botLogs, setBotLogs] = useState<string>("");
   const [botBusy, setBotBusy] = useState<string | null>(null);
+  const [selfDeploying, setSelfDeploying] = useState(false);
+  const [selfDeployMsg, setSelfDeployMsg] = useState<string | null>(null);
   const [botStatusLoading, setBotStatusLoading] = useState(false);
     const [botLogsLoading, setBotLogsLoading] = useState(false);
   const [botEnvVars, setBotEnvVars] = useState<Record<string, string>>({});
@@ -230,6 +232,41 @@ export default function Dashboard() {
       setBotLogs(d?.logs || "(no logs)");
     } finally { setBotLogsLoading(false); }
   }
+  async function selfDeploy(orderId: number) {
+    setSelfDeploying(true);
+    setSelfDeployMsg(null);
+    try {
+      const d = await customerFetch(`/api/customer/bots/${orderId}/self-deploy`, { method: "POST" });
+      if (!d.success) {
+        toast({ title: "Deploy failed", description: d.error, variant: "destructive" });
+        setSelfDeploying(false);
+        return;
+      }
+      setSelfDeployMsg("⚡ Deploying… this takes 1–3 minutes");
+      // Poll status every 5s until deployed or failed
+      const poll = setInterval(async () => {
+        const s = await customerFetch(`/api/customer/bots/${orderId}/status`);
+        setBotStatus(s);
+        if (s?.pm2Status === "online" || s?.deployed) {
+          clearInterval(poll);
+          setSelfDeploying(false);
+          setSelfDeployMsg(null);
+          toast({ title: "🎉 Bot deployed!", description: "Your bot is now live." });
+          await loadBotLogs(orderId);
+        } else if (s?.message?.toLowerCase().includes("fail") || s?.message?.toLowerCase().includes("error")) {
+          clearInterval(poll);
+          setSelfDeploying(false);
+          setSelfDeployMsg("Deploy failed — check with support");
+        }
+      }, 5000);
+      // Safety timeout — stop polling after 10 min
+      setTimeout(() => { clearInterval(poll); setSelfDeploying(false); }, 600000);
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+      setSelfDeploying(false);
+    }
+  }
+
   async function botAction(orderId: number, action: "restart" | "stop" | "start") {
     setBotBusy(action);
     try {
@@ -2689,7 +2726,28 @@ export default function Dashboard() {
                 ) : !botStatus?.success ? (
                   <p className="text-white/40 text-sm">Couldn't load status</p>
                 ) : !botStatus.deployed ? (
-                  <p className="text-amber-300 text-sm">{botStatus.message || "Not yet deployed"}</p>
+                  <div className="space-y-3">
+                    {selfDeploying ? (
+                      <div className="flex items-center gap-2 text-indigo-300 text-sm">
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        <span>{selfDeployMsg || "Starting deployment..."}</span>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-amber-300 text-sm">{selfDeployMsg || botStatus.message || "Not yet deployed"}</p>
+                        <button
+                          onClick={() => selfDeploy(manageBotId!)}
+                          disabled={selfDeploying}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition-colors disabled:opacity-50"
+                          data-testid="button-self-deploy"
+                        >
+                          <Zap className="w-4 h-4" />
+                          Deploy My Bot Now
+                        </button>
+                        <p className="text-[11px] text-white/30 text-center">Automatically installs and starts your bot on the server. Takes 1–3 min.</p>
+                      </>
+                    )}
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     {botStatus.pm2Name && (
