@@ -339,6 +339,30 @@ export async function initializeDatabase() {
         await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS renewal_reminded TEXT");
         await pgPool.query("ALTER TABLE bot_orders ADD COLUMN IF NOT EXISTS deployment_log TEXT");
         await pgPool.query("CREATE TABLE IF NOT EXISTS bot_pings (id SERIAL PRIMARY KEY, bot_order_id INTEGER NOT NULL, pm2_status TEXT NOT NULL, checked_at TEXT DEFAULT (NOW()::text))");
+        await pgPool.query(`CREATE TABLE IF NOT EXISTS vps_orders (
+          id SERIAL PRIMARY KEY,
+          reference TEXT UNIQUE NOT NULL,
+          customer_name TEXT NOT NULL,
+          customer_email TEXT NOT NULL,
+          customer_phone TEXT,
+          plan_name TEXT NOT NULL,
+          ram TEXT,
+          cpu TEXT,
+          storage TEXT,
+          bandwidth TEXT,
+          price_kes INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          assigned_ip TEXT,
+          server_username TEXT,
+          server_password TEXT,
+          ssh_port INTEGER DEFAULT 22,
+          os_type TEXT DEFAULT 'ubuntu',
+          notes TEXT,
+          paid_at TEXT,
+          expires_at TEXT,
+          created_at TEXT DEFAULT (NOW()::text),
+          updated_at TEXT DEFAULT (NOW()::text)
+        )`);
       // Migrate: add reseller_id to transactions
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
 
