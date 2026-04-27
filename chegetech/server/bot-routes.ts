@@ -1601,7 +1601,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   let numbersCache: { data: any[]; ts: number } | null = null;
 
   async function scrapeAllNumbers(): Promise<any[]> {
-    if (numbersCache && Date.now() - numbersCache.ts < 10 * 60 * 1000) return numbersCache.data;
+    if (numbersCache && Date.now() - numbersCache.ts < 3 * 60 * 1000) return numbersCache.data;
     const results: any[] = [];
 
     // ── sms-online.co ─────────────────────────────────────────────────────────
@@ -1649,7 +1649,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   app.get('/api/free-numbers', async (_req, res) => {
     try {
       const numbers = await scrapeAllNumbers();
-      res.json({ success: true, numbers, total: numbers.length });
+      res.json({ success: true, numbers, total: numbers.length, lastUpdated: new Date().toISOString() });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
