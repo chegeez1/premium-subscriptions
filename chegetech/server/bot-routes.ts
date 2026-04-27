@@ -1857,6 +1857,46 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
   // ── Proxy / Residential IPs ───────────────────────────────────────────────
 
   // Customer: list active plans
+
+  // ── Free Proxy List (geonode.com public API, 5-min cache) ────────────────
+  let freeProxyCache: { data: any[]; ts: number } | null = null;
+  app.get('/api/proxy/free', async (_req, res) => {
+    try {
+      if (freeProxyCache && Date.now() - freeProxyCache.ts < 5 * 60 * 1000) {
+        return res.json({ success: true, proxies: freeProxyCache.data, cached: true });
+      }
+      const axiosM = require('axios');
+      const r = await axiosM.get(
+        'https://proxylist.geonode.com/api/proxy-list?limit=200&page=1&sort_by=lastChecked&sort_type=desc&filterUpTime=50',
+        { headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' }, timeout: 12000 }
+      );
+      const raw: any[] = r.data?.data || [];
+      const proxies = raw.map((p: any) => ({
+        ip: p.ip, port: p.port,
+        type: (p.protocols?.[0] || 'http').toUpperCase(),
+        country: p.country || 'Unknown',
+        countryCode: p.country_code || p.countryCode || '',
+        anonymity: (p.anonymityLevel || 'transparent').toLowerCase(),
+        speed: p.speed || 0,
+        upTime: p.upTime || 0,
+      }));
+      freeProxyCache = { data: proxies, ts: Date.now() };
+      res.json({ success: true, proxies });
+    } catch (e: any) {
+      // fallback to proxyscrape if geonode fails
+      try {
+        const axiosM = require('axios');
+        const r2 = await axiosM.get('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all', { timeout: 10000, responseType: 'text' });
+        const lines: string[] = (r2.data as string).split('\n').map((l: string) => l.trim()).filter((l: string) => l.includes(':'));
+        const proxies = lines.slice(0,150).map((l: string) => { const [ip,port]=l.split(':'); return { ip, port, type:'HTTP', country:'Unknown', countryCode:'', anonymity:'transparent', speed:0, upTime:0 }; });
+        freeProxyCache = { data: proxies, ts: Date.now() };
+        return res.json({ success: true, proxies });
+      } catch {}
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+
   app.get('/api/proxy/plans', async (_req, res) => {
     try {
       const pgMod = await import('./storage');
