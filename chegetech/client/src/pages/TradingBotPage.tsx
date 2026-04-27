@@ -99,54 +99,54 @@ function getIndicators(ticks: Tick[]): IndicatorSnapshot {
 
 // ─── Strategy Engine ──────────────────────────────────────────────────────────
 function getSignal(strategy: string, ticks: Tick[], lastPnl: number | null): { signal: Signal | null; confidence: number } {
-  if (ticks.length < 30) return { signal: null, confidence: 0 };
+  if (ticks.length < 10) return { signal: null, confidence: 0 };
   if (strategy === "digit_over") return { signal: "DIGITOVER", confidence: 50 };
   if (strategy === "digit_under") return { signal: "DIGITUNDER", confidence: 50 };
   const ind = getIndicators(ticks);
   if (strategy === "consensus") {
-    if (ticks.length < 35) return { signal: null, confidence: 0 };
+    if (ticks.length < 15) return { signal: null, confidence: 0 };
     let bull = 0, bear = 0;
-    if (ind.rsi > 55 && ind.rsi < 75) bull++; else if (ind.rsi < 45 && ind.rsi > 25) bear++;
+    if (ind.rsi > 51) bull++; else if (ind.rsi < 49) bear++;
     if (ind.macd > 0) bull++; else if (ind.macd < 0) bear++;
-    if (ind.bbPos > 0.3 && ind.bbPos < 0.9) bull++; else if (ind.bbPos < -0.3 && ind.bbPos > -0.9) bear++;
-    if (ind.momentum > 0.2) bull++; else if (ind.momentum < -0.2) bear++;
+    if (ind.bbPos > 0.05) bull++; else if (ind.bbPos < -0.05) bear++;
+    if (ind.momentum > 0.05) bull++; else if (ind.momentum < -0.05) bear++;
     const conf = Math.round((Math.max(bull, bear) / 4) * 100);
-    if (bull >= 3) return { signal: "CALL", confidence: conf };
-    if (bear >= 3) return { signal: "PUT",  confidence: conf };
+    if (bull >= 2) return { signal: "CALL", confidence: conf };
+    if (bear >= 2) return { signal: "PUT",  confidence: conf };
     return { signal: null, confidence: 0 };
   }
   if (strategy === "trend") {
-    if (ticks.length < 35) return { signal: null, confidence: 0 };
+    if (ticks.length < 15) return { signal: null, confidence: 0 };
     const p = ticks.map(t => t.quote); const se = ema(p, 5), le = ema(p, 25);
-    const sp = Math.abs(se - le) / le; if (sp < 0.00005) return { signal: null, confidence: 0 };
-    if (se > le && ind.rsi > 48 && ind.rsi < 70 && ind.momentum > 0.15) return { signal: "CALL", confidence: Math.min(90, 50 + sp * 5e5) | 0 };
+    const sp = Math.abs(se - le) / le; if (sp < 0.00001) return { signal: null, confidence: 0 };
+    if (se > le && ind.rsi > 46 && ind.rsi < 74 && ind.momentum > 0.05) return { signal: "CALL", confidence: Math.min(90, 50 + sp * 5e5) | 0 };
     if (se < le && ind.rsi < 52 && ind.rsi > 30 && ind.momentum < -0.15) return { signal: "PUT",  confidence: Math.min(90, 50 + sp * 5e5) | 0 };
     return { signal: null, confidence: 0 };
   }
   if (strategy === "mean_reversion") {
     const conf = Math.min(100, Math.abs(ind.bbPos) * 70) | 0;
-    if (ind.bbPos < -1.0 && ind.rsi < 35) return { signal: "CALL", confidence: conf };
-    if (ind.bbPos >  1.0 && ind.rsi > 65) return { signal: "PUT",  confidence: conf };
+    if (ind.bbPos < -0.5 && ind.rsi < 40) return { signal: "CALL", confidence: conf };
+    if (ind.bbPos >  0.5 && ind.rsi > 60) return { signal: "PUT",  confidence: conf };
     return { signal: null, confidence: 0 };
   }
   if (strategy === "martingale") {
     if (lastPnl !== null && lastPnl < 0) {
-      if (ind.rsi > 65 && ind.momentum > 0.1) return { signal: "PUT",  confidence: 70 };
-      if (ind.rsi < 35 && ind.momentum < -0.1) return { signal: "CALL", confidence: 70 };
+      if (ind.rsi > 58 && ind.momentum > 0.05) return { signal: "PUT",  confidence: 70 };
+      if (ind.rsi < 42 && ind.momentum < -0.05) return { signal: "CALL", confidence: 70 };
       return { signal: null, confidence: 0 };
     }
-    if (ind.rsi > 58 && ind.momentum > 0.2) return { signal: "CALL", confidence: 60 };
-    if (ind.rsi < 42 && ind.momentum < -0.2) return { signal: "PUT",  confidence: 60 };
+    if (ind.rsi > 52 && ind.momentum > 0.05) return { signal: "CALL", confidence: 60 };
+    if (ind.rsi < 48 && ind.momentum < -0.05) return { signal: "PUT",  confidence: 60 };
     return { signal: null, confidence: 0 };
   }
   if (strategy === "anti_martingale") {
     if (lastPnl !== null && lastPnl > 0) {
-      if (ind.rsi > 52 && ind.rsi < 72 && ind.momentum > 0.1) return { signal: "CALL", confidence: 68 };
-      if (ind.rsi < 48 && ind.rsi > 28 && ind.momentum < -0.1) return { signal: "PUT",  confidence: 68 };
+      if (ind.rsi > 51 && ind.rsi < 75 && ind.momentum > 0.05) return { signal: "CALL", confidence: 68 };
+      if (ind.rsi < 49 && ind.rsi > 25 && ind.momentum < -0.05) return { signal: "PUT",  confidence: 68 };
       return { signal: null, confidence: 0 };
     }
-    if (ind.rsi > 60 && ind.momentum > 0.3) return { signal: "CALL", confidence: 60 };
-    if (ind.rsi < 40 && ind.momentum < -0.3) return { signal: "PUT",  confidence: 60 };
+    if (ind.rsi > 52 && ind.momentum > 0.05) return { signal: "CALL", confidence: 60 };
+    if (ind.rsi < 48 && ind.momentum < -0.05) return { signal: "PUT",  confidence: 60 };
     return { signal: null, confidence: 0 };
   }
   return { signal: null, confidence: 0 };
@@ -445,7 +445,7 @@ function BotUI() {
     setTicks(prev => {
       const next = [...prev, tick].slice(-150);
       ticksRef.current = next;
-      if (next.length % 5 === 0) setIndicators(getIndicators(next));
+      if (next.length % 2 === 0) setIndicators(getIndicators(next));
       return next;
     });
     if (!runningRef.current || waitingRef.current) return;
@@ -454,7 +454,7 @@ function BotUI() {
     if (spnl >= takeProfit)  { addLog(`✅ Take profit hit. Bot paused.`); setRunning(false); return; }
     if (dl   >= maxDailyLoss){ addLog(`🛑 Daily limit hit.`); setRunning(false); return; }
     const { signal, confidence } = getSignal(strategy, ticksRef.current, lastPnlRef.current);
-    if (!signal || confidence < 40) return;
+    if (!signal || confidence < 20) return;
     const stake = calcStake(strategy, baseStake, stakeMode, balanceRef.current, lastPnlRef.current, lastStakeRef.current);
     setLastStake(stake); lastStakeRef.current = stake;
     placeContract(signal, stake, confidence);
