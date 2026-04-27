@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { dbSettingsGet, dbSettingsSet } from "./storage";
 import { Client as SshClient } from "ssh2";
 
@@ -14,6 +15,7 @@ export interface VpsServer {
   privateKey?: string;
   addedAt: string;
   osType?: string;
+  agentToken?: string;
 }
 
 export type VpsStatus = "online" | "offline" | "unknown";
@@ -49,11 +51,29 @@ export class VpsManager {
     const server: VpsServer = {
       ...data,
       id: Math.random().toString(36).substring(2, 10),
+      agentToken: data.agentToken || crypto.randomBytes(24).toString("hex"),
       addedAt: new Date().toISOString(),
     };
     servers.push(server);
     this.save(servers);
     return server;
+  }
+
+  /** Ensure every existing VPS has an agentToken (backfills legacy entries). */
+  ensureAgentTokens(): void {
+    const servers = this.load();
+    let changed = false;
+    for (const s of servers) {
+      if (!s.agentToken) {
+        s.agentToken = crypto.randomBytes(24).toString("hex");
+        changed = true;
+      }
+    }
+    if (changed) this.save(servers);
+  }
+
+  getByAgentToken(token: string): VpsServer | undefined {
+    return this.load().find((s) => s.agentToken === token);
   }
 
   update(id: string, data: Partial<VpsServer>): VpsServer | null {
