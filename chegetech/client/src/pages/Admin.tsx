@@ -6270,8 +6270,34 @@ function VpsTab() {
 
   const servers: any[] = data?.servers || [];
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ label: "", host: "", port: "22", username: "root", authType: "password", password: "", privateKey: "" });
+  const [form, setForm] = useState({ label: "", host: "", port: "22", username: "root", authType: "password", password: "", privateKey: "", osType: "ubuntu" });
   const [pingResults, setPingResults] = useState<Record<string, any>>({});
+
+  const OS_OPTIONS = [
+    { group: "Debian-based", items: [
+      { value: "ubuntu",   label: "Ubuntu",           icon: "🟠" },
+      { value: "debian",   label: "Debian",           icon: "🔴" },
+      { value: "kali",     label: "Kali Linux",       icon: "🐉" },
+      { value: "mint",     label: "Linux Mint",       icon: "🟢" },
+      { value: "pop",      label: "Pop!_OS",          icon: "🟡" },
+      { value: "raspbian", label: "Raspberry Pi OS",  icon: "🍓" },
+    ]},
+    { group: "RHEL-based", items: [
+      { value: "almalinux", label: "AlmaLinux",      icon: "🔵" },
+      { value: "centos",    label: "CentOS",         icon: "🟣" },
+      { value: "rocky",     label: "Rocky Linux",   icon: "🪨" },
+      { value: "fedora",    label: "Fedora",         icon: "🎩" },
+      { value: "rhel",      label: "RHEL",           icon: "🔴" },
+      { value: "oracle",    label: "Oracle Linux",   icon: "🔴" },
+    ]},
+    { group: "Other", items: [
+      { value: "windows", label: "Windows (RDP/SSH)", icon: "🪟" },
+      { value: "arch",    label: "Arch Linux",        icon: "🏔️" },
+      { value: "other",   label: "Other Linux",       icon: "🐧" },
+    ]},
+  ];
+  const allOsItems = OS_OPTIONS.flatMap(g => g.items);
+  const getOsInfo = (val: string) => allOsItems.find(o => o.value === val) ?? { icon: "🐧", label: val || "Unknown OS" };
   const [pingLoading, setPingLoading] = useState<Record<string, boolean>>({});
   const [rebootLoading, setRebootLoading] = useState<Record<string, boolean>>({});
   const [terminalState, setTerminalState] = useState<Record<string, { open: boolean; cmd: string; output: string; loading: boolean }>>({});
@@ -6283,7 +6309,7 @@ function VpsTab() {
       if (res.success) {
         toast({ title: "VPS added!", description: res.server.label });
         setShowAdd(false);
-        setForm({ label: "", host: "", port: "22", username: "root", authType: "password", password: "", privateKey: "" });
+        setForm({ label: "", host: "", port: "22", username: "root", authType: "password", password: "", privateKey: "", osType: "ubuntu" });
         qc.invalidateQueries({ queryKey: ["/api/admin/vps"] });
       } else {
         toast({ title: "Failed", description: res.error, variant: "destructive" });
@@ -6352,6 +6378,17 @@ function VpsTab() {
               <Input placeholder="22" value={form.port} onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))} className={inputCls} /></div>
             <div><label className="text-xs text-white/40 block mb-1">Username *</label>
               <Input placeholder="root" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} className={inputCls} /></div>
+            <div><label className="text-xs text-white/40 block mb-1">Operating System *</label>
+              <select value={form.osType} onChange={(e) => setForm((f) => ({ ...f, osType: e.target.value }))}
+                className="w-full rounded-lg px-3 py-2 text-sm text-white bg-white/5 border border-white/10 outline-none">
+                {OS_OPTIONS.map(group => (
+                  <optgroup key={group.group} label={group.group}>
+                    {group.items.map(os => (
+                      <option key={os.value} value={os.value}>{os.icon} {os.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select></div>
             <div><label className="text-xs text-white/40 block mb-1">Auth Type</label>
               <select value={form.authType} onChange={(e) => setForm((f) => ({ ...f, authType: e.target.value }))}
                 className="w-full rounded-lg px-3 py-2 text-sm text-white bg-white/5 border border-white/10 outline-none">
@@ -6400,7 +6437,10 @@ function VpsTab() {
                       <div>
                         <p className="font-semibold text-white">{server.label}</p>
                         <p className="text-xs text-white/40 font-mono">{server.username}@{server.host}:{server.port}</p>
-                        <p className="text-xs text-white/30 mt-0.5">Auth: {server.authType} · Added {new Date(server.addedAt).toLocaleDateString()}</p>
+                        <p className="text-xs text-white/30 mt-0.5">
+                          {server.osType && <span className="mr-2">{getOsInfo(server.osType).icon} {getOsInfo(server.osType).label}</span>}
+                          Auth: {server.authType} · Added {new Date(server.addedAt).toLocaleDateString()}
+                        </p>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
