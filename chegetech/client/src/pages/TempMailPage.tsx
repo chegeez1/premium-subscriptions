@@ -1,11 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mail, Copy, Check, RefreshCw, Inbox, ArrowLeft, Loader2, Trash2, ExternalLink } from "lucide-react";
+import { Mail, Copy, Check, RefreshCw, Inbox, ArrowLeft, Loader2, Trash2, CreditCard, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 
 const SESSION_KEY = "ct_tempmail";
 
 interface MailSession { address: string; token: string; }
 interface Message { id: string; from: { address: string; name: string }; subject: string; createdAt: string; seen: boolean; }
 interface FullMessage extends Message { html?: string[]; text?: string; }
+
+interface CardResult {
+  card: string;
+  status: "live" | "dead" | "error" | "invalid";
+  bank?: string;
+  type?: string;
+  country?: string;
+  error?: string;
+}
 
 function saveSession(s: MailSession) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
 function loadSession(): MailSession | null { try { return JSON.parse(localStorage.getItem(SESSION_KEY)||"null"); } catch { return null; } }
@@ -20,6 +29,12 @@ export default function TempMailPage() {
   const [copied, setCopied] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date|null>(null);
   const [newCount, setNewCount] = useState(0);
+
+  // CC Checker state
+  const [ccInput, setCcInput] = useState("");
+  const [ccResults, setCcResults] = useState<CardResult[]>([]);
+  const [ccChecking, setCcChecking] = useState(false);
+  const [ccCopied, setCcCopied] = useState<string|null>(null);
 
   const create = useCallback(async () => {
     setCreating(true); setMessages([]); setSelected(null); setNewCount(0);
@@ -61,14 +76,12 @@ export default function TempMailPage() {
     } catch {}
   }, [session]);
 
-  // Init
   useEffect(() => {
     const saved = loadSession();
     if (saved) { setSession(saved); fetchInbox(saved.token).finally(()=>setLoading(false)); }
     else create();
   }, []);
 
-  // Poll inbox every 12s
   useEffect(() => {
     if (!session) return;
     const t = setInterval(()=>fetchInbox(session.token, true), 12000);
@@ -82,6 +95,35 @@ export default function TempMailPage() {
     const s = Math.floor((Date.now()-new Date(d).getTime())/1000);
     if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; return `${Math.floor(s/3600)}h ago`;
   };
+
+  const checkCards = async () => {
+    const lines = ccInput.split("\n").map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+    setCcChecking(true);
+    setCcResults([]);
+    try {
+      const r = await fetch("/api/tools/cc/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cards: lines })
+      });
+      const d = await r.json();
+      if (d.success) setCcResults(d.results);
+      else setCcResults([{ card: "", status: "error", error: d.error }]);
+    } catch (e: any) {
+      setCcResults([{ card: "", status: "error", error: e.message }]);
+    }
+    setCcChecking(false);
+  };
+
+  const copyCard = (card: string) => {
+    navigator.clipboard.writeText(card);
+    setCcCopied(card);
+    setTimeout(() => setCcCopied(null), 1500);
+  };
+
+  const liveCards = ccResults.filter(r => r.status === "live");
+  const deadCards = ccResults.filter(r => r.status === "dead");
 
   if (loading || creating) return (
     <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center gap-3">
@@ -195,6 +237,92 @@ export default function TempMailPage() {
         <div className="mt-8 p-4 rounded-2xl bg-white/3 border border-white/8 text-center">
           <p className="text-xs text-white/30">Inbox is temporary — messages are deleted after 24 hours. Do not use for important accounts.</p>
         </div>
+
+        {/* ── Mass CC Checker ────────────────────────────────────────── */}
+        <div className="mt-10">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 rounded-xl bg-violet-500/10 border border-violet-500/20">
+              <CreditCard className="w-5 h-5 text-violet-400"/>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold">CC Checker</h2>
+              <p className="text-xs text-white/40">Paste cards one per line — format: number|mm|yy|cvv</p>
+            </div>
+          </div>
+
+          <div className="bg-white/5 border border-violet-500/20 rounded-2xl p-5 mb-4">
+            <textarea
+              value={ccInput}
+              onChange={e => setCcInput(e.target.value)}
+              placeholder={"4111111111111111|01|26|123\n5500005555555559|12|27|456\n..."}
+              rows={6}
+              className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm font-mono text-white/80 placeholder-white/20 resize-y focus:outline-none focus:border-violet-500/40"
+            />
+            <div className="flex items-center justify-between mt-3">
+              <p className="text-xs text-white/30">{ccInput.split("\n").filter(l=>l.trim()).length} card(s) • max 30 per batch</p>
+              <button
+                onClick={checkCards}
+                disabled={ccChecking || !ccInput.trim()}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl bg-violet-500/20 border border-violet-500/30 text-violet-300 text-sm font-semibold hover:bg-violet-500/30 disabled:opacity-40 transition-colors"
+              >
+                {ccChecking ? <Loader2 className="w-4 h-4 animate-spin"/> : <CreditCard className="w-4 h-4"/>}
+                {ccChecking ? "Checking..." : "Check Cards"}
+              </button>
+            </div>
+          </div>
+
+          {ccResults.length > 0 && (
+            <div className="space-y-3">
+              {/* Summary bar */}
+              <div className="flex gap-3 mb-2">
+                <div className="flex-1 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-2.5 text-center">
+                  <p className="text-lg font-bold text-emerald-400">{liveCards.length}</p>
+                  <p className="text-xs text-white/40">Live</p>
+                </div>
+                <div className="flex-1 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2.5 text-center">
+                  <p className="text-lg font-bold text-red-400">{deadCards.length}</p>
+                  <p className="text-xs text-white/40">Dead</p>
+                </div>
+                <div className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-center">
+                  <p className="text-lg font-bold text-white/60">{ccResults.length}</p>
+                  <p className="text-xs text-white/40">Total</p>
+                </div>
+              </div>
+
+              {ccResults.map((r, i) => (
+                <div key={i} className={`flex items-center gap-3 p-3 rounded-xl border ${
+                  r.status === "live" ? "bg-emerald-500/5 border-emerald-500/20" :
+                  r.status === "dead" ? "bg-red-500/5 border-red-500/15" :
+                  "bg-white/3 border-white/8"
+                }`}>
+                  <div className="shrink-0">
+                    {r.status === "live" ? <CheckCircle className="w-4 h-4 text-emerald-400"/> :
+                     r.status === "dead" ? <XCircle className="w-4 h-4 text-red-400"/> :
+                     <AlertCircle className="w-4 h-4 text-white/30"/>}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-mono text-white/70 truncate">{r.card}</p>
+                    {r.bank && <p className="text-xs text-white/35 mt-0.5">{r.bank}{r.country ? ` · ${r.country}` : ""}{r.type ? ` · ${r.type}` : ""}</p>}
+                    {r.error && <p className="text-xs text-red-400/70 mt-0.5">{r.error}</p>}
+                  </div>
+                  <button onClick={() => copyCard(r.card)} className="shrink-0 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/70 transition-colors">
+                    {ccCopied === r.card ? <Check className="w-3.5 h-3.5 text-emerald-400"/> : <Copy className="w-3.5 h-3.5"/>}
+                  </button>
+                </div>
+              ))}
+
+              {liveCards.length > 0 && (
+                <button
+                  onClick={() => { navigator.clipboard.writeText(liveCards.map(r=>r.card).join("\n")); }}
+                  className="w-full mt-2 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-semibold hover:bg-emerald-500/20 transition-colors"
+                >
+                  Copy all live cards ({liveCards.length})
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
       </div>
     </div>
   );
