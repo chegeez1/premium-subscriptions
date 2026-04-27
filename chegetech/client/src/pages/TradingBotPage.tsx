@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Zap, Play, Shield, TrendingUp, BarChart2, RefreshCw, CheckCircle, ExternalLink, ChevronRight } from "lucide-react";
+import { Zap, Play, Shield, TrendingUp, BarChart2, RefreshCw, CheckCircle, ExternalLink } from "lucide-react";
 
 const FEATURES = [
   { icon: Zap,         color: "text-lime-400",   bg: "bg-lime-500/10 border-lime-500/20",   title: "Real Deriv Account",    desc: "Connects directly to your Deriv account via official API — demo or real money" },
@@ -90,7 +90,7 @@ export default function TradingBotPage() {
           <div className="space-y-4">
             {[
               { step: "1", title: "Get a Deriv API Token", desc: "Log in at app.deriv.com → Account Settings → API Token. Create one with Read + Trade permissions." },
-              { step: "2", title: "Launch the Bot", desc: "Click the Launch button above, paste your token, and connect. Use a Demo account to test risk-free first." },
+              { step: "2", title: "Launch the Bot", desc: "Click the Launch button above, paste your token, and connect. Connect to start trading immediately." },
               { step: "3", title: "Configure & Start", desc: "Pick your symbol, strategy, stake size, and risk limits. Hit Start Bot — it trades automatically." },
               { step: "4", title: "Monitor & Profit", desc: "Watch live trades, P&L, and win rate on the dashboard. Stop anytime with one click." },
             ].map(s => (
@@ -119,15 +119,8 @@ export default function TradingBotPage() {
               </div>
             ))}
           </div>
-          <p className="text-xs text-white/25 text-center mt-2">Contact support to purchase access</p>
         </div>
 
-        {/* CTA */}
-        <button
-          onClick={launch}
-          className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl bg-white/5 hover:bg-lime-500/10 border border-white/10 hover:border-lime-500/30 transition-all text-white/70 hover:text-lime-300 font-medium text-sm"
-        >
-          Try Demo First (Free) <ChevronRight className="w-4 h-4" />
         </button>
       </div>
     </div>
