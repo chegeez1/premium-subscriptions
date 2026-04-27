@@ -2298,8 +2298,9 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     try {
       const axiosM = require('axios');
       // Get available domains
-      const domsRes = await axiosM.get('https://api.mail.tm/domains', { headers: { 'Accept': 'application/json' }, timeout: 10000 });
-      const domains: any[] = domsRes.data?.['hydra:member'] || [];
+      const domsRes = await axiosM.get('https://api.mail.tm/domains', { headers: { 'Accept': 'application/ld+json' }, timeout: 10000 });
+      const domsData = domsRes.data;
+      const domains: any[] = Array.isArray(domsData) ? domsData : (domsData?.['hydra:member'] || []);
       if (!domains.length) return res.status(503).json({ success: false, error: 'No domains available' });
       const domain = domains[0].domain;
       const user = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
@@ -2320,7 +2321,7 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const { token } = req.query as { token: string };
       if (!token) return res.status(400).json({ success: false, error: 'Token required' });
       const axiosM = require('axios');
-      const r = await axiosM.get('https://api.mail.tm/messages', { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }, timeout: 10000 });
+      const r = await axiosM.get('https://api.mail.tm/messages', { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/ld+json' }, timeout: 10000 });
       const messages = (r.data?.['hydra:member'] || []).map((m: any) => ({
         id: m.id, from: m.from, subject: m.subject, createdAt: m.createdAt, seen: m.seen,
       }));
