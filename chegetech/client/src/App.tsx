@@ -30,7 +30,7 @@ import ChatWidget from "@/components/ChatWidget";
 import CookieConsent from "@/components/CookieConsent";
 
 const NO_CHAT_PATHS = ["/admin", "/docs", "/privacy", "/track", "/bots"];
-const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password"];
+const PUBLIC_PATHS = ["/auth", "/admin", "/payment/callback", "/payment/success", "/docs", "/privacy", "/track", "/bots", "/verify-email", "/reset-password", "/smm", "/numbers"];
 const NO_COOKIE_PATHS = ["/admin"];
 const SHELL_PATHS = ["/", "/bots", "/vps", "/dashboard", "/numbers", "/smm", "/checkout", "/cart-checkout", "/payment"];
 
