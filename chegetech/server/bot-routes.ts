@@ -1127,32 +1127,39 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         return r;
       };
 
-      // 1. Check Node.js
-      emit("\n🔍 Checking Node.js...");
-      const nodeCheck = await vpsManager.execCommand(server, `node --version 2>/dev/null || echo "NOT_FOUND"`);
-      if (nodeCheck.stdout.includes("NOT_FOUND") || !nodeCheck.stdout.trim().startsWith("v")) {
+      // 1. Ensure Node.js + PM2 — source nvm first so PATH is always correct
+      emit("\n🔍 Checking Node.js & PM2...");
+      const envCheck = await vpsManager.execCommand(
+        server,
+        `(${nvmSource}; node --version 2>/dev/null || echo "NODE_MISSING") && (${nvmSource}; pm2 --version 2>/dev/null || echo "PM2_MISSING")`,
+        60000  // 60s — just version checks, should be instant
+      );
+      const needsNode = envCheck.stdout.includes("NODE_MISSING") || !envCheck.stdout.includes("v");
+      const needsPm2  = envCheck.stdout.includes("PM2_MISSING");
+
+      if (needsNode) {
         emit("   ⬇ Node.js not found — installing via nvm (1-3 min)...");
-        await execStep("Installing Node.js 20 via nvm",
-          `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && ${nvmSource} && nvm install 20 && nvm alias default 20 && nvm use default && ln -sf $(which node) /usr/local/bin/node 2>/dev/null; ln -sf $(which npm) /usr/local/bin/npm 2>/dev/null; true`
+        await execStep("Install Node.js 20 via nvm",
+          `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && ${nvmSource} && nvm install 20 && nvm alias default 20 && nvm use default && ln -sf "$(${nvmSource}; which node)" /usr/local/bin/node 2>/dev/null; ln -sf "$(${nvmSource}; which npm)" /usr/local/bin/npm 2>/dev/null; true`,
+          300000
         );
-        emit("   ✓ Node.js installed");
+        emit("   ✓ Node.js 20 installed");
       } else {
-        emit(`   ✓ Node.js ${nodeCheck.stdout.trim()}`);
+        const ver = envCheck.stdout.split("\n").find((l: string) => l.startsWith("v")) || "";
+        emit(`   ✓ Node.js ${ver.trim()}`);
       }
 
-      // 2. Check PM2
-      emit("\n🔍 Checking PM2...");
-      const pm2Check = await vpsManager.execCommand(server, `pm2 --version 2>/dev/null || echo "NOT_FOUND"`);
-      if (pm2Check.stdout.includes("NOT_FOUND")) {
-        await execStep("Installing PM2 globally", `${nvmSource}; npm install -g pm2 && ln -sf $(which pm2) /usr/local/bin/pm2 2>/dev/null; true`);
+      if (needsPm2) {
+        await execStep("Install PM2 globally", `${nvmSource}; npm install -g pm2 && ln -sf "$(${nvmSource}; which pm2)" /usr/local/bin/pm2 2>/dev/null; true`);
         emit("   ✓ PM2 installed");
       } else {
-        emit(`   ✓ PM2 ${pm2Check.stdout.trim()}`);
+        const pm2ver = envCheck.stdout.split("\n").find((l: string) => /^\d/.test(l)) || "";
+        emit(`   ✓ PM2 ${pm2ver.trim()}`);
       }
 
-      // 3. Git
+      // 2. Git
       emit("\n🔍 Checking git...");
-      await execStep("Ensure git", `which git 2>/dev/null || git --version 2>/dev/null || (${installGit}); echo "git ready"`);
+      await execStep("Ensure git", `which git 2>/dev/null || git --version 2>/dev/null || (${installGit}); echo "git ready"`, 60000);
 
       // 4. Clone or pull
       emit("\n📂 Cloning / updating repo...");
