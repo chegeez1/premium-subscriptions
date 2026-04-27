@@ -3852,11 +3852,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const server = vpsManager.getByAgentToken(String(token));
       if (!server) return res.status(401).json({ error: "Invalid token" });
 
-      const dbT = dbType === "pg" ? "pg" : "sqlite";
+      // Auto-reset orders stuck in 'deploying' for > 5 minutes (crashed mid-deploy)
+      const stuckCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      await runMutation(
+        `UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = 'Auto-reset: stuck in deploying state' WHERE status = 'deploying' AND updated_at < ?`,
+        [stuckCutoff]
+      ).catch(() => {});
+
       const pending = await runQuery(
-        dbT === "pg"
-          ? `SELECT bo.*, b.repo_url, b.name as bot_name FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.status IN ('paid','deploy_failed') AND (bo.pm2_name IS NULL OR bo.pm2_name = '') ORDER BY bo.created_at LIMIT 5`
-          : `SELECT bo.*, b.repo_url, b.name as bot_name FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.status IN ('paid','deploy_failed') AND (bo.pm2_name IS NULL OR bo.pm2_name = '') ORDER BY bo.created_at LIMIT 5`,
+        `SELECT bo.*, b.repo_url, b.name as bot_name FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.status IN ('paid','deploy_failed') AND (bo.pm2_name IS NULL OR bo.pm2_name = '') ORDER BY bo.created_at LIMIT 5`,
         []
       );
       res.json({ success: true, vpsId: server.id, orders: pending });
