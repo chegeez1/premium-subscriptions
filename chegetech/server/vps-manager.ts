@@ -13,6 +13,7 @@ export interface VpsServer {
   password?: string;
   privateKey?: string;
   addedAt: string;
+  osType?: string;
 }
 
 export type VpsStatus = "online" | "offline" | "unknown";
