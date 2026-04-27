@@ -98,27 +98,52 @@ async function m(template: string, params: any[] = []): Promise<void> {
 
     console.log(`[Bot Deploy] Deploying ${pm2Name} on ${server.host}`);
 
-    // 1. Clone or pull repo
+    // 0. Ensure Node.js + PM2 are installed (works on any Linux: Ubuntu/Debian/AlmaLinux/CentOS/RHEL)
+    const nodeCheck = await vpsManager.execCommand(server, `node --version 2>/dev/null || echo "NOT_FOUND"`);
+    if (nodeCheck.stdout.includes("NOT_FOUND") || !nodeCheck.stdout.trim().startsWith("v")) {
+      console.log(`[Bot Deploy] Node.js not found — installing via nvm`);
+      await vpsManager.execCommand(server,
+        `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && ` +
+        `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && ` +
+        `nvm install 20 && nvm alias default 20 && nvm use default && ` +
+        `ln -sf $(which node) /usr/local/bin/node && ln -sf $(which npm) /usr/local/bin/npm`
+      );
+      console.log(`[Bot Deploy] ✓ Node.js installed`);
+    }
+    const pm2Check = await vpsManager.execCommand(server, `pm2 --version 2>/dev/null || echo "NOT_FOUND"`);
+    if (pm2Check.stdout.includes("NOT_FOUND")) {
+      console.log(`[Bot Deploy] PM2 not found — installing`);
+      await vpsManager.execCommand(server,
+        `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; npm install -g pm2 && ln -sf $(which pm2) /usr/local/bin/pm2 2>/dev/null || true`
+      );
+      console.log(`[Bot Deploy] ✓ PM2 installed`);
+    }
+
+    // 1. Ensure git is available
+    await vpsManager.execCommand(server, `which git || (dnf install -y git 2>/dev/null || yum install -y git 2>/dev/null || apt-get install -y git 2>/dev/null) && echo "git ok"`);
+
+    // 2. Clone or pull repo
     await vpsManager.execCommand(server,
-      `mkdir -p ${botDir} && (git -C ${botDir} pull --ff-only 2>/dev/null || git clone ${repoUrl} ${botDir})`
+      `mkdir -p /opt/bots && (git -C ${botDir} pull --ff-only 2>/dev/null || git clone ${repoUrl} ${botDir})`
     );
     console.log(`[Bot Deploy] ✓ Repo ready at ${botDir}`);
 
-    // 2. Write .env file
+    // 3. Write .env file
     await vpsManager.execCommand(server,
       `printf '%s\\n' ${JSON.stringify(envLines)} > ${botDir}/.env`
     );
     console.log(`[Bot Deploy] ✓ .env written`);
 
-    // 3. npm install
+    // 4. npm install (source nvm in case node is via nvm)
     const { stdout: installOut } = await vpsManager.execCommand(server,
-      `cd ${botDir} && npm install --production 2>&1 | tail -3`
+      `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; cd ${botDir} && npm install --production 2>&1 | tail -5`
     );
     console.log(`[Bot Deploy] npm install: ${installOut.slice(0, 120)}`);
 
-    // 4. Start with PM2
+    // 5. Start with PM2 (source nvm)
     await vpsManager.execCommand(server,
-      `pm2 delete ${pm2Name} 2>/dev/null || true && cd ${botDir} && pm2 start . --name ${pm2Name} && pm2 save`
+      `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; ` +
+      `pm2 delete ${pm2Name} 2>/dev/null || true; cd ${botDir} && pm2 start . --name ${pm2Name} 2>/dev/null || pm2 start index.js --name ${pm2Name}; pm2 save`
     );
     console.log(`[Bot Deploy] ✓ PM2 ${pm2Name} started`);
 
