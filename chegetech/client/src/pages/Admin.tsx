@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders" | "free-proxies";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -272,6 +272,7 @@ export default function Admin() {
     { id: "proxy-orders", label: "Proxy Orders", icon: Shield, alwaysVisible: true },
     { id: "digital-products", label: "Aged Accounts", icon: Users, alwaysVisible: true },
     { id: "digital-orders", label: "Acct Orders", icon: Users, alwaysVisible: true },
+    { id: "free-proxies", label: "Free Proxies", icon: Shield, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
@@ -412,6 +413,7 @@ export default function Admin() {
           {activeTab === "proxy-orders" && <ProxyOrdersAdminTab />}
           {activeTab === "digital-products" && <DigitalProductsAdminTab />}
           {activeTab === "digital-orders" && <DigitalOrdersAdminTab />}
+          {activeTab === "free-proxies" && <FreeProxiesAdminTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
@@ -10004,6 +10006,215 @@ function DigitalOrdersAdminTab() {
               </Button>
               <Button onClick={()=>setCredView(null)} className="flex-1 bg-violet-600 hover:bg-violet-700 text-sm">Close</Button>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Free Proxies Admin Tab ───────────────────────────────────────────────────
+function FreeProxiesAdminTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [bulkText, setBulkText] = useState("");
+  const [proxyType, setProxyType] = useState("HTTP");
+  const [importing, setImporting] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<{checked:number;alive:number;dead:number}|null>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [showImport, setShowImport] = useState(false);
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey:["/api/admin/free-proxies"],
+    queryFn:()=>fetch("/api/admin/free-proxies",{headers:authHeaders() as any}).then(r=>r.json()),
+    refetchInterval: checking ? 5000 : false,
+  });
+  const proxies: any[] = data?.proxies || [];
+
+  const alive    = proxies.filter(p=>p.status==='alive').length;
+  const dead     = proxies.filter(p=>p.status==='dead').length;
+  const unchecked= proxies.filter(p=>p.status==='unchecked').length;
+
+  const filtered = proxies.filter(p => {
+    const ms = statusFilter==='all' || p.status===statusFilter;
+    const mq = !search || (p.ip||'').includes(search) || (p.country||'').toLowerCase().includes(search.toLowerCase()) || (p.raw||'').includes(search);
+    return ms && mq;
+  });
+
+  const COUNTRY_FLAG = (code: string) => code ? String.fromCodePoint(...[...code.toUpperCase()].map(c=>c.charCodeAt(0)+127397)) : '🌍';
+
+  const importProxies = async () => {
+    if (!bulkText.trim()) return;
+    setImporting(true);
+    try {
+      const lines = bulkText.split('\n').filter(l=>l.trim()).length;
+      const res = await fetch('/api/admin/free-proxies/bulk',{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json'} as any,body:JSON.stringify({proxies:bulkText,type:proxyType})}).then(r=>r.json());
+      if(res.success){
+        toast({title:`✅ Imported ${res.added} proxies`,description:`${res.dupes||0} duplicates skipped out of ${lines} lines`});
+        setBulkText(''); setShowImport(false);
+        queryClient.invalidateQueries({queryKey:["/api/admin/free-proxies"]});
+      } else toast({title:'Error',description:res.error,variant:'destructive'});
+    } catch { toast({title:'Network error',variant:'destructive'}); }
+    setImporting(false);
+  };
+
+  const checkAll = async () => {
+    setChecking(true); setCheckResult(null);
+    try {
+      const res = await fetch('/api/admin/free-proxies/check',{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json'} as any,body:JSON.stringify({})}).then(r=>r.json());
+      if(res.success){
+        setCheckResult({checked:res.checked,alive:res.alive,dead:res.dead});
+        toast({title:`✅ Check done — ${res.alive} alive, ${res.dead} dead`});
+        queryClient.invalidateQueries({queryKey:["/api/admin/free-proxies"]});
+      }
+    } catch { toast({title:'Check failed',variant:'destructive'}); }
+    setChecking(false);
+  };
+
+  const deleteDead = async () => {
+    if(!confirm('Delete all dead proxies?')) return;
+    try {
+      const res = await fetch('/api/admin/free-proxies/bulk/dead',{method:'DELETE',headers:authHeaders() as any}).then(r=>r.json());
+      if(res.success){ toast({title:`Deleted ${res.deleted} dead proxies`}); queryClient.invalidateQueries({queryKey:["/api/admin/free-proxies"]}); }
+    } catch {}
+  };
+
+  const deleteOne = async (id:number) => {
+    try {
+      await fetch(`/api/admin/free-proxies/${id}`,{method:'DELETE',headers:authHeaders() as any});
+      queryClient.invalidateQueries({queryKey:["/api/admin/free-proxies"]});
+    } catch {}
+  };
+
+  const copyAll = () => {
+    const alive=proxies.filter(p=>p.status==='alive').map(p=>p.raw).join('\n');
+    navigator.clipboard.writeText(alive);
+    toast({title:`Copied ${proxies.filter(p=>p.status==='alive').length} alive proxies`});
+  };
+
+  const ANON_COLOR: Record<string,string> = { elite:'text-emerald-400', anonymous:'text-blue-400', transparent:'text-amber-400' };
+  const STATUS_STYLE: Record<string,string> = {
+    alive:   'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+    dead:    'bg-red-500/10 text-red-400 border-red-500/20',
+    unchecked:'bg-white/5 text-white/40 border-white/10',
+  };
+  const inp = "bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/40";
+
+  const lineCount = bulkText.split('\n').filter(l=>l.trim()).length;
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-white">Free Proxies Manager</h2>
+          <p className="text-sm text-gray-400">Upload, check, and manage your free proxy pool</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button size="sm" variant="outline" onClick={copyAll} disabled={!alive} className="border-white/10 text-gray-400 gap-1.5 text-xs"><Copy className="w-3 h-3"/>Copy Alive</Button>
+          <Button size="sm" variant="outline" onClick={deleteDead} disabled={!dead} className="border-red-500/20 text-red-400 hover:bg-red-500/10 gap-1.5 text-xs"><Trash2 className="w-3 h-3"/>Delete Dead ({dead})</Button>
+          <Button size="sm" onClick={checkAll} disabled={checking||!proxies.length} className="bg-blue-600 hover:bg-blue-700 gap-1.5 text-xs">
+            {checking?<Loader2 className="w-3 h-3 animate-spin"/>:<Zap className="w-3 h-3"/>}{checking?'Checking...':'Check All'}
+          </Button>
+          <Button size="sm" onClick={()=>setShowImport(v=>!v)} className="bg-emerald-600 hover:bg-emerald-700 gap-1.5 text-xs"><Plus className="w-3 h-3"/>Import Proxies</Button>
+        </div>
+      </div>
+
+      {/* Stats bar */}
+      <div className="grid grid-cols-4 gap-3">
+        {[{label:'Total',value:proxies.length,c:'text-white',b:'bg-white/5'},{label:'Alive',value:alive,c:'text-emerald-400',b:'bg-emerald-500/10'},{label:'Dead',value:dead,c:'text-red-400',b:'bg-red-500/10'},{label:'Unchecked',value:unchecked,c:'text-amber-400',b:'bg-amber-500/10'}].map(s=>(
+          <div key={s.label} className={`${s.b} border border-white/8 rounded-xl p-3 text-center`}>
+            <p className={`text-2xl font-bold ${s.c}`}>{s.value}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{s.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Check result banner */}
+      {checkResult && (
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-sm">
+          <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0"/>
+          <span className="text-emerald-300">Last check: <strong>{checkResult.checked}</strong> tested — <strong className="text-emerald-400">{checkResult.alive} alive</strong> · <strong className="text-red-400">{checkResult.dead} dead</strong></span>
+          <button onClick={()=>setCheckResult(null)} className="ml-auto text-white/30 hover:text-white"><X className="w-4 h-4"/></button>
+        </div>
+      )}
+
+      {/* Import panel */}
+      {showImport && (
+        <div className="bg-white/5 border border-emerald-500/20 rounded-2xl p-5 space-y-4">
+          <h3 className="font-semibold text-white flex items-center gap-2"><Plus className="w-4 h-4 text-emerald-400"/>Bulk Import Proxies</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {['HTTP','HTTPS','SOCKS4','SOCKS5'].map(t=>(
+              <button key={t} onClick={()=>setProxyType(t)}
+                className={`py-2 rounded-xl text-sm font-medium border transition-colors ${proxyType===t?'bg-emerald-500/20 border-emerald-500/30 text-emerald-300':'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1.5 block">Paste proxies — one per line</label>
+            <textarea value={bulkText} onChange={e=>setBulkText(e.target.value)} rows={10}
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-green-400 font-mono focus:outline-none focus:border-emerald-500/40"
+              placeholder={"192.168.1.1:8080\n10.0.0.1:3128\nuser:pass@192.168.1.2:8080\n192.168.1.3:8080:user:pass"}/>
+            <p className="text-xs text-gray-500 mt-1.5">Supported: <code className="text-emerald-400">ip:port</code> · <code className="text-emerald-400">ip:port:user:pass</code> · <code className="text-emerald-400">user:pass@ip:port</code> — <strong className="text-white">{lineCount}</strong> lines ready</p>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={importProxies} disabled={importing||!bulkText.trim()} className="bg-emerald-600 hover:bg-emerald-700">
+              {importing?<Loader2 className="w-4 h-4 animate-spin mr-1"/>:<Plus className="w-4 h-4 mr-1"/>}Import {lineCount>0?lineCount+' Proxies':'Proxies'}
+            </Button>
+            <Button variant="outline" onClick={()=>{setShowImport(false);setBulkText('');}} className="border-white/10 text-gray-400">Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="flex gap-2 flex-wrap items-center">
+        <div className="relative flex-1 min-w-36">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500"/>
+          <Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search IP, country..." className="pl-8 bg-white/5 border-white/10 text-white text-sm h-9"/>
+        </div>
+        {['all','alive','dead','unchecked'].map(s=>(
+          <button key={s} onClick={()=>setStatusFilter(s)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium border capitalize transition-colors ${statusFilter===s?'bg-emerald-500/20 border-emerald-500/30 text-emerald-300':'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'}`}>
+            {s}
+          </button>
+        ))}
+        <Button size="sm" variant="outline" onClick={()=>refetch()} className="border-white/10 text-gray-400 h-9 gap-1.5 text-xs"><RefreshCw className="w-3 h-3"/>Refresh</Button>
+      </div>
+
+      {/* Proxy table */}
+      {isLoading ? (
+        <div className="text-center py-10 text-gray-500">Loading proxies...</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-14 text-gray-500">
+          <Shield className="w-8 h-8 mx-auto mb-2 opacity-30"/>
+          <p>{proxies.length===0?'No proxies yet — import your first batch':'No proxies match the current filter'}</p>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-white/10 overflow-hidden">
+          <div className="grid grid-cols-[2.5fr_1fr_1.5fr_1.2fr_1fr_0.8fr_auto] gap-2 px-4 py-2 bg-white/5 border-b border-white/10 text-xs text-white/30 font-medium uppercase tracking-wide">
+            <span>Proxy</span><span>Type</span><span>Country</span><span>Anonymity</span><span>Speed</span><span>Status</span><span></span>
+          </div>
+          <div className="divide-y divide-white/5 max-h-[55vh] overflow-y-auto">
+            {filtered.map((p:any) => (
+              <div key={p.id} className="grid grid-cols-[2.5fr_1fr_1.5fr_1.2fr_1fr_0.8fr_auto] gap-2 px-4 py-2.5 items-center hover:bg-white/3 transition-colors">
+                <code className="text-xs font-mono text-green-400 truncate" title={p.raw}>{p.ip}:{p.port}{p.username?<span className="text-white/20"> [auth]</span>:null}</code>
+                <span className="text-xs font-bold text-white/50">{p.type||'HTTP'}</span>
+                <span className="text-xs text-white/60 truncate">{p.country_code?COUNTRY_FLAG(p.country_code):''} {p.country||'—'}</span>
+                <span className={`text-xs capitalize ${p.anonymity?ANON_COLOR[p.anonymity]||'text-white/40':'text-white/20'}`}>{p.anonymity||'—'}</span>
+                <span className="text-xs">
+                  {p.speed_ms ? (
+                    <span className={`font-medium ${p.speed_ms<1000?'text-emerald-400':p.speed_ms<3000?'text-amber-400':'text-red-400'}`}>{p.speed_ms}ms</span>
+                  ) : <span className="text-white/20">—</span>}
+                </span>
+                <span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${STATUS_STYLE[p.status]||STATUS_STYLE.unchecked}`}>{p.status}</span>
+                <button onClick={()=>deleteOne(p.id)} className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 hover:text-red-400 text-white/30 transition-colors">
+                  <Trash2 className="w-3 h-3"/>
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}
