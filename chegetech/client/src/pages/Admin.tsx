@@ -8056,6 +8056,7 @@ const [bulkVpsId, setBulkVpsId] = useState("");
     try {
       const url = actionType === "restart-all" ? "/api/admin/bots/bulk/restart-all"
         : actionType === "suspend-expired" ? "/api/admin/bots/bulk/suspend-expired"
+        : actionType === "deploy-pending" ? "/api/admin/bots/bulk/deploy-pending"
         : `/api/admin/bots/bulk/restart-vps/${bulkVpsId}`;
       if (actionType === "restart-vps" && !bulkVpsId) { setBulkResult("Enter a VPS ID first"); setBulkLoading(null); return; }
       const r = await fetch(url, { method: "POST", headers: authHeaders() as any });
@@ -8063,6 +8064,7 @@ const [bulkVpsId, setBulkVpsId] = useState("");
       if (d.success) {
         const msg = actionType === "restart-all" ? `Restarted ${d.restarted}/${d.total} bots`
           : actionType === "suspend-expired" ? `Suspended ${d.suspended} expired bots`
+          : actionType === "deploy-pending" ? (d.message || `Deploying ${d.count} pending bots…`)
           : `Restarted ${d.restarted}/${d.total} bots on VPS`;
         setBulkResult(msg);
         toast({ title: msg });
@@ -8216,6 +8218,9 @@ const [bulkVpsId, setBulkVpsId] = useState("");
                   {bulkResult && <span className={`text-xs px-2 py-0.5 rounded ${bulkResult.startsWith("Error") ? "bg-red-500/20 text-red-300" : "bg-emerald-500/20 text-emerald-300"}`}>{bulkResult}</span>}
                 </div>
                 <div className="flex flex-wrap gap-2 items-center">
+                  <button onClick={() => doBulkAction("deploy-pending")} disabled={!!bulkLoading} className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 font-medium disabled:opacity-50 flex items-center gap-1.5">
+                    {bulkLoading === "deploy-pending" ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" /> : "🚀"} Deploy Pending Bots
+                  </button>
                   <button onClick={() => doBulkAction("suspend-expired")} disabled={!!bulkLoading} className="text-xs px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 font-medium disabled:opacity-50 flex items-center gap-1.5">
                     {bulkLoading === "suspend-expired" ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" /> : "⏸"} Suspend All Expired
                   </button>
