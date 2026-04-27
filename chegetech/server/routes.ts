@@ -1,4 +1,4 @@
-import { registerBotRoutes } from "./bot-routes";
+import { registerBotRoutes, deployPendingOrders } from "./bot-routes";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
@@ -3778,10 +3778,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/admin/vps", adminAuthMiddleware, superAdminOnly, (req, res) => {
     try {
-      const { label, host, port, username, authType, password, privateKey } = req.body;
+      const { label, host, port, username, authType, password, privateKey, osType } = req.body;
       if (!host || !username) return res.status(400).json({ success: false, error: "Host and username are required" });
-      const server = vpsManager.add({ label: label || host, host, port: parseInt(port) || 22, username, authType: authType || "password", password, privateKey });
+      const server = vpsManager.add({ label: label || host, host, port: parseInt(port) || 22, username, authType: authType || "password", password, privateKey, osType: osType || "ubuntu" });
       res.json({ success: true, server: { ...server, password: server.password ? "***" : undefined, privateKey: server.privateKey ? "***" : undefined } });
+      // Auto-deploy any pending paid orders to this newly added VPS
+      setTimeout(() => deployPendingOrders().catch((e: any) => console.error("[VPS Add] deploy error:", e.message)), 1500);
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
