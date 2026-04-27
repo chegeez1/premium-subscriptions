@@ -121,7 +121,6 @@ export default function TradingBotPage() {
           </div>
         </div>
 
-        </button>
       </div>
     </div>
   );
