@@ -15,7 +15,7 @@ import {
   MessageCircle, Globe, Server, RotateCw, Play, MapPin, Ban,
   Wifi, HardDrive, Cpu, MemoryStick, Link2, ExternalLink, CheckCircle2, Camera,
   Bot, Sparkles, Minimize2, Database, UserCircle, Wallet, Pencil,
-  MinusCircle, History, ArrowUpCircle, ArrowDownCircle, Bell
+  MinusCircle, History, ArrowUpCircle, ArrowDownCircle, Bell, ShoppingBag
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
