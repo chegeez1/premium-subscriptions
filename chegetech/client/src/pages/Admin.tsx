@@ -6339,9 +6339,8 @@ function VpsTab() {
     setAgentScript("");
     setAgentScriptLoading(true);
     try {
-      const res = await fetch(`/api/agent/script/${id}`, { headers: authHeaders() as any });
-      const text = await res.text();
-      setAgentScript(text);
+      const data = await authFetch(`/api/agent/script/${id}`);
+      setAgentScript(data.script || "Error: empty script returned");
     } catch (e: any) { setAgentScript("Error: " + e.message); }
     finally { setAgentScriptLoading(false); }
   };
