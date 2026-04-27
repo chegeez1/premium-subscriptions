@@ -14,3 +14,66 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary List all shortened links
+ */
+export const ListLinksResponseItem = zod.object({
+  id: zod.number(),
+  originalUrl: zod.string(),
+  slug: zod.string(),
+  clicks: zod.number(),
+  createdAt: zod.string(),
+});
+export const ListLinksResponse = zod.array(ListLinksResponseItem);
+
+/**
+ * @summary Create a shortened link
+ */
+export const CreateLinkBody = zod.object({
+  originalUrl: zod.string().describe("The URL to shorten"),
+  customSlug: zod.string().optional().describe("Optional custom slug"),
+});
+
+/**
+ * @summary Get global stats
+ */
+export const GetLinkStatsResponse = zod.object({
+  totalLinks: zod.number(),
+  totalClicks: zod.number(),
+  topLinks: zod.array(
+    zod.object({
+      id: zod.number(),
+      originalUrl: zod.string(),
+      slug: zod.string(),
+      clicks: zod.number(),
+      createdAt: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get a link by ID
+ */
+export const GetLinkByIdParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetLinkByIdResponse = zod.object({
+  id: zod.number(),
+  originalUrl: zod.string(),
+  slug: zod.string(),
+  clicks: zod.number(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Delete a link
+ */
+export const DeleteLinkParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeleteLinkResponse = zod.object({
+  success: zod.boolean(),
+});

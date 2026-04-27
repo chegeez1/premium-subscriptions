@@ -5,18 +5,28 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  CreateLinkBody,
+  DeleteResponse,
+  ErrorResponse,
+  HealthStatus,
+  Link,
+  LinkStats,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -99,3 +109,400 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List all shortened links
+ */
+export const getListLinksUrl = () => {
+  return `/api/links`;
+};
+
+export const listLinks = async (options?: RequestInit): Promise<Link[]> => {
+  return customFetch<Link[]>(getListLinksUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListLinksQueryKey = () => {
+  return [`/api/links`] as const;
+};
+
+export const getListLinksQueryOptions = <
+  TData = Awaited<ReturnType<typeof listLinks>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof listLinks>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListLinksQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listLinks>>> = ({
+    signal,
+  }) => listLinks({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listLinks>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListLinksQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listLinks>>
+>;
+export type ListLinksQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all shortened links
+ */
+
+export function useListLinks<
+  TData = Awaited<ReturnType<typeof listLinks>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof listLinks>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListLinksQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a shortened link
+ */
+export const getCreateLinkUrl = () => {
+  return `/api/links`;
+};
+
+export const createLink = async (
+  createLinkBody: CreateLinkBody,
+  options?: RequestInit,
+): Promise<Link> => {
+  return customFetch<Link>(getCreateLinkUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createLinkBody),
+  });
+};
+
+export const getCreateLinkMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLink>>,
+    TError,
+    { data: BodyType<CreateLinkBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createLink>>,
+  TError,
+  { data: BodyType<CreateLinkBody> },
+  TContext
+> => {
+  const mutationKey = ["createLink"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createLink>>,
+    { data: BodyType<CreateLinkBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createLink(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateLinkMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createLink>>
+>;
+export type CreateLinkMutationBody = BodyType<CreateLinkBody>;
+export type CreateLinkMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Create a shortened link
+ */
+export const useCreateLink = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLink>>,
+    TError,
+    { data: BodyType<CreateLinkBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createLink>>,
+  TError,
+  { data: BodyType<CreateLinkBody> },
+  TContext
+> => {
+  return useMutation(getCreateLinkMutationOptions(options));
+};
+
+/**
+ * @summary Get global stats
+ */
+export const getGetLinkStatsUrl = () => {
+  return `/api/links/stats`;
+};
+
+export const getLinkStats = async (
+  options?: RequestInit,
+): Promise<LinkStats> => {
+  return customFetch<LinkStats>(getGetLinkStatsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetLinkStatsQueryKey = () => {
+  return [`/api/links/stats`] as const;
+};
+
+export const getGetLinkStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLinkStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getLinkStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetLinkStatsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLinkStats>>> = ({
+    signal,
+  }) => getLinkStats({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getLinkStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetLinkStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLinkStats>>
+>;
+export type GetLinkStatsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get global stats
+ */
+
+export function useGetLinkStats<
+  TData = Awaited<ReturnType<typeof getLinkStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getLinkStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetLinkStatsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get a link by ID
+ */
+export const getGetLinkByIdUrl = (id: number) => {
+  return `/api/links/${id}`;
+};
+
+export const getLinkById = async (
+  id: number,
+  options?: RequestInit,
+): Promise<Link> => {
+  return customFetch<Link>(getGetLinkByIdUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetLinkByIdQueryKey = (id: number) => {
+  return [`/api/links/${id}`] as const;
+};
+
+export const getGetLinkByIdQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLinkById>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getLinkById>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetLinkByIdQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLinkById>>> = ({
+    signal,
+  }) => getLinkById(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getLinkById>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetLinkByIdQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLinkById>>
+>;
+export type GetLinkByIdQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get a link by ID
+ */
+
+export function useGetLinkById<
+  TData = Awaited<ReturnType<typeof getLinkById>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getLinkById>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetLinkByIdQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Delete a link
+ */
+export const getDeleteLinkUrl = (id: number) => {
+  return `/api/links/${id}`;
+};
+
+export const deleteLink = async (
+  id: number,
+  options?: RequestInit,
+): Promise<DeleteResponse> => {
+  return customFetch<DeleteResponse>(getDeleteLinkUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteLinkMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteLink>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteLink>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteLink"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteLink>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteLink(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteLinkMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteLink>>
+>;
+
+export type DeleteLinkMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Delete a link
+ */
+export const useDeleteLink = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteLink>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteLink>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteLinkMutationOptions(options));
+};

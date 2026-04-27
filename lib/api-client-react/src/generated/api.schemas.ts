@@ -8,3 +8,32 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface Link {
+  id: number;
+  originalUrl: string;
+  slug: string;
+  clicks: number;
+  createdAt: string;
+}
+
+export interface CreateLinkBody {
+  /** The URL to shorten */
+  originalUrl: string;
+  /** Optional custom slug */
+  customSlug?: string;
+}
+
+export interface LinkStats {
+  totalLinks: number;
+  totalClicks: number;
+  topLinks: Link[];
+}
+
+export interface DeleteResponse {
+  success: boolean;
+}
+
+export interface ErrorResponse {
+  error: string;
+}

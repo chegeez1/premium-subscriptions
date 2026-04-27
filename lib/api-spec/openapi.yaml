@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: links
+    description: Link shortener operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,112 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /links:
+    get:
+      operationId: listLinks
+      tags: [links]
+      summary: List all shortened links
+      responses:
+        "200":
+          description: List of links
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Link"
+    post:
+      operationId: createLink
+      tags: [links]
+      summary: Create a shortened link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLinkBody"
+      responses:
+        "201":
+          description: Link created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Slug already taken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /links/stats:
+    get:
+      operationId: getLinkStats
+      tags: [links]
+      summary: Get global stats
+      responses:
+        "200":
+          description: Global stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkStats"
+
+  /links/{id}:
+    get:
+      operationId: getLinkById
+      tags: [links]
+      summary: Get a link by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Link found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteLink
+      tags: [links]
+      summary: Delete a link
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +142,66 @@ components:
       required:
         - status
 
+    Link:
+      type: object
+      properties:
+        id:
+          type: integer
+        originalUrl:
+          type: string
+        slug:
+          type: string
+        clicks:
+          type: integer
+        createdAt:
+          type: string
+      required:
+        - id
+        - originalUrl
+        - slug
+        - clicks
+        - createdAt
+
+    CreateLinkBody:
+      type: object
+      properties:
+        originalUrl:
+          type: string
+          description: The URL to shorten
+        customSlug:
+          type: string
+          description: Optional custom slug
+      required:
+        - originalUrl
+
+    LinkStats:
+      type: object
+      properties:
+        totalLinks:
+          type: integer
+        totalClicks:
+          type: integer
+        topLinks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Link"
+      required:
+        - totalLinks
+        - totalClicks
+        - topLinks
+
+    DeleteResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required:
+        - success
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
