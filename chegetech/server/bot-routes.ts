@@ -1793,14 +1793,15 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const { serviceId, serviceName, platform, quantity, link, rate, ourRate } = req.body;
       if (!serviceId || !quantity || !link || !ourRate) return res.status(400).json({ success: false, error: 'Missing fields' });
       const totalUSD = (quantity / 1000) * ourRate;
-      const amountKobo = Math.round(totalUSD * 1600 * 100); // ~1600 NGN per USD
+      const amountKes = Math.round(totalUSD * 130); // ~130 KES per USD
+      const amountKobo = amountKes * 100;
       const email = req.customer?.email || req.session?.customerEmail || 'customer@chegetech.com';
       const ref = 'SMM-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8).toUpperCase();
 
       const paystackBody = JSON.stringify({
-        email, amount: amountKobo, reference: ref,
+        email, amount: amountKobo, reference: ref, currency: 'KES',
         metadata: { serviceId, serviceName, platform, quantity, link, rate, ourRate, totalUSD: totalUSD.toFixed(4) },
-        callback_url: process.env.BASE_URL ? process.env.BASE_URL + '/smm/success' : undefined,
+        callback_url: process.env.BASE_URL ? process.env.BASE_URL + '/payment/callback' : undefined,
       });
       const paystackRes = await new Promise<any>((resolve, reject) => {
         const httpsM = require('https') as typeof import('https');
@@ -1809,10 +1810,48 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       });
 
       if (!paystackRes.status) return res.status(500).json({ success: false, error: 'Payment init failed' });
+
+      // Save order to DB
+      try {
+        const pg = require('./storage').pgPool || (await import('./storage')).pgPool;
+        if (pg) {
+          await pg.query(
+            'INSERT INTO smm_orders (reference,customer_email,service_id,service_name,platform,quantity,link,rate,our_rate,total_usd,amount_kes,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (reference) DO NOTHING',
+            [ref, email, serviceId, serviceName, platform, quantity, link, rate || 0, ourRate, totalUSD.toFixed(4), amountKes, 'pending']
+          );
+        }
+      } catch (dbErr: any) { console.error('[SMM] DB save error:', dbErr.message); }
+
       res.json({ success: true, paymentUrl: paystackRes.data.authorization_url, reference: ref });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
+
+
+  // ── SMM Admin Endpoints ───────────────────────────────────────────────────
+  app.get('/api/admin/smm-orders', async (req: any, res) => {
+    try {
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      if (!pg) return res.json({ success: true, orders: [] });
+      const { rows } = await pg.query('SELECT * FROM smm_orders ORDER BY id DESC LIMIT 500');
+      res.json({ success: true, orders: rows });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.patch('/api/admin/smm-orders/:id/status', async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      const allowed = ['pending','processing','completed','failed'];
+      if (!allowed.includes(status)) return res.status(400).json({ success: false, error: 'Invalid status' });
+      const pgMod = await import('./storage');
+      const pg = (pgMod as any).pgPool;
+      if (!pg) return res.status(500).json({ success: false, error: 'No DB' });
+      await pg.query('UPDATE smm_orders SET status=$1 WHERE id=$2', [status, id]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
 
   // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
