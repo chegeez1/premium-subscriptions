@@ -1286,10 +1286,20 @@ export default function Dashboard() {
                           )}
                         </div>
                       </div>
-                      {bot.pm2_name && (
-                        <div className="mt-3 flex items-center gap-2 text-xs text-white/40">
-                          <span className="text-white/30">PM2:</span>
-                          <span className="font-mono bg-white/5 px-2 py-1 rounded-lg text-indigo-300">{bot.pm2_name}</span>
+                      {(bot.pm2_name || bot.vps_label) && (
+                        <div className="mt-3 flex items-center gap-3 flex-wrap text-xs text-white/40">
+                          {bot.pm2_name && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-white/30">PM2:</span>
+                              <span className="font-mono bg-white/5 px-2 py-1 rounded-lg text-indigo-300">{bot.pm2_name}</span>
+                            </div>
+                          )}
+                          {bot.vps_label && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-white/30">Server:</span>
+                              <span className="bg-white/5 px-2 py-1 rounded-lg text-white/60">{bot.vps_label}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                       {bot.expires_at && bot.status === "deployed" && (() => {
