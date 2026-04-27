@@ -2071,6 +2071,16 @@ function DashboardTab() {
   const stats = statsData?.transactions;
   const accStats = statsData?.accounts;
   const botStats = statsData?.bots;
+  const { data: smmData }     = useQuery<any>({ queryKey:["/api/admin/smm-orders"],     queryFn:()=>authFetch("/api/admin/smm-orders"),     refetchInterval:60000 });
+  const { data: proxyData }   = useQuery<any>({ queryKey:["/api/admin/proxy-orders"],   queryFn:()=>authFetch("/api/admin/proxy-orders"),   refetchInterval:60000 });
+  const { data: digitalData } = useQuery<any>({ queryKey:["/api/admin/digital-orders"], queryFn:()=>authFetch("/api/admin/digital-orders"), refetchInterval:60000 });
+  const smmOrders     = smmData?.orders     || [];
+  const proxyOrders   = proxyData?.orders   || [];
+  const digitalOrders = digitalData?.orders || [];
+  const smmRevenue     = smmOrders.filter((o:any)=>o.status!=='failed').reduce((s:number,o:any)=>s+(parseFloat(o.amount_kes)||0),0);
+  const proxyRevenue   = proxyOrders.filter((o:any)=>o.status!=='failed').reduce((s:number,o:any)=>s+(parseFloat(o.amount_kes)||0),0);
+  const digitalRevenue = digitalOrders.filter((o:any)=>o.status==='delivered').reduce((s:number,o:any)=>s+(parseFloat(o.amount_kes)||0),0);
+  const totalStoreRevenue = (stats?.revenue||0) + (botStats?.revenue||0) + smmRevenue + proxyRevenue + digitalRevenue;
   const daily: Array<{ date: string; revenue: number; orders: number }> = analyticsData?.daily ?? [];
   const topPlans: Array<{ planName: string; revenue: number; orders: number }> = analyticsData?.topPlans ?? [];
   const maxRevenue = Math.max(...daily.map((d) => d.revenue), 1);
@@ -2111,6 +2121,55 @@ function DashboardTab() {
               <div key={label} className="glass-card rounded-2xl p-4 flex items-center gap-3">
                 <div className={`w-9 h-9 rounded-xl ${bg} flex items-center justify-center`}><Icon className={`w-4 h-4 ${color}`} /></div>
                 <div><p className="text-xs text-white/40">{label}</p><p className="text-xl font-bold text-white">{value}</p></div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Revenue Streams ─────────────────────────────────────── */}
+          <div className="glass-card rounded-2xl p-5 mb-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-indigo-400" />
+                <h3 className="font-semibold text-white text-sm">All Revenue Streams</h3>
+              </div>
+              <span className="text-xs text-white/40 bg-white/5 px-2 py-1 rounded-lg">Total: <span className="text-emerald-400 font-bold">KES {totalStoreRevenue.toLocaleString()}</span></span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              {[
+                { label:"Premium Accounts", revenue:stats?.revenue||0,    orders:stats?.total||0,          color:"from-indigo-500 to-blue-600",    icon:"🛒" },
+                { label:"WhatsApp Bots",    revenue:botStats?.revenue||0,  orders:botStats?.total||0,       color:"from-green-500 to-emerald-600",  icon:"🤖" },
+                { label:"SMM Boost",        revenue:smmRevenue,            orders:smmOrders.length,         color:"from-pink-500 to-rose-600",      icon:"📈" },
+                { label:"Proxies",          revenue:proxyRevenue,          orders:proxyOrders.length,       color:"from-emerald-500 to-teal-600",   icon:"🛡️" },
+                { label:"Aged Accounts",    revenue:digitalRevenue,        orders:digitalOrders.length,     color:"from-violet-500 to-purple-600",  icon:"👤" },
+              ].map(s=>(
+                <div key={s.label} className="bg-white/5 border border-white/8 rounded-xl p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <span className="text-base">{s.icon}</span>
+                    <span className="text-xs text-white/40 truncate">{s.label}</span>
+                  </div>
+                  <p className="text-lg font-bold text-white">KES {s.revenue.toLocaleString()}</p>
+                  <p className="text-xs text-white/30 mt-0.5">{s.orders} orders</p>
+                  <div className="mt-2 h-1 bg-white/5 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full bg-gradient-to-r ${s.color}`} style={{width:totalStoreRevenue>0?`${Math.round((s.revenue/totalStoreRevenue)*100)}%`:'0%'}}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── New product order counters ─────────────────────────────── */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+            {[
+              { label:"SMM Orders",          value:smmOrders.length,                                                               icon:TrendingUp, color:"text-pink-400",    bg:"bg-pink-500/10"    },
+              { label:"SMM Pending",         value:smmOrders.filter((o:any)=>o.status==='pending').length,                         icon:Clock,      color:"text-amber-400",   bg:"bg-amber-500/10"   },
+              { label:"Proxy Orders",        value:proxyOrders.length,                                                             icon:Shield,     color:"text-emerald-400", bg:"bg-emerald-500/10" },
+              { label:"Proxy Active",        value:proxyOrders.filter((o:any)=>o.status==='active').length,                        icon:Zap,        color:"text-cyan-400",    bg:"bg-cyan-500/10"    },
+              { label:"Aged Acct Orders",    value:digitalOrders.length,                                                           icon:Users,      color:"text-violet-400",  bg:"bg-violet-500/10"  },
+              { label:"Accts Delivered",     value:digitalOrders.filter((o:any)=>o.status==='delivered').length,                   icon:CheckCircle,color:"text-emerald-400", bg:"bg-emerald-500/10" },
+            ].map(({ label, value, icon: Icon, color, bg }) => (
+              <div key={label} className="glass-card rounded-xl p-3 flex items-center gap-2">
+                <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}><Icon className={`w-3.5 h-3.5 ${color}`} /></div>
+                <div><p className="text-xs text-white/40 leading-tight">{label}</p><p className="text-lg font-bold text-white">{value}</p></div>
               </div>
             ))}
           </div>
