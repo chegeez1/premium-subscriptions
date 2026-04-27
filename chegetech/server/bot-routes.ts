@@ -248,10 +248,35 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
       await m(`UPDATE bot_orders SET status = 'paid', paystack_reference = ?, updated_at = ${updNow} WHERE reference = ?`, [reference, reference]);
 
-      // Deployment triggered after customer submits configuration form
-
       const updated = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
-      res.json({ success: true, order: fmtOrder(updated[0]) });
+      const paidOrder = updated[0];
+      res.json({ success: true, order: fmtOrder(paidOrder) });
+
+      // Auto-deploy to VPS immediately after payment (non-blocking)
+      const bots = await q("SELECT * FROM bots WHERE id = ?", [paidOrder.bot_id]).catch(() => []);
+      if (bots.length) {
+        const autoEnv: Record<string, string> = { NODE_ENV: "production" };
+        if (paidOrder.session_id) autoEnv["SESSION_ID"] = paidOrder.session_id;
+        if (paidOrder.db_url) autoEnv["DB_URL"] = paidOrder.db_url;
+        if (paidOrder.mode) autoEnv["MODE"] = paidOrder.mode;
+        if (paidOrder.timezone) autoEnv["TIMEZONE"] = paidOrder.timezone;
+        deployBotToVps(paidOrder, bots[0], autoEnv).then(async (result) => {
+          if (result) {
+            const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+            await m(
+              `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, expires_at = ?, updated_at = ${updNow} WHERE reference = ?`,
+              [result.pm2Name, result.vpsServerId, expiresAt, reference]
+            );
+            console.log(`[Auto Deploy] ✓ ${reference} deployed — ${result.pm2Name}`);
+          } else {
+            console.log(`[Auto Deploy] No VPS available for ${reference}`);
+          }
+        }).catch((e: any) => {
+          console.error(`[Auto Deploy] ✗ ${reference}:`, e.message);
+          m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE reference = ?`,
+            ["Auto-deploy failed: " + e.message.slice(0, 200), reference]).catch(() => {});
+        });
+      }
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -318,10 +343,34 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
         [reference, bot.id, bot.name, customerName, customerEmail, customerPhone, sessionId || null, dbUrl || null, mode || "public", timezone || "Africa/Nairobi", walletFinalAmount]
       );
 
-      // Deployment triggered after customer submits configuration form
-
       const created = await q("SELECT * FROM bot_orders WHERE reference = ?", [reference]);
-      res.json({ success: true, reference, order: fmtOrder(created[0]) });
+      const walletOrder = created[0];
+      res.json({ success: true, reference, order: fmtOrder(walletOrder) });
+
+      // Auto-deploy to VPS immediately after wallet payment (non-blocking)
+      const autoEnvW: Record<string, string> = { NODE_ENV: "production" };
+      if (sessionId) autoEnvW["SESSION_ID"] = sessionId;
+      if (dbUrl) autoEnvW["DB_URL"] = dbUrl;
+      if (mode) autoEnvW["MODE"] = mode;
+      if (timezone) autoEnvW["TIMEZONE"] = timezone;
+      deployBotToVps(walletOrder, bot, autoEnvW).then(async (result) => {
+        if (result) {
+          const updNowW = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          await m(
+            `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNowW}, expires_at = ?, updated_at = ${updNowW} WHERE reference = ?`,
+            [result.pm2Name, result.vpsServerId, expiresAt, reference]
+          );
+          console.log(`[Auto Deploy] ✓ ${reference} deployed — ${result.pm2Name}`);
+        } else {
+          console.log(`[Auto Deploy] No VPS available for ${reference}`);
+        }
+      }).catch((e: any) => {
+        console.error(`[Auto Deploy] ✗ ${reference}:`, e.message);
+        const updNowW = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+        m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNowW} WHERE reference = ?`,
+          ["Auto-deploy failed: " + e.message.slice(0, 200), reference]).catch(() => {});
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -897,6 +946,41 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
           return res.json({ success: true, restarted, total: orders.length });
         } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
       });
-  
+
+      // ── Admin: auto-deploy all paid/failed orders that haven't been deployed yet ─
+      app.post("/api/admin/bots/bulk/deploy-pending", adminAuthMiddleware, async (req, res) => {
+        try {
+          const pending = await q(
+            "SELECT bo.*, b.repo_url as bot_repo_url, b.name as bot_name_ref FROM bot_orders bo LEFT JOIN bots b ON bo.bot_id = b.id WHERE bo.status IN ('paid', 'deploy_failed') AND (bo.pm2_name IS NULL OR bo.pm2_name = '')"
+          );
+          res.json({ success: true, message: `Triggering deploy for ${pending.length} orders…`, count: pending.length });
+          const updNow = dbType === "pg" ? "NOW()::text" : "datetime('now')";
+          for (const order of pending) {
+            const bots = await q("SELECT * FROM bots WHERE id = ?", [order.bot_id]).catch(() => []);
+            if (!bots.length) continue;
+            const autoEnv: Record<string, string> = { NODE_ENV: "production" };
+            if (order.session_id) autoEnv["SESSION_ID"] = order.session_id;
+            if (order.db_url) autoEnv["DB_URL"] = order.db_url;
+            if (order.mode) autoEnv["MODE"] = order.mode;
+            if (order.timezone) autoEnv["TIMEZONE"] = order.timezone;
+            try {
+              const result = await deployBotToVps(order, bots[0], autoEnv);
+              if (result) {
+                const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+                await m(
+                  `UPDATE bot_orders SET status = 'deployed', pm2_name = ?, vps_server_id = ?, deployed_at = ${updNow}, expires_at = ?, updated_at = ${updNow} WHERE id = ?`,
+                  [result.pm2Name, result.vpsServerId, expiresAt, order.id]
+                );
+                console.log(`[Bulk Deploy] ✓ Order ${order.reference} deployed`);
+              }
+            } catch (e: any) {
+              console.error(`[Bulk Deploy] ✗ Order ${order.reference}:`, e.message);
+              await m(`UPDATE bot_orders SET status = 'deploy_failed', deployment_notes = ?, updated_at = ${updNow} WHERE id = ?`,
+                ["Bulk deploy failed: " + e.message.slice(0, 200), order.id]).catch(() => {});
+            }
+          }
+        } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
+      });
+
 }
 
