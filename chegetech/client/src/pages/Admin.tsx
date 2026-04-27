@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 
-type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders" | "free-proxies" | "gift-cards" | "gc-orders" | "sms-plans" | "sms-orders";
+type Tab = "dashboard" | "analytics" | "plans" | "accounts" | "promos" | "transactions" | "apikeys" | "customers" | "ratings" | "feature-requests" | "emailblast" | "campaigns" | "logs" | "settings" | "support" | "subadmins" | "super-admins" | "geo-restrict" | "vps" | "vps-sales" | "domains" | "funnel" | "groups" | "flash-sales" | "whatsapp" | "bot-store" | "bot-orders" | "smm-orders" | "proxy-plans" | "proxy-orders" | "digital-products" | "digital-orders" | "free-proxies" | "gift-cards" | "gc-orders" | "sms-plans" | "sms-orders" | "cc-checker" | "email-gen";
 
 class SettingsErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -277,6 +277,8 @@ export default function Admin() {
     { id: "gc-orders", label: "GC Orders", icon: Gift, alwaysVisible: true },
     { id: "sms-plans", label: "SMS Plans", icon: MessageSquare, alwaysVisible: true },
     { id: "sms-orders", label: "SMS Orders", icon: MessageSquare, alwaysVisible: true },
+    { id: "cc-checker", label: "CC Checker", icon: CreditCard, alwaysVisible: true },
+    { id: "email-gen", label: "Email Generator", icon: Mail, alwaysVisible: true },
     { id: "logs", label: "Activity Logs", icon: Activity },
     { id: "subadmins", label: "Sub-Admins", icon: Users, superOnly: true },
     { id: "super-admins", label: "Super Admins", icon: Shield, superOnly: true },
@@ -422,6 +424,8 @@ export default function Admin() {
           {activeTab === "gc-orders" && <GiftCardOrdersAdminTab />}
           {activeTab === "sms-plans" && <SmsPlansAdminTab />}
           {activeTab === "sms-orders" && <SmsOrdersAdminTab />}
+          {activeTab === "cc-checker" && <BulkCcCheckerAdminTab />}
+          {activeTab === "email-gen" && <EmailGenAdminTab />}
           {activeTab === "subadmins" && adminRole === "super" && <SubAdminsTab />}
           {activeTab === "super-admins" && adminRole === "super" && isPrimary && <SuperAdminsTab />}
           {activeTab === "geo-restrict" && adminRole === "super" && <GeoRestrictTab />}
@@ -10386,6 +10390,216 @@ function SmsPlansAdminTab() {
             <TableCell><div className="flex gap-1.5"><Button size="sm" variant="outline" onClick={()=>startEdit(p)} className="border-white/10 text-gray-400 h-7 px-2 text-xs"><Edit2 className="w-3 h-3"/></Button><Button size="sm" variant="outline" onClick={()=>{if(confirm("Delete?"))del.mutate(p.id);}} className="border-red-500/20 text-red-400 hover:bg-red-500/10 h-7 px-2 text-xs"><Trash2 className="w-3 h-3"/></Button></div></TableCell>
           </TableRow>
         ))}</TableBody></Table></div>
+      )}
+    </div>
+  );
+}
+
+
+// ─── Bulk CC Checker Admin Tab ──────────────────────────────────────────────
+function luhnValid(num: string): boolean {
+  const digits = num.replace(/\D/g, '').split('').reverse().map(Number);
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = digits[i];
+    if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+const EG_DOMAINS = ['yopmail.com','guerrillamail.com','mailsac.com','sharklasers.com','throwam.com','trashmail.com','spamoff.de','maildrop.cc','dispostable.com','10minutemail.com'];
+const EG_WORDS = ['alpha','beta','delta','echo','foxtrot','gamma','hotel','india','juliet','kilo','lima','mike','nova','oscar','papa','quebec','romeo','sierra','tango','ultra'];
+const EG_NAMES = ['alex','blake','casey','drew','elliot','finley','gray','harper','indigo','jordan','kendall','lane','morgan','noel','ocean','parker','quinn','river','sage','taylor'];
+
+type CcResult = { card: string; status: 'Live'|'Dead'; bank?: string; cardType?: string; country?: string; flag?: string; message?: string };
+
+function BulkCcCheckerAdminTab() {
+  const { toast } = useToast();
+  const [input, setInput] = useState('');
+  const [results, setResults] = useState<CcResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [sessionChecked, setSessionChecked] = useState(0);
+
+  const live = results.filter(r => r.status === 'Live');
+  const dead = results.filter(r => r.status === 'Dead');
+
+  async function checkAll() {
+    const lines = input.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 50);
+    if (!lines.length) return toast({ title: 'No cards', description: 'Paste at least one card', variant: 'destructive' });
+    setLoading(true); setResults([]); setProgress(0);
+    const parsed = lines.map(line => {
+      const [num, mm, yy, cvv] = line.split('|');
+      return { raw: line, num: (num || '').replace(/\D/g, ''), mm, yy, cvv };
+    });
+    const uniqueBins = [...new Set(parsed.filter(c => c.num.length >= 6).map(c => c.num.slice(0, 6)))];
+    let binData: Record<string, any> = {};
+    try {
+      const r = await fetch('https://bins.antipublic.cc/bins/lookup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(uniqueBins)
+      });
+      if (r.ok) {
+        const arr: any[] = await r.json();
+        arr.forEach((b: any) => { if (b?.bin) binData[b.bin] = b; });
+      }
+    } catch {}
+    const out: CcResult[] = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const c = parsed[i];
+      if (!luhnValid(c.num)) {
+        out.push({ card: c.raw, status: 'Dead', message: 'Luhn failed' });
+      } else {
+        const b = binData[c.num.slice(0, 6)] || binData[c.num.slice(0, 8)];
+        if (b) {
+          const cc = b.country_code || '';
+          const flag = cc ? String.fromCodePoint(...[...cc].map((ch: string) => ch.charCodeAt(0) + 127397)) : '';
+          out.push({ card: c.raw, status: 'Live', bank: b.bank || 'Unknown', cardType: [b.scheme, b.type, b.level].filter(Boolean).join(' '), country: b.country_name || cc, flag });
+        } else {
+          out.push({ card: c.raw, status: 'Live', bank: 'Unknown BIN', cardType: 'Unknown' });
+        }
+      }
+      setProgress(Math.round(((i + 1) / parsed.length) * 100));
+    }
+    setResults(out); setSessionChecked(p => p + out.length); setLoading(false);
+  }
+
+  function downloadLive() {
+    const txt = live.map(r => r.card).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
+    a.download = 'live_cards.txt'; a.click();
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div><h2 className="text-xl font-bold text-white">CC Bulk Checker</h2><p className="text-sm text-gray-400">Validate up to 50 cards — Luhn + BIN lookup</p></div>
+        {sessionChecked > 0 && <span className="text-xs text-gray-500">Session: {sessionChecked} checked</span>}
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {[{label:'Checked',value:results.length,c:'text-white'},{label:'Live',value:live.length,c:'text-emerald-400'},{label:'Dead',value:dead.length,c:'text-red-400'}].map(s=>(
+          <div key={s.label} className="bg-white/5 border border-white/10 rounded-xl p-4 text-center"><p className="text-xs text-gray-400 mb-1">{s.label}</p><p className={`text-2xl font-bold ${s.c}`}>{s.value}</p></div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+          <p className="text-sm font-medium text-gray-300">Paste Cards <span className="text-xs text-gray-500">(number|mm|yy|cvv · one per line · max 50)</span></p>
+          <textarea value={input} onChange={e=>setInput(e.target.value)} rows={12} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-green-400 font-mono focus:outline-none focus:border-green-500/40 resize-none" placeholder="4532015112830366|12|27|123" />
+          <Button onClick={checkAll} disabled={loading} className="w-full bg-green-600 hover:bg-green-700">
+            {loading ? <><Loader2 className="w-4 h-4 animate-spin mr-2"/>Checking… {progress}%</> : <><CreditCard className="w-4 h-4 mr-2"/>Check All</>}
+          </Button>
+        </div>
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-300">Results</p>
+            {live.length > 0 && <Button size="sm" variant="outline" onClick={downloadLive} className="border-white/10 text-gray-400 h-7 px-2 text-xs gap-1"><Download className="w-3 h-3"/>Live</Button>}
+          </div>
+          {results.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 text-gray-600"><CreditCard className="w-10 h-10 mb-2 opacity-30"/><p className="text-sm">Paste cards and click Check All</p></div>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {results.map((r, i) => (
+                <div key={i} className={`flex items-start gap-2 rounded-lg px-3 py-2 border ${r.status==='Live'?'bg-emerald-500/5 border-emerald-500/20':'bg-red-500/5 border-red-500/15'}`}>
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded mt-0.5 ${r.status==='Live'?'bg-emerald-500/20 text-emerald-400':'bg-red-500/20 text-red-400'}`}>{r.status}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-mono text-white/80 truncate">{r.card}</p>
+                    <p className="text-xs text-gray-400">{r.flag} {r.bank}{r.cardType?' · '+r.cardType:''}{r.country?' · '+r.country:''}{r.message?' · '+r.message:''}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Email Generator Admin Tab ────────────────────────────────────────────────
+function EmailGenAdminTab() {
+  const { toast } = useToast();
+  const [count, setCount] = useState(20);
+  const [domain, setDomain] = useState('random');
+  const [format, setFormat] = useState('name_num');
+  const [emails, setEmails] = useState<string[]>([]);
+  const [sessionTotal, setSessionTotal] = useState(0);
+
+  function rnd(n: number) { return Math.floor(Math.random() * n); }
+  function uid() { return Math.random().toString(36).slice(2, 9); }
+
+  function genEmail(d: string, f: string): string {
+    const domains = d === 'random' ? EG_DOMAINS : [d];
+    const pick = domains[rnd(domains.length)];
+    let user = '';
+    if (f === 'name_num') user = EG_NAMES[rnd(EG_NAMES.length)] + (100 + rnd(9900));
+    else if (f === 'word_word') user = EG_WORDS[rnd(EG_WORDS.length)] + EG_WORDS[rnd(EG_WORDS.length)] + rnd(99);
+    else user = uid();
+    return user + '@' + pick;
+  }
+
+  function generate() {
+    const n = Math.min(Math.max(1, count), 100);
+    const list = Array.from({ length: n }, () => genEmail(domain, format));
+    setEmails(list); setSessionTotal(p => p + list.length);
+  }
+
+  function copyAll() { navigator.clipboard.writeText(emails.join('\n')); toast({ title: 'Copied!', description: emails.length + ' emails copied' }); }
+  function download() {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([emails.join('\n')], { type: 'text/plain' }));
+    a.download = 'emails.txt'; a.click();
+  }
+  function copyOne(e: string) { navigator.clipboard.writeText(e); toast({ title: 'Copied', description: e }); }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div><h2 className="text-xl font-bold text-white">Email Generator</h2><p className="text-sm text-gray-400">Generate up to 100 disposable addresses</p></div>
+        {sessionTotal > 0 && <span className="text-xs text-gray-500">Session: {sessionTotal} generated</span>}
+      </div>
+      <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="text-xs text-gray-400 mb-1.5 block">Count (max 100)</label>
+            <Input type="number" min={1} max={100} value={count} onChange={e=>setCount(Number(e.target.value))} className="bg-black/40 border-white/10 text-white h-9"/>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1.5 block">Domain</label>
+            <select value={domain} onChange={e=>setDomain(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-lg px-3 h-9 text-sm text-white focus:outline-none focus:border-green-500/40">
+              <option value="random">Random mix</option>
+              {EG_DOMAINS.map(d=><option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1.5 block">Format</label>
+            <select value={format} onChange={e=>setFormat(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-lg px-3 h-9 text-sm text-white focus:outline-none focus:border-green-500/40">
+              <option value="name_num">name + numbers</option>
+              <option value="word_word">word + word</option>
+              <option value="random">random chars</option>
+            </select>
+          </div>
+        </div>
+        <Button onClick={generate} className="w-full bg-green-600 hover:bg-green-700"><Mail className="w-4 h-4 mr-2"/>Generate</Button>
+      </div>
+      {emails.length > 0 && (
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-300">{emails.length} emails generated</p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={copyAll} className="border-white/10 text-gray-400 h-7 px-2 text-xs gap-1"><Copy className="w-3 h-3"/>Copy All</Button>
+              <Button size="sm" variant="outline" onClick={download} className="border-white/10 text-gray-400 h-7 px-2 text-xs gap-1"><Download className="w-3 h-3"/>Download</Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-72 overflow-y-auto pr-1">
+            {emails.map((e, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 bg-black/30 border border-white/[0.08] rounded-lg px-3 py-1.5 group">
+                <span className="text-xs font-mono text-green-400 truncate">{e}</span>
+                <button onClick={()=>copyOne(e)} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-white"><Copy className="w-3 h-3"/></button>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
