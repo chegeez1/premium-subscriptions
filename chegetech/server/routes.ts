@@ -1,4 +1,5 @@
 import { registerBotRoutes, deployPendingOrders } from "./bot-routes";
+import { registerTradingBotRoutes } from "./tradingbot-routes";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
@@ -6183,6 +6184,7 @@ echo "    Check logs: pm2 logs chege-deploy-agent"
       res.status(500).json({ success: false, error: err.message });
     }
   });
+  registerTradingBotRoutes(app);
   registerBotRoutes(app, adminAuthMiddleware);
   return httpServer;
 }
