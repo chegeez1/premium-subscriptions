@@ -1706,7 +1706,115 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
-    // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
+  
+  // ── SMM Boost — smmstone.com scraper ─────────────────────────────────────
+  let smmCache: { services: any[]; ts: number } | null = null;
+
+  function detectPlatform(text: string): string {
+    const t = text.toLowerCase();
+    if (t.includes('instagram')) return 'Instagram';
+    if (t.includes('tiktok')) return 'TikTok';
+    if (t.includes('youtube')) return 'YouTube';
+    if (t.includes('telegram')) return 'Telegram';
+    if (t.includes('facebook')) return 'Facebook';
+    if (t.includes('twitter') || t.includes(' x ')) return 'Twitter';
+    if (t.includes('spotify')) return 'Spotify';
+    if (t.includes('whatsapp')) return 'WhatsApp';
+    if (t.includes('discord')) return 'Discord';
+    return 'Other';
+  }
+
+  async function scrapeSmmServices(): Promise<any[]> {
+    if (smmCache && Date.now() - smmCache.ts < 60 * 60 * 1000) return smmCache.services;
+    console.log('[SMM] Scraping smmstone.com...');
+    const html = await fetchPageHtml('smmstone.com', '/services');
+
+    // Build category-id → category-name map
+    const catMap: Record<string, string> = {};
+    const catRx = /category-id="(\d+)"[^>]*category-name="([^"]+)"/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = catRx.exec(html)) !== null) catMap[cm[1]] = cm[2];
+
+    // Extract services: id, categoryId, name, price, min, max
+    const services: any[] = [];
+    const svcRx = /service-id="(\d+)"[^>]*data-filter-table-category-id="(\d+)"[\s\S]{0,150}<span class="ss-name">([^<]+)<\/span>[\s\S]{0,300}?\$(\d+\.\d+)[\s\S]{0,200}?<\/div>/g;
+    let sm: RegExpExecArray | null;
+    while ((sm = svcRx.exec(html)) !== null && services.length < 3000) {
+      const catName = catMap[sm[2]] || 'Other';
+      const name = sm[3].replace(/[\uD800-\uDFFF]|[\u{1F000}-\u{1FFFF}]/gu, '').replace(/\s+/g, ' ').trim();
+      const rate = parseFloat(sm[4]);
+      const platform = detectPlatform(catName + ' ' + name);
+      services.push({ id: sm[1], name, category: catName, rate, platform });
+    }
+
+    // Fallback: simpler name+price only approach if above yields <100
+    if (services.length < 100) {
+      const rx2 = /<span class="ss-name">([^<]+)<\/span>[\s\S]{0,400}?\$(\d+\.\d+)/g;
+      let m2: RegExpExecArray | null;
+      while ((m2 = rx2.exec(html)) !== null && services.length < 3000) {
+        const name = m2[1].replace(/\s+/g, ' ').trim();
+        const rate = parseFloat(m2[2]);
+        services.push({ id: services.length, name, category: 'General', rate, platform: detectPlatform(name) });
+      }
+    }
+
+    smmCache = { services, ts: Date.now() };
+    console.log(`[SMM] Scraped ${services.length} services`);
+    return services;
+  }
+
+  // Mark: 2.5× markup on wholesale rate
+  const SMM_MARKUP = 2.5;
+
+  app.get('/api/smm/services', async (req, res) => {
+    try {
+      const all = await scrapeSmmServices();
+      const { platform, q } = req.query as Record<string, string>;
+      let filtered = all;
+      if (platform && platform !== 'All') filtered = filtered.filter((s: any) => s.platform === platform);
+      if (q) { const ql = q.toLowerCase(); filtered = filtered.filter((s: any) => s.name.toLowerCase().includes(ql) || s.category.toLowerCase().includes(ql)); }
+      const result = filtered.slice(0, 200).map((s: any) => ({ ...s, ourRate: +(s.rate * SMM_MARKUP).toFixed(4) }));
+      res.json({ success: true, services: result, total: filtered.length });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.get('/api/smm/platforms', async (_req, res) => {
+    try {
+      const all = await scrapeSmmServices();
+      const counts: Record<string, number> = {};
+      all.forEach((s: any) => { counts[s.platform] = (counts[s.platform] || 0) + 1; });
+      const platforms = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+      res.json({ success: true, platforms });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.post('/api/smm/order', customerAuthMiddleware, async (req: any, res) => {
+    try {
+      const { serviceId, serviceName, platform, quantity, link, rate, ourRate } = req.body;
+      if (!serviceId || !quantity || !link || !ourRate) return res.status(400).json({ success: false, error: 'Missing fields' });
+      const totalUSD = (quantity / 1000) * ourRate;
+      const amountKobo = Math.round(totalUSD * 1600 * 100); // ~1600 NGN per USD
+      const email = req.customer?.email || req.session?.customerEmail || 'customer@chegetech.com';
+      const ref = 'SMM-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+
+      const paystackBody = JSON.stringify({
+        email, amount: amountKobo, reference: ref,
+        metadata: { serviceId, serviceName, platform, quantity, link, rate, ourRate, totalUSD: totalUSD.toFixed(4) },
+        callback_url: process.env.BASE_URL ? process.env.BASE_URL + '/smm/success' : undefined,
+      });
+      const paystackRes = await new Promise<any>((resolve, reject) => {
+        const httpsM = require('https') as typeof import('https');
+        const r = httpsM.request({ hostname: 'api.paystack.co', path: '/transaction/initialize', method: 'POST', headers: { 'Authorization': 'Bearer ' + process.env.PAYSTACK_SECRET_KEY, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(paystackBody) } }, (resp) => { let d = ''; resp.on('data', (c: Buffer) => d += c); resp.on('end', () => resolve(JSON.parse(d))); });
+        r.on('error', reject); r.write(paystackBody); r.end();
+      });
+
+      if (!paystackRes.status) return res.status(500).json({ success: false, error: 'Payment init failed' });
+      res.json({ success: true, paymentUrl: paystackRes.data.authorization_url, reference: ref });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+
+  // ── Background scheduler: auto-deploy pending orders every 5 minutes ────────
   const RUN_DEPLOY = () => deployPendingOrders().catch((e: any) => console.error("[Scheduler]", e.message));
   setTimeout(() => { RUN_DEPLOY(); setInterval(RUN_DEPLOY, 5 * 60 * 1000); }, 30 * 1000);
   console.log("[Bot Routes] Background deploy scheduler started (runs every 5 min, first run in 30s)");
