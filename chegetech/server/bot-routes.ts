@@ -1094,9 +1094,9 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
 
       await m(`UPDATE bot_orders SET status = 'deploying', updated_at = ${updNow} WHERE id = ?`, [req.params.id]);
 
-      const execStep = async (label: string, cmd: string) => {
+      const execStep = async (label: string, cmd: string, timeoutMs = 300000) => {
         emit(`\n⚡ ${label}...`);
-        const r = await vpsManager.execCommand(server, cmd);
+        const r = await vpsManager.execCommand(server, cmd, timeoutMs);
         const outLines = (r.stdout || "").split("\n").filter((l: string) => l.trim()).slice(0, 12);
         if (outLines.length) emit("   " + outLines.join("\n   "));
         if (r.stderr) {
@@ -1148,8 +1148,12 @@ export function registerBotRoutes(app: Express, adminAuthMiddleware: any) {
       await vpsManager.execCommand(server, `printf '%s\\n' ${JSON.stringify(envLines)} > ${botDir}/.env`);
       emit("   ✓ .env written");
 
-      // 6. npm install
-      await execStep("npm install --production", `${nvmSource}; cd ${botDir} && npm install --production 2>&1 | tail -8`);
+      // 6. npm install — 10 min timeout, offline-first for speed
+      await execStep(
+        "npm install --production",
+        `${nvmSource}; cd ${botDir} && npm install --production --prefer-offline --no-audit --no-fund --loglevel=error 2>&1 | tail -8`,
+        600000 // 10 minutes
+      );
 
       // 7. Start PM2
       await execStep("Start with PM2",
