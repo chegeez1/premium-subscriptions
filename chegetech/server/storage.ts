@@ -383,6 +383,34 @@ export async function initializeDatabase() {
         await pgPool.query("ALTER TABLE vps_orders ADD COLUMN IF NOT EXISTS paystack_reference TEXT");
       // Migrate: add reseller_id to transactions
       await pgPool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reseller_id INTEGER");
+      
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS proxy_plans (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        type TEXT DEFAULT 'residential',
+        gb_amount NUMERIC(10,2),
+        country TEXT,
+        price_kes NUMERIC(10,2) NOT NULL,
+        bandwidth TEXT DEFAULT 'Unlimited',
+        speed TEXT DEFAULT '100Mbps',
+        features TEXT DEFAULT '',
+        is_active BOOLEAN DEFAULT true,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS proxy_orders (
+        id SERIAL PRIMARY KEY,
+        reference TEXT NOT NULL UNIQUE,
+        customer_email TEXT,
+        plan_id INTEGER,
+        plan_name TEXT,
+        amount_kes NUMERIC(10,2),
+        status TEXT DEFAULT 'pending',
+        credentials TEXT,
+        created_at TEXT DEFAULT (NOW()::text),
+        expires_at TEXT
+      )`);
       await pgPool.query(`CREATE TABLE IF NOT EXISTS smm_orders (
         id SERIAL PRIMARY KEY,
         reference TEXT NOT NULL UNIQUE,
