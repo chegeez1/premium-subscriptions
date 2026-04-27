@@ -12,13 +12,14 @@ tags:
     description: Health operations
   - name: links
     description: Link shortener operations
+  - name: tools
+    description: Free tool operations
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -132,6 +133,83 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /tools/bin/{bin}:
+    get:
+      operationId: checkBin
+      tags: [tools]
+      summary: Look up BIN/IIN details
+      parameters:
+        - name: bin
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: BIN info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BinResult"
+        "400":
+          description: Invalid BIN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: BIN not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tools/cc/check:
+    post:
+      operationId: checkCard
+      tags: [tools]
+      summary: Check if a card is live
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardCheckBody"
+      responses:
+        "200":
+          description: Card check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardCheckResult"
+        "400":
+          description: Invalid card format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tools/cc/generate:
+    post:
+      operationId: generateCards
+      tags: [tools]
+      summary: Generate test card numbers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateCardsBody"
+      responses:
+        "200":
+          description: Generated cards
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GeneratedCard"
+
 components:
   schemas:
     HealthStatus:
@@ -167,10 +245,8 @@ components:
       properties:
         originalUrl:
           type: string
-          description: The URL to shorten
         customSlug:
           type: string
-          description: Optional custom slug
       required:
         - originalUrl
 
@@ -205,3 +281,104 @@ components:
           type: string
       required:
         - error
+
+    BinResult:
+      type: object
+      properties:
+        bin:
+          type: string
+        scheme:
+          type: string
+        type:
+          type: string
+        brand:
+          type: string
+        bank:
+          type: string
+        country:
+          type: string
+        countryCode:
+          type: string
+        emoji:
+          type: string
+      required:
+        - bin
+        - scheme
+        - type
+
+    CardCheckBody:
+      type: object
+      properties:
+        number:
+          type: string
+        month:
+          type: string
+        year:
+          type: string
+        cvv:
+          type: string
+      required:
+        - number
+        - month
+        - year
+        - cvv
+
+    CardCheckResult:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        card:
+          type: string
+        bank:
+          type: string
+        type:
+          type: string
+        category:
+          type: string
+        country:
+          type: string
+        emoji:
+          type: string
+      required:
+        - status
+        - message
+
+    GenerateCardsBody:
+      type: object
+      properties:
+        bin:
+          type: string
+          description: BIN prefix to use (optional, defaults to random Visa)
+        count:
+          type: integer
+          description: Number of cards to generate (1-20)
+        month:
+          type: string
+        year:
+          type: string
+        cvv:
+          type: string
+      required: []
+
+    GeneratedCard:
+      type: object
+      properties:
+        number:
+          type: string
+        month:
+          type: string
+        year:
+          type: string
+        cvv:
+          type: string
+        formatted:
+          type: string
+      required:
+        - number
+        - month
+        - year
+        - cvv
+        - formatted

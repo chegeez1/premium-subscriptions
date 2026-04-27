@@ -18,9 +18,7 @@ export interface Link {
 }
 
 export interface CreateLinkBody {
-  /** The URL to shorten */
   originalUrl: string;
-  /** Optional custom slug */
   customSlug?: string;
 }
 
@@ -36,4 +34,51 @@ export interface DeleteResponse {
 
 export interface ErrorResponse {
   error: string;
+}
+
+export interface BinResult {
+  bin: string;
+  scheme: string;
+  type: string;
+  brand?: string;
+  bank?: string;
+  country?: string;
+  countryCode?: string;
+  emoji?: string;
+}
+
+export interface CardCheckBody {
+  number: string;
+  month: string;
+  year: string;
+  cvv: string;
+}
+
+export interface CardCheckResult {
+  status: string;
+  message: string;
+  card?: string;
+  bank?: string;
+  type?: string;
+  category?: string;
+  country?: string;
+  emoji?: string;
+}
+
+export interface GenerateCardsBody {
+  /** BIN prefix to use (optional, defaults to random Visa) */
+  bin?: string;
+  /** Number of cards to generate (1-20) */
+  count?: number;
+  month?: string;
+  year?: string;
+  cvv?: string;
+}
+
+export interface GeneratedCard {
+  number: string;
+  month: string;
+  year: string;
+  cvv: string;
+  formatted: string;
 }

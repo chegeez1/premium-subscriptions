@@ -8,7 +8,6 @@
 import * as zod from "zod";
 
 /**
- * Returns server health status
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
@@ -31,8 +30,8 @@ export const ListLinksResponse = zod.array(ListLinksResponseItem);
  * @summary Create a shortened link
  */
 export const CreateLinkBody = zod.object({
-  originalUrl: zod.string().describe("The URL to shorten"),
-  customSlug: zod.string().optional().describe("Optional custom slug"),
+  originalUrl: zod.string(),
+  customSlug: zod.string().optional(),
 });
 
 /**
@@ -77,3 +76,65 @@ export const DeleteLinkParams = zod.object({
 export const DeleteLinkResponse = zod.object({
   success: zod.boolean(),
 });
+
+/**
+ * @summary Look up BIN/IIN details
+ */
+export const CheckBinParams = zod.object({
+  bin: zod.coerce.string(),
+});
+
+export const CheckBinResponse = zod.object({
+  bin: zod.string(),
+  scheme: zod.string(),
+  type: zod.string(),
+  brand: zod.string().optional(),
+  bank: zod.string().optional(),
+  country: zod.string().optional(),
+  countryCode: zod.string().optional(),
+  emoji: zod.string().optional(),
+});
+
+/**
+ * @summary Check if a card is live
+ */
+export const CheckCardBody = zod.object({
+  number: zod.string(),
+  month: zod.string(),
+  year: zod.string(),
+  cvv: zod.string(),
+});
+
+export const CheckCardResponse = zod.object({
+  status: zod.string(),
+  message: zod.string(),
+  card: zod.string().optional(),
+  bank: zod.string().optional(),
+  type: zod.string().optional(),
+  category: zod.string().optional(),
+  country: zod.string().optional(),
+  emoji: zod.string().optional(),
+});
+
+/**
+ * @summary Generate test card numbers
+ */
+export const GenerateCardsBody = zod.object({
+  bin: zod
+    .string()
+    .optional()
+    .describe("BIN prefix to use (optional, defaults to random Visa)"),
+  count: zod.number().optional().describe("Number of cards to generate (1-20)"),
+  month: zod.string().optional(),
+  year: zod.string().optional(),
+  cvv: zod.string().optional(),
+});
+
+export const GenerateCardsResponseItem = zod.object({
+  number: zod.string(),
+  month: zod.string(),
+  year: zod.string(),
+  cvv: zod.string(),
+  formatted: zod.string(),
+});
+export const GenerateCardsResponse = zod.array(GenerateCardsResponseItem);

@@ -23,6 +23,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
+import { NavBar } from "@/components/nav-bar";
 
 const createLinkSchema = z.object({
   originalUrl: z.string().url("Please enter a valid URL (e.g. https://example.com)"),
@@ -122,14 +123,7 @@ export default function Home() {
   return (
     <div className="min-h-[100dvh] w-full flex flex-col items-center bg-background text-foreground pb-24">
       {/* Header */}
-      <header className="w-full max-w-5xl px-6 py-8 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-primary rounded-md flex items-center justify-center text-primary-foreground font-bold">
-            C
-          </div>
-          <span className="font-bold text-xl tracking-tight text-white">ChegeLink</span>
-        </div>
-      </header>
+      <NavBar />
 
       <main className="w-full max-w-5xl px-6 flex flex-col gap-12 mt-8">
         {/* Hero & Form Section */}

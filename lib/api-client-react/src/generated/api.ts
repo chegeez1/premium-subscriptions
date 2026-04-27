@@ -17,9 +17,14 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  BinResult,
+  CardCheckBody,
+  CardCheckResult,
   CreateLinkBody,
   DeleteResponse,
   ErrorResponse,
+  GenerateCardsBody,
+  GeneratedCard,
   HealthStatus,
   Link,
   LinkStats,
@@ -35,7 +40,6 @@ type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
- * Returns server health status
  * @summary Health check
  */
 export const getHealthCheckUrl = () => {
@@ -505,4 +509,261 @@ export const useDeleteLink = <
   TContext
 > => {
   return useMutation(getDeleteLinkMutationOptions(options));
+};
+
+/**
+ * @summary Look up BIN/IIN details
+ */
+export const getCheckBinUrl = (bin: string) => {
+  return `/api/tools/bin/${bin}`;
+};
+
+export const checkBin = async (
+  bin: string,
+  options?: RequestInit,
+): Promise<BinResult> => {
+  return customFetch<BinResult>(getCheckBinUrl(bin), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getCheckBinQueryKey = (bin: string) => {
+  return [`/api/tools/bin/${bin}`] as const;
+};
+
+export const getCheckBinQueryOptions = <
+  TData = Awaited<ReturnType<typeof checkBin>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  bin: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof checkBin>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getCheckBinQueryKey(bin);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof checkBin>>> = ({
+    signal,
+  }) => checkBin(bin, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!bin,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof checkBin>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type CheckBinQueryResult = NonNullable<
+  Awaited<ReturnType<typeof checkBin>>
+>;
+export type CheckBinQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Look up BIN/IIN details
+ */
+
+export function useCheckBin<
+  TData = Awaited<ReturnType<typeof checkBin>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  bin: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof checkBin>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getCheckBinQueryOptions(bin, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Check if a card is live
+ */
+export const getCheckCardUrl = () => {
+  return `/api/tools/cc/check`;
+};
+
+export const checkCard = async (
+  cardCheckBody: CardCheckBody,
+  options?: RequestInit,
+): Promise<CardCheckResult> => {
+  return customFetch<CardCheckResult>(getCheckCardUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(cardCheckBody),
+  });
+};
+
+export const getCheckCardMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof checkCard>>,
+    TError,
+    { data: BodyType<CardCheckBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof checkCard>>,
+  TError,
+  { data: BodyType<CardCheckBody> },
+  TContext
+> => {
+  const mutationKey = ["checkCard"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof checkCard>>,
+    { data: BodyType<CardCheckBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return checkCard(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CheckCardMutationResult = NonNullable<
+  Awaited<ReturnType<typeof checkCard>>
+>;
+export type CheckCardMutationBody = BodyType<CardCheckBody>;
+export type CheckCardMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Check if a card is live
+ */
+export const useCheckCard = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof checkCard>>,
+    TError,
+    { data: BodyType<CardCheckBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof checkCard>>,
+  TError,
+  { data: BodyType<CardCheckBody> },
+  TContext
+> => {
+  return useMutation(getCheckCardMutationOptions(options));
+};
+
+/**
+ * @summary Generate test card numbers
+ */
+export const getGenerateCardsUrl = () => {
+  return `/api/tools/cc/generate`;
+};
+
+export const generateCards = async (
+  generateCardsBody: GenerateCardsBody,
+  options?: RequestInit,
+): Promise<GeneratedCard[]> => {
+  return customFetch<GeneratedCard[]>(getGenerateCardsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(generateCardsBody),
+  });
+};
+
+export const getGenerateCardsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateCards>>,
+    TError,
+    { data: BodyType<GenerateCardsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateCards>>,
+  TError,
+  { data: BodyType<GenerateCardsBody> },
+  TContext
+> => {
+  const mutationKey = ["generateCards"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateCards>>,
+    { data: BodyType<GenerateCardsBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return generateCards(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateCardsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateCards>>
+>;
+export type GenerateCardsMutationBody = BodyType<GenerateCardsBody>;
+export type GenerateCardsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Generate test card numbers
+ */
+export const useGenerateCards = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateCards>>,
+    TError,
+    { data: BodyType<GenerateCardsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateCards>>,
+  TError,
+  { data: BodyType<GenerateCardsBody> },
+  TContext
+> => {
+  return useMutation(getGenerateCardsMutationOptions(options));
 };
