@@ -386,6 +386,67 @@ export async function initializeDatabase() {
       
       
       
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS gift_card_products (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        brand TEXT NOT NULL DEFAULT 'Other',
+        denomination TEXT DEFAULT '',
+        currency TEXT DEFAULT 'USD',
+        price_kes NUMERIC NOT NULL,
+        description TEXT DEFAULT '',
+        is_active BOOLEAN DEFAULT TRUE,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS gift_card_stock (
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER REFERENCES gift_card_products(id) ON DELETE CASCADE,
+        code TEXT NOT NULL UNIQUE,
+        is_sold BOOLEAN DEFAULT FALSE,
+        sold_to_email TEXT DEFAULT '',
+        sold_at TEXT DEFAULT '',
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS gift_card_orders (
+        id SERIAL PRIMARY KEY,
+        reference TEXT NOT NULL UNIQUE,
+        customer_email TEXT NOT NULL,
+        product_id INTEGER,
+        product_name TEXT DEFAULT '',
+        brand TEXT DEFAULT '',
+        denomination TEXT DEFAULT '',
+        currency TEXT DEFAULT 'USD',
+        amount_kes NUMERIC DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        code TEXT DEFAULT '',
+        stock_id INTEGER,
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS sms_plans (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        sms_count INTEGER NOT NULL,
+        price_kes NUMERIC NOT NULL,
+        description TEXT DEFAULT '',
+        features TEXT DEFAULT '',
+        is_active BOOLEAN DEFAULT TRUE,
+        sort_order INTEGER DEFAULT 0,
+        validity_days INTEGER DEFAULT 30,
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
+      await pgPool.query(`CREATE TABLE IF NOT EXISTS sms_orders (
+        id SERIAL PRIMARY KEY,
+        reference TEXT NOT NULL UNIQUE,
+        customer_email TEXT NOT NULL,
+        plan_id INTEGER,
+        plan_name TEXT DEFAULT '',
+        sms_count INTEGER DEFAULT 0,
+        amount_kes NUMERIC DEFAULT 0,
+        sender_note TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT (NOW()::text)
+      )`);
       await pgPool.query(`CREATE TABLE IF NOT EXISTS free_proxies (
         id SERIAL PRIMARY KEY,
         raw TEXT NOT NULL UNIQUE,
