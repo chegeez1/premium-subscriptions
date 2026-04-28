@@ -95,19 +95,7 @@ function ControlBar({
         visible ? 'translate-y-0 opacity-100 pointer-events-auto' : 'translate-y-full opacity-0 pointer-events-none'
       }`}
     >
-      <button
-        onClick={onToggleLock}
-        className={`w-14 h-14 flex items-center justify-center transition-colors rounded-lg shrink-0 ${
-          locked ? 'text-white bg-white/15 hover:bg-white/25' : 'text-white/60 hover:text-white hover:bg-white/10'
-        }`}
-        title={locked ? 'Loop: on' : 'Loop: off'}
-        aria-pressed={locked}
-      >
-        <Repeat className="w-8 h-8" />
-      </button>
-
-      <div className="w-px self-stretch bg-white/15" />
-
+      {/* Progress bar — left-aligned, takes all flex space */}
       <ProgressSegments
         sceneKeys={sceneKeys}
         activeIndex={activeIndex}
@@ -122,13 +110,24 @@ function ControlBar({
 
       <div className="w-px self-stretch bg-white/15" />
 
-      {/* Music toggle */}
+      {/* Right-side controls — clearly separated from the progress bar */}
+      <button
+        onClick={onToggleLock}
+        className={`w-14 h-14 flex items-center justify-center transition-colors rounded-lg shrink-0 ${
+          locked ? 'text-amber-400 bg-amber-400/15 hover:bg-amber-400/25' : 'text-white/40 hover:text-white/80 hover:bg-white/10'
+        }`}
+        title={locked ? 'Scene loop: on' : 'Scene loop: off'}
+        aria-pressed={locked}
+      >
+        <Repeat className="w-7 h-7" />
+      </button>
+
       <button
         onClick={onToggleMusic}
         className={`w-14 h-14 flex items-center justify-center transition-colors rounded-lg shrink-0 ${
           musicOn
             ? 'text-violet-400 bg-violet-400/15 hover:bg-violet-400/25'
-            : 'text-white/60 hover:text-white hover:bg-white/10'
+            : 'text-white/40 hover:text-white/80 hover:bg-white/10'
         }`}
         title={musicOn ? 'Music: on' : 'Music: off'}
         aria-pressed={musicOn}
@@ -141,7 +140,7 @@ function ControlBar({
         className={`w-14 h-14 flex items-center justify-center transition-colors rounded-lg shrink-0 ${
           voicePickerOpen
             ? 'text-green-400 bg-green-400/15 hover:bg-green-400/25'
-            : 'text-white/60 hover:text-white hover:bg-white/10'
+            : 'text-white/40 hover:text-white/80 hover:bg-white/10'
         }`}
         title={`AI Voice: ${selectedVoice}`}
         aria-pressed={voicePickerOpen}
@@ -149,9 +148,11 @@ function ControlBar({
         <Mic className="w-7 h-7" />
       </button>
 
+      <div className="w-px self-stretch bg-white/15" />
+
       <button
         onClick={onToggleCollapsed}
-        className="w-14 h-14 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors rounded-lg shrink-0"
+        className="w-14 h-14 flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors rounded-lg shrink-0"
         title={collapsed ? 'Show controls' : 'Hide controls'}
       >
         {collapsed ? <ChevronUp className="w-10 h-10" /> : <ChevronDown className="w-10 h-10" />}

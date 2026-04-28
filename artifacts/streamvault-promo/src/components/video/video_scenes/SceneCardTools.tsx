@@ -239,8 +239,8 @@ function CCGenPanel({ delay }: { delay: number }) {
           {generating ? (
             <motion.div key="spin" className="flex-1 flex items-center justify-center"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <motion.div className="w-5 h-5 rounded-full border-2 border-t-transparent"
-                style={{ borderColor: profile.color, borderTopColor: 'transparent' }}
+              <motion.div className="w-5 h-5 rounded-full border-2"
+                style={{ borderTopColor: 'transparent', borderRightColor: profile.color, borderBottomColor: profile.color, borderLeftColor: profile.color }}
                 animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.6, ease: 'linear' }} />
             </motion.div>
           ) : cards.map((card, i) => (
@@ -354,8 +354,8 @@ function CCCheckerPanel({ delay }: { delay: number }) {
                 <span className="font-mono text-xs" style={{ color: '#52525b' }}>{r.exp}</span>
                 <span className="text-xs" style={{ color: '#a1a1aa' }}>{r.brand}</span>
                 {r.checking ? (
-                  <motion.div className="w-4 h-4 rounded-full border-2 border-t-transparent"
-                    style={{ borderColor: '#7c3aed', borderTopColor: 'transparent' }}
+                  <motion.div className="w-4 h-4 rounded-full border-2"
+                    style={{ borderTopColor: 'transparent', borderRightColor: '#7c3aed', borderBottomColor: '#7c3aed', borderLeftColor: '#7c3aed' }}
                     animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.5, ease: 'linear' }} />
                 ) : (
                   <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: st.bg, color: st.color, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', fontSize: '0.6rem' }}>

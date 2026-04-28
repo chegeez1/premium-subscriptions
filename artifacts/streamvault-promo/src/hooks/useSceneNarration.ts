@@ -17,6 +17,7 @@ export const SCENE_SCRIPTS: Record<string, string> = {
   proxies: "Free proxies — live, rotating, always fresh. Or go premium: residential IPs no one can detect, datacenter speed, mobile carrier IPs, and IPv6 at bulk scale. Fully anonymous. Starting from KES 50. Only at ChegeTech.",
   digitalStore: "Gift cards for Amazon, iTunes, Steam and more. SMM panel for instant followers and views. Aged social media accounts. Residential, datacenter and mobile proxies. ChegeTech has it all — instant delivery, any budget.",
   botInAction: "Watch ChegeBot Pro in real time — live ticks, buy and sell signals firing automatically, your profits growing trade by trade. This is automated trading done right.",
+  whatsappBot: "Deploy your own WhatsApp bot in minutes. Sell products, send M-Pesa invoices, track orders, and handle support — fully automated, 24 hours a day. Three plans to fit any business. Only at ChegeTech.",
   cta: "Visit streamvault-premium.site today. Instant access. Everything premium — starting right now.",
 };
 

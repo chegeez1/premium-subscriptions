@@ -15,6 +15,7 @@ import SceneCardTools from './video_scenes/SceneCardTools';
 import SceneProxies from './video_scenes/SceneProxies';
 import SceneDigitalStore from './video_scenes/SceneDigitalStore';
 import SceneBotInAction from './video_scenes/SceneBotInAction';
+import SceneWhatsAppBot from './video_scenes/SceneWhatsAppBot';
 import SceneCTA from './video_scenes/Scene6CTA';
 
 export const SCENE_DURATIONS: Record<string, number> = {
@@ -32,6 +33,7 @@ export const SCENE_DURATIONS: Record<string, number> = {
   proxies: 11000,
   digitalStore: 10000,
   botInAction: 12000,
+  whatsappBot: 13000,
   cta: 7000,
 };
 
@@ -50,6 +52,7 @@ const SCENE_COMPONENTS: Record<string, React.ComponentType> = {
   proxies: SceneProxies,
   digitalStore: SceneDigitalStore,
   botInAction: SceneBotInAction,
+  whatsappBot: SceneWhatsAppBot,
   cta: SceneCTA,
 };
 
