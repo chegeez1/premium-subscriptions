@@ -306,6 +306,7 @@ export default function TradingBotPage() {
 
   // Telegram alerts
   const [tgLinked,         setTgLinked]         = useState(false);
+  const [tgBotToken,       setTgBotToken]       = useState("");
   const [tgChatId,         setTgChatId]         = useState("");
   const [tgSaving,         setTgSaving]         = useState(false);
   const [tgMsg,            setTgMsg]            = useState("");
@@ -1118,51 +1119,65 @@ export default function TradingBotPage() {
               </div>
               {tgLinked ? (
                 <div className="space-y-3">
-                  <p className="text-xs text-gray-400">Alerts are active. You'll get a Telegram message every time the bot wins, loses, or hits a risk limit.</p>
-                  <div className="flex items-center gap-2 text-xs text-gray-500 bg-white/[0.03] rounded-lg px-3 py-2">
-                    <span className="text-gray-500">Chat ID:</span>
-                    <span className="text-gray-300 font-mono">{tgChatId}</span>
+                  <div className="flex items-center gap-2 text-xs bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2.5">
+                    <CheckCircle className="w-3.5 h-3.5 text-green-400 shrink-0" />
+                    <span className="text-green-300">Your bot is sending alerts to Chat ID: <span className="font-mono">{tgChatId}</span></span>
                   </div>
+                  <p className="text-xs text-gray-500">You'll receive a message each time the bot wins, loses, hits stop loss, take profit, or daily limit.</p>
                   <button onClick={async () => {
                     setTgSaving(true); setTgMsg("");
                     try {
                       const r = await fetch("/api/tradingbot/telegram/link", { method: "DELETE", headers: authHeaders() });
                       const d = await r.json();
-                      if (d.success) { setTgLinked(false); tgLinkedRef.current = false; setTgChatId(""); setTgMsg("Alerts unlinked."); }
+                      if (d.success) { setTgLinked(false); tgLinkedRef.current = false; setTgChatId(""); setTgBotToken(""); setTgMsg("Alerts disconnected."); }
                       else setTgMsg(d.error || "Failed");
                     } catch { setTgMsg("Network error"); }
                     setTgSaving(false);
                   }} className="w-full h-9 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 text-sm transition-colors flex items-center justify-center gap-2">
-                    <Unlink className="w-3.5 h-3.5" /> Unlink Telegram
+                    <Unlink className="w-3.5 h-3.5" /> Disconnect Telegram
                   </button>
                   {tgMsg && <p className="text-xs text-center text-gray-400">{tgMsg}</p>}
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <p className="text-xs text-gray-400">Get instant Telegram alerts when your bot wins, loses, or hits stop loss.</p>
-                  <div className="text-xs text-gray-500 space-y-1 bg-white/[0.03] rounded-lg p-3">
-                    <p className="text-gray-300 font-medium mb-1">How to get your Chat ID:</p>
-                    <p>1. Open Telegram, search <span className="text-blue-400">@userinfobot</span></p>
-                    <p>2. Send it any message — it replies with your Chat ID</p>
-                    <p>3. Also start a chat with <span className="text-green-400">@ChegeBot</span> (your bot) so it can message you</p>
+                  <p className="text-xs text-gray-400">Connect your own Telegram bot to receive trade alerts. You control the bot — no shared bots.</p>
+
+                  {/* Setup steps */}
+                  <div className="text-xs space-y-1.5 bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
+                    <p className="text-gray-200 font-medium mb-2">Setup (takes 2 minutes):</p>
+                    <p className="text-gray-400"><span className="text-blue-400 font-medium">Step 1</span> — Open Telegram, search <span className="text-blue-400 font-mono">@BotFather</span></p>
+                    <p className="text-gray-400"><span className="text-blue-400 font-medium">Step 2</span> — Send <span className="font-mono bg-white/5 px-1 rounded">/newbot</span>, follow prompts, copy the <span className="text-yellow-400">Bot Token</span> it gives you</p>
+                    <p className="text-gray-400"><span className="text-blue-400 font-medium">Step 3</span> — Search <span className="text-blue-400 font-mono">@userinfobot</span>, send it any message — it replies with your <span className="text-green-400">Chat ID</span></p>
+                    <p className="text-gray-400"><span className="text-blue-400 font-medium">Step 4</span> — Open your new bot and press <span className="font-mono bg-white/5 px-1 rounded">Start</span> so it can message you</p>
                   </div>
-                  <input
-                    type="text" placeholder="Enter your Telegram Chat ID (e.g. 123456789)"
-                    value={tgChatId} onChange={e => setTgChatId(e.target.value)}
-                    className="w-full bg-black/50 border border-white/10 rounded-lg px-3 h-9 text-sm text-white focus:outline-none focus:border-blue-500/40 placeholder:text-gray-600"
-                  />
+
+                  <div>
+                    <label className="text-xs text-yellow-400 mb-1 block">Bot Token (from @BotFather)</label>
+                    <input type="password" placeholder="1234567890:ABCdefGHI..."
+                      value={tgBotToken} onChange={e => setTgBotToken(e.target.value)}
+                      className="w-full bg-black/50 border border-white/10 rounded-lg px-3 h-9 text-sm text-white focus:outline-none focus:border-yellow-500/40 placeholder:text-gray-600" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-green-400 mb-1 block">Your Chat ID (from @userinfobot)</label>
+                    <input type="text" placeholder="123456789"
+                      value={tgChatId} onChange={e => setTgChatId(e.target.value)}
+                      className="w-full bg-black/50 border border-white/10 rounded-lg px-3 h-9 text-sm text-white focus:outline-none focus:border-green-500/40 placeholder:text-gray-600" />
+                  </div>
+
                   <button onClick={async () => {
+                    if (!tgBotToken.trim()) { setTgMsg("Enter your Bot Token first"); return; }
                     if (!tgChatId.trim()) { setTgMsg("Enter your Chat ID first"); return; }
                     setTgSaving(true); setTgMsg("");
                     try {
-                      const r = await fetch("/api/tradingbot/telegram/link", { method: "POST", headers: authHeaders(), body: JSON.stringify({ chatId: tgChatId.trim() }) });
+                      const r = await fetch("/api/tradingbot/telegram/link", { method: "POST", headers: authHeaders(), body: JSON.stringify({ chatId: tgChatId.trim(), botToken: tgBotToken.trim() }) });
                       const d = await r.json();
-                      if (d.success) { setTgLinked(true); tgLinkedRef.current = true; setTgMsg("✅ Linked! Check Telegram for a test message."); }
-                      else setTgMsg(d.error || "Failed — double-check your Chat ID");
+                      if (d.success) { setTgLinked(true); tgLinkedRef.current = true; setTgMsg("✅ Connected! Check Telegram — a test message was sent."); }
+                      else setTgMsg(d.error || "Failed — check your token and Chat ID");
                     } catch { setTgMsg("Network error"); }
                     setTgSaving(false);
-                  }} disabled={tgSaving || !tgChatId.trim()} className="w-full h-9 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-sm font-medium text-white transition-colors flex items-center justify-center gap-2">
-                    <Link className="w-3.5 h-3.5" /> {tgSaving ? "Linking…" : "Link Telegram & Test"}
+                  }} disabled={tgSaving || !tgBotToken.trim() || !tgChatId.trim()}
+                    className="w-full h-10 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-sm font-semibold text-white transition-colors flex items-center justify-center gap-2">
+                    <Bell className="w-4 h-4" /> {tgSaving ? "Connecting…" : "Connect & Send Test Message"}
                   </button>
                   {tgMsg && <p className={`text-xs text-center ${tgMsg.startsWith("✅") ? "text-green-400" : "text-red-400"}`}>{tgMsg}</p>}
                 </div>
