@@ -13,6 +13,7 @@ export const SCENE_SCRIPTS: Record<string, string> = {
   features: "Smart trading strategies, live profit tracking, automatic risk controls, mobile-friendly. ChegeBot Pro is your edge in the market.",
   pricing: "Monthly access from KES 500. Quarterly for KES 1,200. Or go lifetime for KES 5,000. Pay with M-Pesa, Card, or Wallet.",
   testimonials: "Over 10,000 traders trust ChegeTech. 74 percent average win rate. 2.4 million KES in profits generated. The numbers don't lie.",
+  digitalStore: "Gift cards for Amazon, iTunes, Steam and more. SMM panel for instant followers and views. Aged social media accounts. Residential, datacenter and mobile proxies. ChegeTech has it all — instant delivery, any budget.",
   botInAction: "Watch ChegeBot Pro in real time — live ticks, buy and sell signals firing automatically, your profits growing trade by trade. This is automated trading done right.",
   cta: "Visit streamvault-premium.site today. Instant access. M-Pesa accepted. Everything premium — starting right now.",
 };

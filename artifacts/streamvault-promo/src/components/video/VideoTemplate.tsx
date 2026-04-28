@@ -11,6 +11,7 @@ import SceneVPSHosting from './video_scenes/SceneVPSHosting';
 import SceneFeatures from './video_scenes/Scene3Features';
 import ScenePricing from './video_scenes/Scene4Pricing';
 import SceneTestimonials from './video_scenes/Scene5Testimonials';
+import SceneDigitalStore from './video_scenes/SceneDigitalStore';
 import SceneBotInAction from './video_scenes/SceneBotInAction';
 import SceneCTA from './video_scenes/Scene6CTA';
 
@@ -25,6 +26,7 @@ export const SCENE_DURATIONS: Record<string, number> = {
   features: 7000,
   pricing: 8000,
   testimonials: 7000,
+  digitalStore: 10000,
   botInAction: 12000,
   cta: 7000,
 };
@@ -40,6 +42,7 @@ const SCENE_COMPONENTS: Record<string, React.ComponentType> = {
   features: SceneFeatures,
   pricing: ScenePricing,
   testimonials: SceneTestimonials,
+  digitalStore: SceneDigitalStore,
   botInAction: SceneBotInAction,
   cta: SceneCTA,
 };
