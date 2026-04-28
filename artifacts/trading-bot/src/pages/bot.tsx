@@ -329,6 +329,8 @@ export default function TradingBotPage() {
   autoReconnectRef.current  = autoReconnect;
   apiTokenRef.current       = apiToken;
   openContractsRef.current  = openContracts;
+  // NOTE: lastSignalConfRef is NOT synced from state here — it's set directly
+  // in placeContract to avoid render-timing overwrites causing 0% confidence
 
   const addLog = useCallback((msg: string) => {
     setLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 150));
