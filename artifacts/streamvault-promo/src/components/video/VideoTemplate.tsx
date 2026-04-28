@@ -28,7 +28,7 @@ export const SCENE_DURATIONS: Record<string, number> = {
   features: 7000,
   pricing: 8000,
   testimonials: 7000,
-  cardTools: 10000,
+  cardTools: 12000,
   proxies: 11000,
   digitalStore: 10000,
   botInAction: 12000,

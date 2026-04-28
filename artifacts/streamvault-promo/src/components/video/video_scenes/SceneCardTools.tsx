@@ -372,11 +372,159 @@ function CCCheckerPanel({ delay }: { delay: number }) {
   );
 }
 
+// ─── BIN database ─────────────────────────────────────────────────────────────
+const BIN_DB = [
+  { bin: '453275', brand: 'Visa',       scheme: 'VISA',       type: 'Debit',   tier: 'Classic',  bank: 'JPMorgan Chase',    country: '🇺🇸', cc: 'US', sec: true  },
+  { bin: '541274', brand: 'Mastercard', scheme: 'MC',         type: 'Credit',  tier: 'Gold',     bank: 'Barclays Bank',     country: '🇬🇧', cc: 'GB', sec: true  },
+  { bin: '378282', brand: 'Amex',       scheme: 'AMEX',       type: 'Charge',  tier: 'Platinum', bank: 'American Express',  country: '🇺🇸', cc: 'US', sec: false },
+  { bin: '601100', brand: 'Discover',   scheme: 'DISC',       type: 'Debit',   tier: 'Classic',  bank: 'Discover Bank',     country: '🇺🇸', cc: 'US', sec: true  },
+  { bin: '471622', brand: 'Visa',       scheme: 'VISA',       type: 'Prepaid', tier: 'Classic',  bank: 'KCB Bank Kenya',    country: '🇰🇪', cc: 'KE', sec: false },
+  { bin: '539941', brand: 'Mastercard', scheme: 'MC',         type: 'Credit',  tier: 'Gold',     bank: 'Equity Bank',       country: '🇰🇪', cc: 'KE', sec: true  },
+  { bin: '676338', brand: 'Maestro',    scheme: 'MAESTRO',    type: 'Debit',   tier: 'Standard', bank: 'HSBC Holdings',     country: '🇬🇧', cc: 'GB', sec: true  },
+  { bin: '400022', brand: 'Visa',       scheme: 'VISA',       type: 'Credit',  tier: 'Infinite', bank: 'Citibank N.A.',     country: '🇺🇸', cc: 'US', sec: true  },
+  { bin: '558060', brand: 'Mastercard', scheme: 'MC',         type: 'Debit',   tier: 'Black',    bank: 'Standard Chartered',country: '🇿🇦', cc: 'ZA', sec: true  },
+  { bin: '491596', brand: 'Visa',       scheme: 'VISA',       type: 'Credit',  tier: 'Signature',bank: 'Bank of America',   country: '🇺🇸', cc: 'US', sec: true  },
+];
+
+const SCHEME_COLORS: Record<string, string> = {
+  VISA: '#3b82f6', MC: '#f59e0b', AMEX: '#22c55e', DISC: '#ec4899',
+  MAESTRO: '#a78bfa', UNKNOWN: '#52525b',
+};
+
+// ─── BIN Checker Panel ────────────────────────────────────────────────────────
+function BINCheckerPanel({ delay }: { delay: number }) {
+  const [qIdx, setQIdx] = useState(0);
+  const [current, setCurrent] = useState<typeof BIN_DB[0] | null>(null);
+  const [typed, setTyped] = useState('');
+  const [phase, setPhase] = useState<'typing' | 'result'>('typing');
+
+  useEffect(() => {
+    const bin = BIN_DB[qIdx % BIN_DB.length];
+    setTyped('');
+    setPhase('typing');
+    setCurrent(null);
+
+    let i = 0;
+    const ti = setInterval(() => {
+      i++;
+      setTyped(bin.bin.slice(0, i));
+      if (i >= bin.bin.length) {
+        clearInterval(ti);
+        setTimeout(() => { setCurrent(bin); setPhase('result'); }, 280);
+        setTimeout(() => setQIdx(p => p + 1), 2400);
+      }
+    }, 90);
+
+    return () => clearInterval(ti);
+  }, [qIdx]);
+
+  const schemeColor = current ? (SCHEME_COLORS[current.scheme] ?? SCHEME_COLORS.UNKNOWN) : '#52525b';
+
+  return (
+    <motion.div
+      className="rounded-2xl p-5 flex flex-col"
+      style={{ background: '#111111', border: `1px solid ${schemeColor}22` }}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: '#ec489918' }}>🏦</div>
+        <div>
+          <div className="font-bold text-sm" style={{ fontFamily: 'var(--font-display)', color: '#ffffff' }}>BIN Checker</div>
+          <div className="text-xs" style={{ color: '#52525b' }}>Bank · Country · Type · Tier</div>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <motion.div className="w-1.5 h-1.5 rounded-full" style={{ background: '#ec4899' }}
+            animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 0.9, repeat: Infinity }} />
+          <span className="text-xs font-mono" style={{ color: '#ec4899' }}>DB</span>
+        </div>
+      </div>
+
+      {/* BIN input */}
+      <div className="rounded-xl px-4 py-3 mb-3" style={{ background: '#0d0d0d', border: '1px solid #1a1a1a' }}>
+        <div className="text-xs font-mono uppercase tracking-wider mb-1" style={{ color: '#3f3f46' }}>BIN / IIN (first 6 digits)</div>
+        <div className="flex items-center gap-2">
+          <span className="text-xl font-mono font-bold tracking-widest" style={{ color: '#ffffff', letterSpacing: '0.15em' }}>
+            {typed.padEnd(6, '·')}
+          </span>
+          {phase === 'typing' && <motion.div className="w-0.5 h-6 rounded-full" style={{ background: '#ec4899' }}
+            animate={{ opacity: [1, 0, 1] }} transition={{ duration: 0.6, repeat: Infinity }} />}
+          {phase === 'result' && <motion.div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
+            style={{ background: '#22c55e22', color: '#22c55e' }}
+            initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 300 }}>✓</motion.div>}
+        </div>
+      </div>
+
+      {/* Result panel */}
+      <AnimatePresence mode="wait">
+        {phase === 'result' && current && (
+          <motion.div key={current.bin}
+            className="flex flex-col gap-2 flex-1"
+            initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.35 }}
+          >
+            {/* Scheme badge */}
+            <div className="flex items-center gap-2 rounded-xl px-3 py-2.5"
+              style={{ background: `${schemeColor}12`, border: `1px solid ${schemeColor}33` }}>
+              <span className="text-lg font-bold font-mono" style={{ color: schemeColor }}>{current.scheme}</span>
+              <span className="text-sm font-bold" style={{ color: '#ffffff', fontFamily: 'var(--font-display)' }}>{current.brand}</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full font-bold"
+                style={{ background: `${schemeColor}22`, color: schemeColor, fontFamily: 'var(--font-mono)' }}>
+                {current.tier}
+              </span>
+            </div>
+
+            {/* Info rows */}
+            {[
+              { label: 'Bank',    value: current.bank,    color: '#a1a1aa' },
+              { label: 'Country', value: `${current.country} ${current.cc}`, color: '#a1a1aa' },
+              { label: 'Type',    value: current.type,    color: '#a1a1aa' },
+            ].map((row, i) => (
+              <motion.div key={row.label}
+                className="flex items-center justify-between rounded-xl px-3 py-2"
+                style={{ background: '#0d0d0d', border: '1px solid #141414' }}
+                initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.06 }}
+              >
+                <span className="text-xs font-mono uppercase tracking-wider" style={{ color: '#3f3f46' }}>{row.label}</span>
+                <span className="text-xs font-medium" style={{ color: row.color }}>{row.value}</span>
+              </motion.div>
+            ))}
+
+            {/* 3D Secure badge */}
+            <motion.div
+              className="flex items-center gap-2 rounded-xl px-3 py-2 mt-auto"
+              style={{
+                background: current.sec ? '#22c55e10' : '#ef444410',
+                border: `1px solid ${current.sec ? '#22c55e33' : '#ef444433'}`,
+              }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 }}
+            >
+              <span className="text-sm">{current.sec ? '🔒' : '⚠️'}</span>
+              <span className="text-xs" style={{ color: current.sec ? '#22c55e' : '#ef4444' }}>
+                3D Secure {current.sec ? 'Supported' : 'Not Supported'}
+              </span>
+            </motion.div>
+          </motion.div>
+        )}
+        {phase === 'typing' && (
+          <motion.div key="idle" className="flex-1 flex flex-col items-center justify-center gap-2"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className="text-3xl">🔍</div>
+            <div className="text-xs" style={{ color: '#3f3f46' }}>Looking up BIN database…</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
 // ─── Main Scene ───────────────────────────────────────────────────────────────
 export default function SceneCardTools() {
   return (
     <motion.div
-      className="absolute inset-0 flex flex-col px-10 py-7"
+      className="absolute inset-0 flex flex-col px-8 py-7"
       style={{ backgroundColor: '#0a0a0a' }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -385,25 +533,26 @@ export default function SceneCardTools() {
     >
       {/* Header */}
       <motion.div
-        className="mb-5"
+        className="mb-4"
         initial={{ opacity: 0, y: -18 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.15, duration: 0.7 }}
       >
         <span className="text-sm font-mono uppercase tracking-widest" style={{ color: '#7c3aed' }}>Dev Tools</span>
-        <h2 className="text-5xl font-bold mt-1" style={{ fontFamily: 'var(--font-display)', color: '#ffffff' }}>
-          Link Shortener &amp; Card Tools
+        <h2 className="text-4xl font-bold mt-1" style={{ fontFamily: 'var(--font-display)', color: '#ffffff' }}>
+          Link Shortener · CC Gen · CC Check · BIN Lookup
         </h2>
         <p className="mt-1 text-sm" style={{ color: '#52525b' }}>
-          URL shortening with analytics · CC Generator · CC Checker — all in one place
+          All the tools you need — URL shortener, card generator, checker, and full BIN intelligence
         </p>
       </motion.div>
 
-      {/* 3-column grid */}
-      <div className="grid grid-cols-3 gap-5 flex-1 min-h-0">
+      {/* 4-column grid */}
+      <div className="grid grid-cols-4 gap-4 flex-1 min-h-0">
         <LinkPanel delay={0.3} />
-        <CCGenPanel delay={0.42} />
-        <CCCheckerPanel delay={0.54} />
+        <CCGenPanel delay={0.4} />
+        <CCCheckerPanel delay={0.5} />
+        <BINCheckerPanel delay={0.6} />
       </div>
     </motion.div>
   );
