@@ -554,7 +554,7 @@ export default function TradingBotPage() {
       if (!runningRef.current) return;
       const ids = openContractsRef.current;
       if (ids.length === 0) return;
-      ids.forEach(cid => send({ proposal_open_contract: 1, contract_id: cid, subscribe: 1 }));
+      ids.forEach(cid => send({ proposal_open_contract: 1, contract_id: cid }));
     }, 8000);
     return () => clearInterval(id);
   }, [send]);
