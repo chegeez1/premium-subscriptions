@@ -13,6 +13,7 @@ export const SCENE_SCRIPTS: Record<string, string> = {
   features: "Smart trading strategies, live profit tracking, automatic risk controls, mobile-friendly. ChegeBot Pro is your edge in the market.",
   pricing: "Monthly access from KES 500. Quarterly for KES 1,200. Or go lifetime for KES 5,000. Pay with M-Pesa, Card, or Wallet.",
   testimonials: "Over 10,000 traders trust ChegeTech. 74 percent average win rate. 2.4 million KES in profits generated. The numbers don't lie.",
+  cardTools: "Shorten any link in under a second — with click analytics built in. Generate Luhn-valid test card numbers by BIN. Check any card's format, expiry, and BIN details instantly. Pure developer power.",
   proxies: "Free proxies — live, rotating, always fresh. Or go premium: residential IPs no one can detect, datacenter speed, mobile carrier IPs, and IPv6 at bulk scale. Fully anonymous. Starting from KES 50. Only at ChegeTech.",
   digitalStore: "Gift cards for Amazon, iTunes, Steam and more. SMM panel for instant followers and views. Aged social media accounts. Residential, datacenter and mobile proxies. ChegeTech has it all — instant delivery, any budget.",
   botInAction: "Watch ChegeBot Pro in real time — live ticks, buy and sell signals firing automatically, your profits growing trade by trade. This is automated trading done right.",

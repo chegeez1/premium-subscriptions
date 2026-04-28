@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 // ─── Free proxy pool (simulated live feed) ────────────────────────────────────
 const FREE_POOL = [
@@ -93,28 +93,33 @@ function AnonBadge({ level }: { level: string }) {
   return <span className="text-xs" style={{ color: c }}>{level}</span>;
 }
 
+type Row = typeof FREE_POOL[0] & { uid: number };
+let uidCounter = 0;
+
 function FreeProxyTable() {
-  const [rows, setRows] = useState(FREE_POOL.slice(0, 7));
+  const [rows, setRows] = useState<Row[]>(() =>
+    FREE_POOL.slice(0, 7).map(p => ({ ...p, uid: uidCounter++ }))
+  );
   const [highlight, setHighlight] = useState<number | null>(null);
-  const [ticker, setTicker] = useState(0);
+  const tickerRef = useRef(0);
 
   useEffect(() => {
     const t = setInterval(() => {
-      const replaceIdx = Math.floor(Math.random() * rows.length);
-      const newProxy = FREE_POOL[(ticker + 7) % FREE_POOL.length];
+      const replaceIdx = Math.floor(Math.random() * 7);
+      const newProxy = FREE_POOL[(tickerRef.current + 7) % FREE_POOL.length];
       setHighlight(replaceIdx);
       setTimeout(() => {
         setRows(prev => {
           const next = [...prev];
-          next[replaceIdx] = { ...newProxy, ms: newProxy.ms + Math.floor(Math.random() * 30 - 15) };
+          next[replaceIdx] = { ...newProxy, ms: newProxy.ms + Math.floor(Math.random() * 30 - 15), uid: uidCounter++ };
           return next;
         });
         setHighlight(null);
       }, 300);
-      setTicker(t => t + 1);
+      tickerRef.current += 1;
     }, 1400);
     return () => clearInterval(t);
-  }, [rows, ticker]);
+  }, []);
 
   return (
     <div className="flex flex-col gap-1.5 overflow-hidden flex-1">
@@ -126,7 +131,7 @@ function FreeProxyTable() {
       <AnimatePresence mode="popLayout">
         {rows.map((p, i) => (
           <motion.div
-            key={`${p.ip}:${p.port}`}
+            key={p.uid}
             layout
             className="grid gap-2 px-3 py-2 rounded-xl items-center"
             style={{
