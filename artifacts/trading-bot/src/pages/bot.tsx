@@ -37,6 +37,7 @@ const DURATIONS = [
 ];
 
 const STRATEGIES = [
+  { id: "auto_c4",        label: "🤖 Auto C4",        desc: "4-tick streak reversal — fires on every tick, no warmup needed" },
   { id: "consensus",      label: "⚡ Consensus",      desc: "3-of-5 indicator vote: RSI + MACD + BB + Momentum + Velocity" },
   { id: "trend",          label: "📈 Trend Follow",   desc: "EMA crossover with RSI & weighted momentum filter" },
   { id: "mean_reversion", label: "↩ Mean Reversion",  desc: "Bollinger Band oversold/overbought bounce" },
@@ -133,31 +134,59 @@ function getSignal(
   ticks: Tick[],
   lastPnl: number | null,
 ): { signal: Signal | null; confidence: number } {
-  if (ticks.length < 30) return { signal: null, confidence: 0 };
+  if (ticks.length < 5) return { signal: null, confidence: 0 };
 
   if (strategy === "digit_over") return { signal: "DIGITOVER", confidence: 50 };
   if (strategy === "digit_under") return { signal: "DIGITUNDER", confidence: 50 };
+
+  // ── Auto C4: streak-reversal on every tick, fires after only 4 ticks ────────
+  if (strategy === "auto_c4") {
+    const moves = ticks.slice(-5).map((t, i, a) =>
+      i === 0 ? 0 : t.quote > a[i - 1].quote ? 1 : t.quote < a[i - 1].quote ? -1 : 0
+    ).slice(1); // last 4 moves
+
+    const allUp   = moves.every(m => m === 1);
+    const allDown = moves.every(m => m === -1);
+    if (allUp)   return { signal: "PUT",  confidence: 90 };  // 4-up → reverse down
+    if (allDown) return { signal: "CALL", confidence: 90 };  // 4-down → reverse up
+
+    // 3-streak
+    const last3 = moves.slice(-3);
+    if (last3.every(m => m === 1))  return { signal: "PUT",  confidence: 75 };
+    if (last3.every(m => m === -1)) return { signal: "CALL", confidence: 75 };
+
+    // 2-streak
+    const last2 = moves.slice(-2);
+    if (last2.every(m => m === 1))  return { signal: "PUT",  confidence: 60 };
+    if (last2.every(m => m === -1)) return { signal: "CALL", confidence: 60 };
+
+    // Alternating continuation
+    if (moves[2] !== 0 && moves[3] !== 0 && moves[2] !== moves[3])
+      return { signal: moves[3] === 1 ? "CALL" : "PUT", confidence: 55 };
+
+    return { signal: null, confidence: 0 };
+  }
 
   const ind = getIndicators(ticks);
 
   // ── Consensus: 5 independent indicator votes ──────────────────────────────
   if (strategy === "consensus") {
-    if (ticks.length < 35) return { signal: null, confidence: 0 };
+    if (ticks.length < 15) return { signal: null, confidence: 0 };
     let bullVotes = 0, bearVotes = 0;
     // RSI
-    if (ind.rsi > 55 && ind.rsi < 75) bullVotes++;
-    else if (ind.rsi < 45 && ind.rsi > 25) bearVotes++;
+    if (ind.rsi > 50) bullVotes++;
+    else if (ind.rsi < 50) bearVotes++;
     // MACD
     if (ind.macd > 0) bullVotes++; else if (ind.macd < 0) bearVotes++;
     // Bollinger
-    if (ind.bbPos > 0.3 && ind.bbPos < 0.9) bullVotes++;
-    else if (ind.bbPos < -0.3 && ind.bbPos > -0.9) bearVotes++;
+    if (ind.bbPos > 0) bullVotes++;
+    else if (ind.bbPos < 0) bearVotes++;
     // Momentum
-    if (ind.momentum > 0.2) bullVotes++; else if (ind.momentum < -0.2) bearVotes++;
+    if (ind.momentum > 0) bullVotes++; else if (ind.momentum < 0) bearVotes++;
     // Velocity (market active enough)
     const avgPrice = ticks[ticks.length - 1].quote;
-    const velNorm  = (ind.velocity / avgPrice) * 10000; // basis-point velocity
-    const active   = velNorm > 0.5 && velNorm < 20;
+    const velNorm  = (ind.velocity / avgPrice) * 10000;
+    const active   = velNorm > 0.3 && velNorm < 50;
     if (active) { if (bullVotes > bearVotes) bullVotes++; else if (bearVotes > bullVotes) bearVotes++; }
 
     const confidence = Math.round((Math.max(bullVotes, bearVotes) / 5) * 100);
@@ -246,10 +275,10 @@ export default function TradingBotPage() {
 
   // Config
   const [symbol,     setSymbol]     = useState("R_50");
-  const [strategy,   setStrategy]   = useState("consensus");
+  const [strategy,   setStrategy]   = useState("auto_c4");
   const [stakeMode,  setStakeMode]  = useState<"fixed" | "percent">("fixed");
   const [baseStake,  setBaseStake]  = useState(1);
-  const [durIdx,     setDurIdx]     = useState(2);
+  const [durIdx,     setDurIdx]     = useState(0);
   const [stopLoss,   setStopLoss]   = useState(10);
   const [takeProfit, setTakeProfit] = useState(20);
   const [maxDailyLoss, setMaxDailyLoss] = useState(50);
@@ -271,30 +300,35 @@ export default function TradingBotPage() {
   const [openContracts,    setOpenContracts]    = useState<number[]>([]);
 
   // Refs
-  const wsRef           = useRef<WebSocket | null>(null);
-  const reqIdRef        = useRef(1);
-  const runningRef      = useRef(false);
-  const sessionPnlRef   = useRef(0);
-  const dailyLossRef    = useRef(0);
-  const lastStakeRef    = useRef(1);
-  const lastPnlRef      = useRef<number | null>(null);
-  const ticksRef        = useRef<Tick[]>([]);
-  const waitingRef      = useRef(false);
-  const tradeIdRef      = useRef(1);
-  const balanceRef      = useRef(0);
-  const autoReconnectRef = useRef(true);
-  const apiTokenRef     = useRef("");
+  const wsRef             = useRef<WebSocket | null>(null);
+  const reqIdRef          = useRef(1);
+  const runningRef        = useRef(false);
+  const sessionPnlRef     = useRef(0);
+  const dailyLossRef      = useRef(0);
+  const lastStakeRef      = useRef(1);
+  const lastPnlRef        = useRef<number | null>(null);
+  const ticksRef          = useRef<Tick[]>([]);
+  const waitingRef        = useRef(false);
+  const tradeIdRef        = useRef(1);
+  const balanceRef        = useRef(0);
+  const autoReconnectRef  = useRef(true);
+  const apiTokenRef       = useRef("");
+  const lastSignalConfRef = useRef(0);
+  const openContractsRef  = useRef<number[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleMessageRef  = useRef<(data: Record<string, unknown>) => void>(() => {});
 
-  runningRef.current     = running;
-  sessionPnlRef.current  = sessionPnl;
-  dailyLossRef.current   = dailyLoss;
-  lastStakeRef.current   = lastStake;
-  lastPnlRef.current     = lastPnl;
-  ticksRef.current       = ticks;
-  waitingRef.current     = waitingContract;
-  balanceRef.current     = balance;
-  autoReconnectRef.current = autoReconnect;
-  apiTokenRef.current    = apiToken;
+  runningRef.current        = running;
+  sessionPnlRef.current     = sessionPnl;
+  dailyLossRef.current      = dailyLoss;
+  lastStakeRef.current      = lastStake;
+  lastPnlRef.current        = lastPnl;
+  ticksRef.current          = ticks;
+  waitingRef.current        = waitingContract;
+  balanceRef.current        = balance;
+  autoReconnectRef.current  = autoReconnect;
+  apiTokenRef.current       = apiToken;
+  openContractsRef.current  = openContracts;
 
   const addLog = useCallback((msg: string) => {
     setLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 150));
@@ -321,6 +355,7 @@ export default function TradingBotPage() {
     send({ buy: "1", price: stake, parameters: params });
     setWaitingContract(true);
     waitingRef.current = true;
+    lastSignalConfRef.current = confidence;
     setLastSignalConf(confidence);
     addLog(`📤 ${signal} | $${stake.toFixed(2)} | ${dur.label} | ${confidence}% confidence`);
   }, [durIdx, symbol, send, addLog]);
@@ -347,7 +382,7 @@ export default function TradingBotPage() {
     if (dl   >= maxDailyLoss){ addLog(`🛑 Daily loss limit hit. Bot stopped.`); setRunning(false); return; }
 
     const { signal, confidence } = getSignal(strategy, ticksRef.current, lastPnlRef.current);
-    if (!signal || confidence < 40) return; // skip low-confidence signals
+    if (!signal || confidence < 30) return; // skip low-confidence signals
 
     const stake = calcStake(strategy, baseStake, stakeMode, balanceRef.current, lastPnlRef.current, lastStakeRef.current);
     setLastStake(stake);
@@ -392,8 +427,8 @@ export default function TradingBotPage() {
       }
       case "buy": {
         const b = data.buy as Record<string, unknown>;
-        const contractId = b.contract_id as number;
-        setOpenContracts(prev => [...prev, contractId]);
+        const contractId = Number(b.contract_id);
+        setOpenContracts(prev => { const next = [...prev, contractId]; openContractsRef.current = next; return next; });
         const dur = DURATIONS[durIdx];
         const raw = b.shortcode as string;
         const tradeType = raw?.includes("CALL") ? "CALL" : raw?.includes("PUT") ? "PUT" :
@@ -404,7 +439,7 @@ export default function TradingBotPage() {
           pnl: null, status: "open",
           time: new Date().toLocaleTimeString(),
           duration: `${dur.value}${dur.unit}`,
-          confidence: lastSignalConf,
+          confidence: lastSignalConfRef.current,
         }, ...prev]);
         addLog(`📋 Contract #${contractId} | Stake $${(b.buy_price as number).toFixed(2)}`);
         send({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 });
@@ -420,7 +455,7 @@ export default function TradingBotPage() {
         setTrades(prev => prev.map(t =>
           t.contractId === contractId ? { ...t, pnl: profit, status: won ? "won" : "lost" } : t
         ));
-        setOpenContracts(prev => prev.filter(id => id !== contractId));
+        setOpenContracts(prev => { const next = prev.filter(id => id !== contractId); openContractsRef.current = next; return next; });
         setSessionPnl(prev => {
           const next = +(prev + profit).toFixed(2);
           sessionPnlRef.current = next;
@@ -438,13 +473,20 @@ export default function TradingBotPage() {
         break;
       }
     }
-  }, [send, processTick, durIdx, symbol, lastSignalConf, addLog]);
+  }, [send, processTick, durIdx, symbol, addLog]);
+
+  // Keep handleMessageRef always pointing at latest handleMessage (avoids stale closures in connect)
+  useEffect(() => { handleMessageRef.current = handleMessage; });
 
   // ── Connect / Disconnect ───────────────────────────────────────────────────
   const connect = useCallback(() => {
     const token = apiTokenRef.current.trim();
     if (!token) { setError("Enter your Deriv API token first"); return; }
-    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+    if (wsRef.current) {
+      wsRef.current.onclose = null; // prevent reconnect loop on manual re-connect
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     setConnStatus("connecting");
     setError("");
     addLog("Connecting to Deriv…");
@@ -452,24 +494,25 @@ export default function TradingBotPage() {
     const ws = new WebSocket(DERIV_WS);
     wsRef.current = ws;
     ws.onopen    = () => { addLog("Connected — authorizing…"); ws.send(JSON.stringify({ authorize: token, req_id: reqIdRef.current++ })); };
-    ws.onmessage = ev => { try { handleMessage(JSON.parse(ev.data)); } catch {} };
+    ws.onmessage = ev => { try { handleMessageRef.current(JSON.parse(ev.data)); } catch {} };
     ws.onerror   = () => { setError("WebSocket error"); setConnStatus("error"); };
     ws.onclose   = () => {
       setConnStatus("disconnected");
       setRunning(false);
+      waitingRef.current = false;
+      setWaitingContract(false);
       addLog("Disconnected from Deriv");
       if (autoReconnectRef.current && apiTokenRef.current.trim()) {
         addLog(`🔄 Auto-reconnecting in ${RECONNECT_DELAY / 1000}s…`);
         setTimeout(() => { if (autoReconnectRef.current && apiTokenRef.current.trim()) connect(); }, RECONNECT_DELAY);
       }
     };
-  }, [handleMessage, addLog]);
+  }, [addLog]);
 
   const disconnect = useCallback(() => {
     autoReconnectRef.current = false;
     setAutoReconnect(false);
-    wsRef.current?.close();
-    wsRef.current = null;
+    if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); wsRef.current = null; }
     setConnStatus("disconnected");
     setRunning(false);
     setAccount(null);
@@ -480,12 +523,13 @@ export default function TradingBotPage() {
   const startBot = useCallback(() => {
     if (connStatus !== "authorized") return;
     setRunning(true);
-    setSessionPnl(0);
-    setLastPnl(null);
-    setLastStake(baseStake);
-    setWaitingContract(false);
-    waitingRef.current = false;
+    setSessionPnl(0); sessionPnlRef.current = 0;
+    setLastPnl(null); lastPnlRef.current = null;
+    setLastStake(baseStake); lastStakeRef.current = baseStake;
+    setWaitingContract(false); waitingRef.current = false;
     setEquityHistory([]);
+    setTrades([]); tradeIdRef.current = 1;
+    setOpenContracts([]); openContractsRef.current = [];
     send({ ticks: symbol, subscribe: 1 });
     addLog(`🚀 Bot started | ${STRATEGIES.find(s => s.id === strategy)?.label} | ${SYMBOLS[symbol]} | $${baseStake} ${stakeMode}`);
   }, [connStatus, symbol, strategy, baseStake, stakeMode, send, addLog]);
@@ -498,7 +542,33 @@ export default function TradingBotPage() {
     addLog("⏹ Bot stopped");
   }, [send, addLog]);
 
-  useEffect(() => () => { wsRef.current?.close(); }, []);
+  useEffect(() => () => {
+    if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
+  }, []);
+
+  // ── Poll open contracts every 8s to recover stuck "open" trades ────────────
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!runningRef.current) return;
+      const ids = openContractsRef.current;
+      if (ids.length === 0) return;
+      ids.forEach(cid => send({ proposal_open_contract: 1, contract_id: cid, subscribe: 1 }));
+    }, 8000);
+    return () => clearInterval(id);
+  }, [send]);
+
+  // ── 60s contract timeout — clears stuck waiting state ──────────────────────
+  useEffect(() => {
+    if (!waitingContract) return;
+    const tid = setTimeout(() => {
+      if (waitingRef.current) {
+        addLog("⚠️ Contract timeout — clearing wait lock");
+        setWaitingContract(false);
+        waitingRef.current = false;
+      }
+    }, 60_000);
+    return () => clearTimeout(tid);
+  }, [waitingContract, addLog]);
 
   // ── Computed stats ─────────────────────────────────────────────────────────
   const completed   = trades.filter(t => t.status !== "open");
@@ -812,7 +882,7 @@ export default function TradingBotPage() {
                       {sessionPnl >= 0 ? "+" : ""}${sessionPnl.toFixed(2)}
                     </span>
                   </div>
-                  {equityHistory.length > 1 ? (
+                  {equityHistory.length > 0 ? (
                     <ResponsiveContainer width="100%" height={110}>
                       <LineChart data={equityHistory} margin={{ top: 2, right: 2, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
