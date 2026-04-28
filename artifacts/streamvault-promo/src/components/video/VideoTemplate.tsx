@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useVideoPlayer } from '@/lib/video';
 import Scene1Hero from './video_scenes/Scene1Hero';
+import SceneAINarrator from './video_scenes/SceneAINarrator';
 import Scene2TradingChart from './video_scenes/Scene2TradingChart';
 import Scene3FreeTools from './video_scenes/Scene3FreeTools';
 import Scene4PremiumAccounts from './video_scenes/Scene4PremiumAccounts';
@@ -14,6 +15,7 @@ import SceneCTA from './video_scenes/Scene6CTA';
 
 export const SCENE_DURATIONS: Record<string, number> = {
   hero: 6000,
+  aiNarrator: 20000,
   tradingChart: 8000,
   freeTools: 7000,
   premiumAccounts: 8000,
@@ -27,6 +29,7 @@ export const SCENE_DURATIONS: Record<string, number> = {
 
 const SCENE_COMPONENTS: Record<string, React.ComponentType> = {
   hero: Scene1Hero,
+  aiNarrator: SceneAINarrator,
   tradingChart: Scene2TradingChart,
   freeTools: Scene3FreeTools,
   premiumAccounts: Scene4PremiumAccounts,
