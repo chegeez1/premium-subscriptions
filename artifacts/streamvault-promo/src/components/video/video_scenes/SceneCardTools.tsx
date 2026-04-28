@@ -48,112 +48,6 @@ function generateCard(profile: typeof BIN_PROFILES[0]) {
   return { number: formatted, raw: full, exp: `${month}/${year}`, cvv, profile };
 }
 
-// ─── Link shortener helper ────────────────────────────────────────────────────
-const LONG_URLS = [
-  { long: 'https://streamvault-premium.site/tradingbot?ref=youtube&utm_source=ad', short: 'sv.pm/bot' },
-  { long: 'https://streamvault-premium.site/proxies?tier=residential&plan=monthly', short: 'sv.pm/prx' },
-  { long: 'https://streamvault-premium.site/giftcards?category=amazon&country=us', short: 'sv.pm/gc' },
-  { long: 'https://streamvault-premium.site/smm?platform=instagram&service=followers', short: 'sv.pm/smm' },
-];
-
-// ─── Link Shortener Panel ─────────────────────────────────────────────────────
-function LinkPanel({ delay }: { delay: number }) {
-  const [idx, setIdx] = useState(0);
-  const [phase, setPhase] = useState<'typing' | 'done'>('typing');
-  const [typed, setTyped] = useState('');
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    const url = LONG_URLS[idx];
-    let i = 0;
-    setTyped('');
-    setPhase('typing');
-    setCopied(false);
-    const ti = setInterval(() => {
-      i++;
-      setTyped(url.long.slice(0, i));
-      if (i >= url.long.length) {
-        clearInterval(ti);
-        setTimeout(() => setPhase('done'), 300);
-        setTimeout(() => setCopied(true), 700);
-        setTimeout(() => {
-          setCopied(false);
-          setIdx(p => (p + 1) % LONG_URLS.length);
-        }, 2800);
-      }
-    }, 28);
-    return () => clearInterval(ti);
-  }, [idx]);
-
-  const current = LONG_URLS[idx];
-
-  return (
-    <motion.div
-      className="rounded-2xl p-5 flex flex-col"
-      style={{ background: '#111111', border: '1px solid #22c55e22', minHeight: 0 }}
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-    >
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: '#22c55e18' }}>🔗</div>
-        <div>
-          <div className="font-bold text-sm" style={{ fontFamily: 'var(--font-display)', color: '#ffffff' }}>Link Shortener</div>
-          <div className="text-xs" style={{ color: '#52525b' }}>Custom slug · Click analytics · QR code</div>
-        </div>
-        <div className="ml-auto text-xs px-2 py-0.5 rounded-full font-bold" style={{ background: '#22c55e18', color: '#22c55e', fontFamily: 'var(--font-mono)' }}>FREE</div>
-      </div>
-
-      <div className="flex flex-col gap-3 flex-1">
-        {/* Long URL input */}
-        <div className="rounded-xl px-4 py-3" style={{ background: '#0d0d0d', border: '1px solid #1a1a1a' }}>
-          <div className="text-xs font-mono uppercase tracking-wider mb-1.5" style={{ color: '#3f3f46' }}>Long URL</div>
-          <div className="text-xs font-mono truncate" style={{ color: '#71717a' }}>
-            {typed}<span className="animate-pulse" style={{ color: '#22c55e' }}>|</span>
-          </div>
-        </div>
-
-        {/* Arrow + short URL */}
-        <AnimatePresence mode="wait">
-          {phase === 'done' && (
-            <motion.div key="result" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-              <div className="flex items-center gap-2 mb-2">
-                <div className="flex-1 h-px" style={{ background: '#22c55e44' }} />
-                <span className="text-xs" style={{ color: '#22c55e' }}>✓ Shortened</span>
-                <div className="flex-1 h-px" style={{ background: '#22c55e44' }} />
-              </div>
-              <div className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background: '#0d0d0d', border: '1px solid #22c55e44' }}>
-                <span className="text-sm font-mono font-bold" style={{ color: '#22c55e' }}>https://{current.short}</span>
-                <motion.div
-                  className="text-xs px-3 py-1 rounded-lg font-bold"
-                  style={{ background: copied ? '#22c55e22' : '#1a1a1a', color: copied ? '#22c55e' : '#3f3f46', fontFamily: 'var(--font-mono)' }}
-                  animate={{ scale: copied ? [1, 1.1, 1] : 1 }}
-                >
-                  {copied ? '✓ Copied' : 'Copy'}
-                </motion.div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Stats strip */}
-        <div className="mt-auto grid grid-cols-3 gap-2">
-          {[
-            { label: 'Links created', val: '48.2K' },
-            { label: 'Total clicks', val: '1.3M' },
-            { label: 'Avg shortening', val: '0.3s' },
-          ].map(s => (
-            <div key={s.label} className="rounded-xl p-3 text-center" style={{ background: '#0d0d0d', border: '1px solid #1a1a1a' }}>
-              <div className="text-lg font-bold" style={{ color: '#22c55e', fontFamily: 'var(--font-mono)' }}>{s.val}</div>
-              <div className="text-xs" style={{ color: '#3f3f46' }}>{s.label}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
 // ─── CC Generator Panel ───────────────────────────────────────────────────────
 function CCGenPanel({ delay }: { delay: number }) {
   const [profileIdx, setProfileIdx] = useState(0);
@@ -540,19 +434,18 @@ export default function SceneCardTools() {
       >
         <span className="text-sm font-mono uppercase tracking-widest" style={{ color: '#7c3aed' }}>Dev Tools</span>
         <h2 className="text-4xl font-bold mt-1" style={{ fontFamily: 'var(--font-display)', color: '#ffffff' }}>
-          Link Shortener · CC Gen · CC Check · BIN Lookup
+          CC Generator · CC Checker · BIN Lookup
         </h2>
         <p className="mt-1 text-sm" style={{ color: '#52525b' }}>
-          All the tools you need — URL shortener, card generator, checker, and full BIN intelligence
+          Generate Luhn-valid test cards · Validate any card · Full BIN intelligence — bank, country, tier, 3D Secure
         </p>
       </motion.div>
 
-      {/* 4-column grid */}
-      <div className="grid grid-cols-4 gap-4 flex-1 min-h-0">
-        <LinkPanel delay={0.3} />
-        <CCGenPanel delay={0.4} />
-        <CCCheckerPanel delay={0.5} />
-        <BINCheckerPanel delay={0.6} />
+      {/* 3-column grid */}
+      <div className="grid grid-cols-3 gap-5 flex-1 min-h-0">
+        <CCGenPanel delay={0.3} />
+        <CCCheckerPanel delay={0.42} />
+        <BINCheckerPanel delay={0.54} />
       </div>
     </motion.div>
   );
