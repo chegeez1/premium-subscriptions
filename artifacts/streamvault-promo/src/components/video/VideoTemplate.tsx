@@ -5,16 +5,20 @@ import Scene1Hero from './video_scenes/Scene1Hero';
 import Scene2TradingChart from './video_scenes/Scene2TradingChart';
 import Scene3FreeTools from './video_scenes/Scene3FreeTools';
 import Scene4PremiumAccounts from './video_scenes/Scene4PremiumAccounts';
-import Scene5Features from './video_scenes/Scene3Features';
-import Scene6Pricing from './video_scenes/Scene4Pricing';
-import Scene7Testimonials from './video_scenes/Scene5Testimonials';
-import Scene8CTA from './video_scenes/Scene6CTA';
+import SceneAITools from './video_scenes/SceneAITools';
+import SceneVPSHosting from './video_scenes/SceneVPSHosting';
+import SceneFeatures from './video_scenes/Scene3Features';
+import ScenePricing from './video_scenes/Scene4Pricing';
+import SceneTestimonials from './video_scenes/Scene5Testimonials';
+import SceneCTA from './video_scenes/Scene6CTA';
 
 export const SCENE_DURATIONS: Record<string, number> = {
   hero: 6000,
   tradingChart: 8000,
   freeTools: 7000,
   premiumAccounts: 8000,
+  aiTools: 9000,
+  vpsHosting: 8000,
   features: 7000,
   pricing: 7000,
   testimonials: 7000,
@@ -26,10 +30,12 @@ const SCENE_COMPONENTS: Record<string, React.ComponentType> = {
   tradingChart: Scene2TradingChart,
   freeTools: Scene3FreeTools,
   premiumAccounts: Scene4PremiumAccounts,
-  features: Scene5Features,
-  pricing: Scene6Pricing,
-  testimonials: Scene7Testimonials,
-  cta: Scene8CTA,
+  aiTools: SceneAITools,
+  vpsHosting: SceneVPSHosting,
+  features: SceneFeatures,
+  pricing: ScenePricing,
+  testimonials: SceneTestimonials,
+  cta: SceneCTA,
 };
 
 export default function VideoTemplate({
