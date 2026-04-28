@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Repeat, Mic } from 'lucide-react';
+import { ChevronDown, ChevronUp, Repeat, Mic, Music2, VolumeX } from 'lucide-react';
 import VideoTemplate, { SCENE_DURATIONS } from './VideoTemplate';
 import VoicePicker from './VoicePicker';
 import { useSceneControls } from '@/hooks/useSceneControls';
 import { useSceneAINarration, prefetchAllNarrations, DEFAULT_VOICE, VOICE_KEY, type AIVoice } from '@/hooks/useAINarration';
+import { useBackgroundMusic } from '@/hooks/useBackgroundMusic';
 
 const PROGRESS_TICK_MS = 60;
 
@@ -62,6 +63,7 @@ interface ControlBarProps {
   collapsed: boolean;
   locked: boolean;
   voicePickerOpen: boolean;
+  musicOn: boolean;
   sceneKeys: string[];
   activeIndex: number;
   activeDuration: number;
@@ -71,12 +73,13 @@ interface ControlBarProps {
   onJumpTo: (i: number) => void;
   onToggleCollapsed: () => void;
   onToggleVoicePicker: () => void;
+  onToggleMusic: () => void;
 }
 
 function ControlBar({
-  visible, collapsed, locked, voicePickerOpen,
+  visible, collapsed, locked, voicePickerOpen, musicOn,
   sceneKeys, activeIndex, activeDuration, tick, selectedVoice,
-  onToggleLock, onJumpTo, onToggleCollapsed, onToggleVoicePicker,
+  onToggleLock, onJumpTo, onToggleCollapsed, onToggleVoicePicker, onToggleMusic,
 }: ControlBarProps) {
   return (
     <div
@@ -110,6 +113,20 @@ function ControlBar({
       </div>
 
       <div className="w-px self-stretch bg-white/15" />
+
+      {/* Music toggle */}
+      <button
+        onClick={onToggleMusic}
+        className={`w-14 h-14 flex items-center justify-center transition-colors rounded-lg shrink-0 ${
+          musicOn
+            ? 'text-violet-400 bg-violet-400/15 hover:bg-violet-400/25'
+            : 'text-white/60 hover:text-white hover:bg-white/10'
+        }`}
+        title={musicOn ? 'Music: on' : 'Music: off'}
+        aria-pressed={musicOn}
+      >
+        {musicOn ? <Music2 className="w-7 h-7" /> : <VolumeX className="w-7 h-7" />}
+      </button>
 
       <button
         onClick={onToggleVoicePicker}
@@ -157,6 +174,20 @@ export default function VideoWithControls() {
   // Per-scene AI narration
   const activeSceneKey = sceneKeys[activeIndex] ?? '';
   useSceneAINarration(activeSceneKey, selectedVoice);
+
+  // Background music
+  const { start: startMusic, stop: stopMusic, playingRef: musicPlayingRef } = useBackgroundMusic();
+  const [musicOn, setMusicOn] = useState(false);
+
+  const handleToggleMusic = useCallback(() => {
+    if (musicPlayingRef.current) {
+      stopMusic();
+      setMusicOn(false);
+    } else {
+      startMusic();
+      setMusicOn(true);
+    }
+  }, [startMusic, stopMusic, musicPlayingRef]);
 
   // Voice picker
   const [showVoicePicker, setShowVoicePicker] = useState(false);
@@ -238,6 +269,7 @@ export default function VideoWithControls() {
           collapsed={collapsed}
           locked={locked}
           voicePickerOpen={showVoicePicker}
+          musicOn={musicOn}
           sceneKeys={sceneKeys}
           activeIndex={activeIndex}
           activeDuration={activeDuration}
@@ -247,6 +279,7 @@ export default function VideoWithControls() {
           onJumpTo={jumpTo}
           onToggleCollapsed={handleToggleCollapsed}
           onToggleVoicePicker={() => setShowVoicePicker(v => !v)}
+          onToggleMusic={handleToggleMusic}
         />
       </div>
     </div>

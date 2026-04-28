@@ -1,5 +1,33 @@
 import { motion } from 'framer-motion';
 import signupImg from '@assets/screenshots/streamvault-premium_site_auth.png';
+import { useCountUp } from '@/hooks/useCountUp';
+
+const STATS = [
+  { label: 'Active Traders', target: 10000, suffix: '+', prefix: '', color: '#22c55e' },
+  { label: 'Starting From', target: 500, suffix: '', prefix: 'KES ', color: '#7c3aed' },
+  { label: 'Win Rate', target: 74, suffix: '%', prefix: '', color: '#ec4899' },
+  { label: 'Strategies', target: 5, suffix: '', prefix: '', color: '#22c55e' },
+];
+
+function StatCounter({ target, prefix, suffix, label, color, delay }: typeof STATS[0] & { delay: number }) {
+  const value = useCountUp(target, 1800, delay + 1400);
+  const display = target >= 1000 ? `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}K` : `${value}`;
+  return (
+    <motion.div
+      className="flex flex-col items-center"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: delay / 1000 + 1.2, duration: 0.6 }}
+    >
+      <div className="text-3xl font-bold font-mono" style={{ color, fontFamily: 'var(--font-display)' }}>
+        {prefix}{display}{suffix}
+      </div>
+      <div className="text-xs uppercase tracking-widest mt-1" style={{ color: '#3f3f46', fontFamily: 'var(--font-mono)' }}>
+        {label}
+      </div>
+    </motion.div>
+  );
+}
 
 const PARTICLES = Array.from({ length: 18 }, (_, i) => ({
   x: `${(i * 5.5) % 100}%`,
@@ -142,6 +170,18 @@ export default function Scene1Hero() {
           transition={{ delay: 1.4 }}
         >
           streamvault-premium.site
+        </motion.div>
+
+        {/* Animated stat counters */}
+        <motion.div
+          className="mt-8 flex items-center gap-8"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.3 }}
+        >
+          {STATS.map((s, i) => (
+            <StatCounter key={s.label} {...s} delay={i * 120} />
+          ))}
         </motion.div>
       </div>
 

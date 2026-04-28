@@ -11,10 +11,11 @@ import SceneVPSHosting from './video_scenes/SceneVPSHosting';
 import SceneFeatures from './video_scenes/Scene3Features';
 import ScenePricing from './video_scenes/Scene4Pricing';
 import SceneTestimonials from './video_scenes/Scene5Testimonials';
+import SceneBotInAction from './video_scenes/SceneBotInAction';
 import SceneCTA from './video_scenes/Scene6CTA';
 
 export const SCENE_DURATIONS: Record<string, number> = {
-  hero: 6000,
+  hero: 7000,
   aiNarrator: 20000,
   tradingChart: 8000,
   freeTools: 7000,
@@ -22,9 +23,10 @@ export const SCENE_DURATIONS: Record<string, number> = {
   aiTools: 9000,
   vpsHosting: 8000,
   features: 7000,
-  pricing: 7000,
+  pricing: 8000,
   testimonials: 7000,
-  cta: 6000,
+  botInAction: 12000,
+  cta: 7000,
 };
 
 const SCENE_COMPONENTS: Record<string, React.ComponentType> = {
@@ -38,6 +40,7 @@ const SCENE_COMPONENTS: Record<string, React.ComponentType> = {
   features: SceneFeatures,
   pricing: ScenePricing,
   testimonials: SceneTestimonials,
+  botInAction: SceneBotInAction,
   cta: SceneCTA,
 };
 
