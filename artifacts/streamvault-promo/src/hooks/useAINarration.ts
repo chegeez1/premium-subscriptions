@@ -5,42 +5,75 @@ export type AIVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 export const DEFAULT_VOICE: AIVoice = 'onyx';
 export const VOICE_KEY = 'chegetech_voice_name';
 
-// ─── Audio cache ───────────────────────────────────────────────────────────────
-// Persists across re-renders; maps "voice:text" → blob URL
+// ─── Client-side blob-URL cache (persists for the page session) ───────────────
 const audioCache = new Map<string, string>();
 const pendingMap = new Map<string, Promise<string>>();
 
 export async function fetchNarrationAudio(text: string, voice: AIVoice): Promise<string> {
   const key = `${voice}:${text}`;
   if (audioCache.has(key)) return audioCache.get(key)!;
+
+  // If there's already an in-flight promise, wait for it
   if (pendingMap.has(key)) return pendingMap.get(key)!;
 
   const promise = (async () => {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice }),
-    });
-    if (!res.ok) throw new Error(`TTS ${res.status}`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    audioCache.set(key, url);
-    pendingMap.delete(key);
-    return url;
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice }),
+      });
+      if (!res.ok) throw new Error(`TTS ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      audioCache.set(key, url);
+      return url;
+    } finally {
+      // Always remove from pending (whether success or failure) so retries work
+      pendingMap.delete(key);
+    }
   })();
 
   pendingMap.set(key, promise);
   return promise;
 }
 
-// Pre-warm ALL scenes up front — called once on mount
-export function prefetchAllNarrations(voice: AIVoice) {
-  for (const text of Object.values(SCENE_SCRIPTS)) {
-    fetchNarrationAudio(text, voice).catch(() => {});
+// ─── One-shot warmup: ask the server to pre-bake ALL narrations on disk ───────
+// Server responds immediately (202) — generation happens in background there.
+// Client also runs its own sequential wave fetch to populate blob URL cache.
+let warmupFired = false;
+
+export async function warmupAllNarrations(voice: AIVoice): Promise<void> {
+  if (warmupFired) return;
+  warmupFired = true;
+
+  const scripts = Object.entries(SCENE_SCRIPTS).map(([key, text]) => ({ key, text }));
+
+  // Tell the server to pre-generate everything (non-blocking on server side)
+  fetch('/api/tts/warmup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scripts, voice }),
+  }).catch(() => {}); // Fire and forget
+
+  // Populate client blob URL cache in waves of 3 (avoid flooding)
+  const WAVE = 3;
+  for (let i = 0; i < scripts.length; i += WAVE) {
+    const batch = scripts.slice(i, i + WAVE);
+    await Promise.allSettled(
+      batch.map(({ text }) => fetchNarrationAudio(text, voice))
+    );
   }
 }
 
-// Smart lookahead: call this when a scene becomes active to warm the next N scenes
+// Allow re-triggering warmup after voice change
+export function resetWarmup() {
+  warmupFired = false;
+  audioCache.clear();
+  pendingMap.clear();
+}
+
+// Smart lookahead: eagerly fetch the next N scenes when active scene changes
 export function prefetchAhead(
   currentKey: string,
   allKeys: string[],
@@ -68,8 +101,9 @@ export function useSceneAINarration(
   const onStartRef = useRef(onNarrationStart);
   const onEndRef = useRef(onNarrationEnd);
 
-  useEffect(() => { onStartRef.current = onNarrationStart; });
-  useEffect(() => { onEndRef.current = onNarrationEnd; });
+  // Keep refs current without adding them to effect deps
+  onStartRef.current = onNarrationStart;
+  onEndRef.current = onNarrationEnd;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -77,10 +111,12 @@ export function useSceneAINarration(
   }, []);
 
   const stopCurrent = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.onended = null;
+    const a = audioRef.current;
+    if (a) {
+      a.pause();
+      a.onended = null;
       audioRef.current = null;
+      onEndRef.current?.();
     }
   }, []);
 
@@ -98,27 +134,25 @@ export function useSceneAINarration(
 
     const play = async () => {
       try {
-        // Fetch (or get from cache instantly) — no artificial delay
+        // This resolves instantly if already cached (client or server-disk)
         const url = await fetchNarrationAudio(script, voice);
         if (cancelled || !mountedRef.current) return;
 
-        // Tiny breath — just enough to let the scene start animating
+        // Tiny breath so scene entrance animation can start
         await new Promise(r => setTimeout(r, 80));
         if (cancelled || !mountedRef.current) return;
 
         const audio = new Audio(url);
         audio.volume = 1.0;
-
         audio.onended = () => {
           onEndRef.current?.();
           audioRef.current = null;
         };
-
         audioRef.current = audio;
         onStartRef.current?.();
         await audio.play();
       } catch {
-        // Silent fail — video keeps going
+        // Silent fail — video keeps going, music stays up
         onEndRef.current?.();
       }
     };
@@ -128,7 +162,6 @@ export function useSceneAINarration(
     return () => {
       cancelled = true;
       stopCurrent();
-      onEndRef.current?.();
     };
   }, [activeSceneKey, voice, stopCurrent]);
 }

@@ -5,7 +5,8 @@ import VoicePicker from './VoicePicker';
 import { useSceneControls } from '@/hooks/useSceneControls';
 import {
   useSceneAINarration,
-  prefetchAllNarrations,
+  warmupAllNarrations,
+  resetWarmup,
   prefetchAhead,
   DEFAULT_VOICE,
   VOICE_KEY,
@@ -196,9 +197,11 @@ export default function VideoWithControls() {
     if (musicPlayingRef.current) unduck();
   }, [unduck, musicPlayingRef]);
 
-  // Pre-fetch ALL narrations on mount and voice change
+  // Warmup: tell server to pre-bake all narrations, then populate client blob cache
+  // resetWarmup() clears flags/cache so voice changes re-trigger a full warmup
   useEffect(() => {
-    prefetchAllNarrations(selectedVoice);
+    resetWarmup();
+    warmupAllNarrations(selectedVoice);
   }, [selectedVoice]);
 
   // Smart lookahead: prefetch next 3 scenes whenever active scene changes
