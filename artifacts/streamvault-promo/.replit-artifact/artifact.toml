@@ -1,0 +1,31 @@
+kind = "video"
+previewPath = "/streamvault-promo/"
+title = "StreamVault Premium Promo Video"
+version = "1.0.0"
+id = "artifacts/streamvault-promo"
+router = "path"
+
+[[integratedSkills]]
+name = "video-js"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/streamvault-promo/" ]
+localPort = 24177
+
+[services.development]
+run = "pnpm --filter @workspace/streamvault-promo run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/streamvault-promo", "run", "build" ]
+publicDir = "artifacts/streamvault-promo/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24177"
+BASE_PATH = "/streamvault-promo/"
