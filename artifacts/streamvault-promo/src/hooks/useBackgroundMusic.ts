@@ -4,6 +4,11 @@ const BPM = 118;
 const BEAT_S = 60 / BPM;
 const SCHEDULE_AHEAD = BEAT_S * 16;
 
+// Music volume levels
+const VOL_FULL = 0.28;     // when no narration
+const VOL_DUCKED = 0.07;   // under narration (audible but not competing)
+const FADE_TC = 0.25;      // seconds for volume transitions
+
 function createNoiseBuffer(ctx: AudioContext): AudioBuffer {
   const size = Math.floor(ctx.sampleRate * 2);
   const buf = ctx.createBuffer(1, size, ctx.sampleRate);
@@ -51,20 +56,19 @@ function bass(ctx: AudioContext, dest: AudioNode, t: number, freq: number) {
 }
 
 function pad(ctx: AudioContext, dest: AudioNode, t: number, freq: number, dur: number) {
-  const oscs = [freq, freq * 1.004, freq * 1.5].map(f => {
+  [freq, freq * 1.004, freq * 1.5].forEach(f => {
     const o = ctx.createOscillator();
+    const lp = ctx.createBiquadFilter();
+    const env = ctx.createGain();
     o.type = 'sawtooth'; o.frequency.value = f;
-    return o;
+    lp.type = 'lowpass'; lp.frequency.value = 700; lp.Q.value = 1.5;
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.055, t + 0.4);
+    env.gain.setValueAtTime(0.055, t + dur - 0.4);
+    env.gain.linearRampToValueAtTime(0, t + dur);
+    o.connect(lp); lp.connect(env); env.connect(dest);
+    o.start(t); o.stop(t + dur);
   });
-  const lp = ctx.createBiquadFilter();
-  lp.type = 'lowpass'; lp.frequency.value = 700; lp.Q.value = 1.5;
-  const env = ctx.createGain();
-  env.gain.setValueAtTime(0, t);
-  env.gain.linearRampToValueAtTime(0.055, t + 0.4);
-  env.gain.setValueAtTime(0.055, t + dur - 0.4);
-  env.gain.linearRampToValueAtTime(0, t + dur);
-  oscs.forEach(o => { o.connect(lp); o.start(t); o.stop(t + dur); });
-  lp.connect(env); env.connect(dest);
 }
 
 const BASS_CHORD = [55, 55, 82.4, 73.4]; // A1 A1 E2 D2
@@ -77,6 +81,7 @@ export function useBackgroundMusic() {
   const nextBeatRef = useRef(0);
   const beatRef = useRef(0);
   const playingRef = useRef(false);
+  const duckedRef = useRef(false);
 
   const schedule = useCallback(() => {
     const ctx = ctxRef.current;
@@ -105,10 +110,11 @@ export function useBackgroundMusic() {
   const start = useCallback(() => {
     if (playingRef.current) return;
     playingRef.current = true;
+    duckedRef.current = false;
     const ctx = new AudioContext();
     ctxRef.current = ctx;
     const mg = ctx.createGain();
-    mg.gain.value = 0.28;
+    mg.gain.value = VOL_FULL;
     mg.connect(ctx.destination);
     masterRef.current = mg;
     noiseRef.current = createNoiseBuffer(ctx);
@@ -129,6 +135,26 @@ export function useBackgroundMusic() {
     }
   }, []);
 
+  // Duck music under narration
+  const duck = useCallback(() => {
+    const mg = masterRef.current;
+    const ctx = ctxRef.current;
+    if (mg && ctx && !duckedRef.current) {
+      duckedRef.current = true;
+      mg.gain.setTargetAtTime(VOL_DUCKED, ctx.currentTime, FADE_TC);
+    }
+  }, []);
+
+  // Restore after narration ends
+  const unduck = useCallback(() => {
+    const mg = masterRef.current;
+    const ctx = ctxRef.current;
+    if (mg && ctx && duckedRef.current) {
+      duckedRef.current = false;
+      mg.gain.setTargetAtTime(VOL_FULL, ctx.currentTime, FADE_TC);
+    }
+  }, []);
+
   const setVolume = useCallback((v: number) => {
     const mg = masterRef.current;
     const ctx = ctxRef.current;
@@ -137,5 +163,5 @@ export function useBackgroundMusic() {
 
   useEffect(() => () => stop(), [stop]);
 
-  return { start, stop, setVolume, playingRef };
+  return { start, stop, duck, unduck, setVolume, playingRef };
 }

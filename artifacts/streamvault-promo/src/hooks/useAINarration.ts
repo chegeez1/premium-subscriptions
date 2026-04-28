@@ -5,15 +5,10 @@ export type AIVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 export const DEFAULT_VOICE: AIVoice = 'onyx';
 export const VOICE_KEY = 'chegetech_voice_name';
 
-// ─── Audio cache ──────────────────────────────────────────────────────────────
+// ─── Audio cache ───────────────────────────────────────────────────────────────
 // Persists across re-renders; maps "voice:text" → blob URL
 const audioCache = new Map<string, string>();
 const pendingMap = new Map<string, Promise<string>>();
-
-function getTTSUrl(): string {
-  // Same-origin API call — goes through Replit's routing to the api-server
-  return '/api/tts';
-}
 
 export async function fetchNarrationAudio(text: string, voice: AIVoice): Promise<string> {
   const key = `${voice}:${text}`;
@@ -21,12 +16,12 @@ export async function fetchNarrationAudio(text: string, voice: AIVoice): Promise
   if (pendingMap.has(key)) return pendingMap.get(key)!;
 
   const promise = (async () => {
-    const res = await fetch(getTTSUrl(), {
+    const res = await fetch('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, voice }),
     });
-    if (!res.ok) throw new Error(`TTS failed: ${res.status}`);
+    if (!res.ok) throw new Error(`TTS ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     audioCache.set(key, url);
@@ -38,17 +33,43 @@ export async function fetchNarrationAudio(text: string, voice: AIVoice): Promise
   return promise;
 }
 
-// Pre-warm: fetch all scene narrations in background
+// Pre-warm ALL scenes up front — called once on mount
 export function prefetchAllNarrations(voice: AIVoice) {
   for (const text of Object.values(SCENE_SCRIPTS)) {
     fetchNarrationAudio(text, voice).catch(() => {});
   }
 }
 
+// Smart lookahead: call this when a scene becomes active to warm the next N scenes
+export function prefetchAhead(
+  currentKey: string,
+  allKeys: string[],
+  voice: AIVoice,
+  lookahead = 3,
+) {
+  const idx = allKeys.indexOf(currentKey);
+  if (idx < 0) return;
+  for (let i = 1; i <= lookahead; i++) {
+    const nextKey = allKeys[(idx + i) % allKeys.length];
+    const script = SCENE_SCRIPTS[nextKey];
+    if (script) fetchNarrationAudio(script, voice).catch(() => {});
+  }
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
-export function useSceneAINarration(activeSceneKey: string, voice: AIVoice) {
+export function useSceneAINarration(
+  activeSceneKey: string,
+  voice: AIVoice,
+  onNarrationStart?: () => void,
+  onNarrationEnd?: () => void,
+) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const mountedRef = useRef(true);
+  const onStartRef = useRef(onNarrationStart);
+  const onEndRef = useRef(onNarrationEnd);
+
+  useEffect(() => { onStartRef.current = onNarrationStart; });
+  useEffect(() => { onEndRef.current = onNarrationEnd; });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -58,6 +79,7 @@ export function useSceneAINarration(activeSceneKey: string, voice: AIVoice) {
   const stopCurrent = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
+      audioRef.current.onended = null;
       audioRef.current = null;
     }
   }, []);
@@ -66,7 +88,7 @@ export function useSceneAINarration(activeSceneKey: string, voice: AIVoice) {
     stopCurrent();
 
     const baseKey = activeSceneKey.replace(/_r[12]$/, '');
-    // aiNarrator manages its own audio
+    // aiNarrator scene manages its own audio pipeline
     if (baseKey === 'aiNarrator') return;
 
     const script = SCENE_SCRIPTS[baseKey];
@@ -76,18 +98,28 @@ export function useSceneAINarration(activeSceneKey: string, voice: AIVoice) {
 
     const play = async () => {
       try {
+        // Fetch (or get from cache instantly) — no artificial delay
         const url = await fetchNarrationAudio(script, voice);
         if (cancelled || !mountedRef.current) return;
 
-        await new Promise(r => setTimeout(r, 420)); // let scene animate in
+        // Tiny breath — just enough to let the scene start animating
+        await new Promise(r => setTimeout(r, 80));
         if (cancelled || !mountedRef.current) return;
 
         const audio = new Audio(url);
         audio.volume = 1.0;
+
+        audio.onended = () => {
+          onEndRef.current?.();
+          audioRef.current = null;
+        };
+
         audioRef.current = audio;
+        onStartRef.current?.();
         await audio.play();
       } catch {
-        // Silent fail — no audio plays, video keeps going
+        // Silent fail — video keeps going
+        onEndRef.current?.();
       }
     };
 
@@ -96,6 +128,7 @@ export function useSceneAINarration(activeSceneKey: string, voice: AIVoice) {
     return () => {
       cancelled = true;
       stopCurrent();
+      onEndRef.current?.();
     };
   }, [activeSceneKey, voice, stopCurrent]);
 }

@@ -3,7 +3,14 @@ import { ChevronDown, ChevronUp, Repeat, Mic, Music2, VolumeX } from 'lucide-rea
 import VideoTemplate, { SCENE_DURATIONS } from './VideoTemplate';
 import VoicePicker from './VoicePicker';
 import { useSceneControls } from '@/hooks/useSceneControls';
-import { useSceneAINarration, prefetchAllNarrations, DEFAULT_VOICE, VOICE_KEY, type AIVoice } from '@/hooks/useAINarration';
+import {
+  useSceneAINarration,
+  prefetchAllNarrations,
+  prefetchAhead,
+  DEFAULT_VOICE,
+  VOICE_KEY,
+  type AIVoice,
+} from '@/hooks/useAINarration';
 import { useBackgroundMusic } from '@/hooks/useBackgroundMusic';
 
 const PROGRESS_TICK_MS = 60;
@@ -166,17 +173,8 @@ export default function VideoWithControls() {
     () => (localStorage.getItem(VOICE_KEY) as AIVoice) ?? DEFAULT_VOICE,
   );
 
-  // Pre-fetch all narration audio in background on mount
-  useEffect(() => {
-    prefetchAllNarrations(selectedVoice);
-  }, [selectedVoice]);
-
-  // Per-scene AI narration
-  const activeSceneKey = sceneKeys[activeIndex] ?? '';
-  useSceneAINarration(activeSceneKey, selectedVoice);
-
-  // Background music
-  const { start: startMusic, stop: stopMusic, playingRef: musicPlayingRef } = useBackgroundMusic();
+  // Background music with duck/unduck for narration
+  const { start: startMusic, stop: stopMusic, duck, unduck, playingRef: musicPlayingRef } = useBackgroundMusic();
   const [musicOn, setMusicOn] = useState(false);
 
   const handleToggleMusic = useCallback(() => {
@@ -188,6 +186,30 @@ export default function VideoWithControls() {
       setMusicOn(true);
     }
   }, [startMusic, stopMusic, musicPlayingRef]);
+
+  // Narration callbacks that drive music ducking
+  const handleNarrationStart = useCallback(() => {
+    if (musicPlayingRef.current) duck();
+  }, [duck, musicPlayingRef]);
+
+  const handleNarrationEnd = useCallback(() => {
+    if (musicPlayingRef.current) unduck();
+  }, [unduck, musicPlayingRef]);
+
+  // Pre-fetch ALL narrations on mount and voice change
+  useEffect(() => {
+    prefetchAllNarrations(selectedVoice);
+  }, [selectedVoice]);
+
+  // Smart lookahead: prefetch next 3 scenes whenever active scene changes
+  useEffect(() => {
+    const baseKey = sceneKeys[activeIndex];
+    if (baseKey) prefetchAhead(baseKey, sceneKeys, selectedVoice, 3);
+  }, [activeIndex, sceneKeys, selectedVoice]);
+
+  // Per-scene AI narration (with music duck/unduck)
+  const activeSceneKey = sceneKeys[activeIndex] ?? '';
+  useSceneAINarration(activeSceneKey, selectedVoice, handleNarrationStart, handleNarrationEnd);
 
   // Voice picker
   const [showVoicePicker, setShowVoicePicker] = useState(false);
