@@ -1,76 +1,28 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { VOICE_KEY } from '@/hooks/useSceneNarration';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { fetchNarrationAudio, DEFAULT_VOICE, VOICE_KEY, type AIVoice } from '@/hooks/useAINarration';
 
 const SPEECH_LINES = [
   "Welcome to ChegeTech StreamVault — your all-in-one digital premium platform.",
-  "Automate your Deriv trades 24 7 with ChegeBot Pro — and earn while you sleep.",
+  "Automate your Deriv trades 24/7 with ChegeBot Pro — and earn while you sleep.",
   "Access Netflix, Disney Plus, Spotify, and over 20 premium accounts — all under one plan.",
   "Get free disposable emails and SMS numbers — private, instant, no sign-up needed.",
-  "Need cloud power? Spin up a VPS in seconds — Linux, Windows, hosted right here in Africa.",
+  "Need cloud power? Spin up a VPS in seconds — hosted right here in Africa.",
   "Unlock ChatGPT Plus, Claude Pro, and Midjourney — the best AI tools, all in one place.",
   "Starting from just KES 500 per month — pay via M-Pesa, Card, or Paystack Wallet. Join us today.",
 ];
 
 const WAVEFORM_BARS = 54;
-const IS_IFRAMED = typeof window !== 'undefined' && window.self !== window.top;
 
-function pickVoice(): SpeechSynthesisVoice | null {
-  const voices = window.speechSynthesis?.getVoices() ?? [];
-  // Check user-selected voice first
-  const saved = localStorage.getItem(VOICE_KEY);
-  if (saved) {
-    const v = voices.find(v => v.name === saved);
-    if (v) return v;
-  }
-  const PREF = [
-    'Google UK English Female',
-    'Microsoft Jenny Online (Natural)',
-    'Microsoft Aria Online (Natural)',
-    'Microsoft Zira Desktop',
-    'Samantha',
-    'Karen',
-    'Moira',
-    'Tessa',
-    'Google US English',
-  ];
-  for (const name of PREF) {
-    const v = voices.find(v => v.name.includes(name));
-    if (v) return v;
-  }
-  // Any English voice that isn't explicitly "Male"
-  return (
-    voices.find(v => v.lang.startsWith('en') && !v.name.toLowerCase().includes('male')) ??
-    voices.find(v => v.lang.startsWith('en')) ??
-    null
-  );
-}
-
-function useVoicesReady() {
-  const [ready, setReady] = useState(() =>
-    typeof window !== 'undefined' && (window.speechSynthesis?.getVoices().length ?? 0) > 0,
-  );
-  useEffect(() => {
-    if (!IS_IFRAMED || !window.speechSynthesis) return;
-    if (window.speechSynthesis.getVoices().length) { setReady(true); return; }
-    const h = () => setReady(true);
-    window.speechSynthesis.addEventListener('voiceschanged', h);
-    return () => window.speechSynthesis.removeEventListener('voiceschanged', h);
-  }, []);
-  return ready;
-}
-
-// Pre-computed deterministic bar params — no Math.random() in render
 function useBarParams() {
   return useMemo(() =>
     Array.from({ length: WAVEFORM_BARS }, (_, i) => {
       const center = WAVEFORM_BARS / 2;
       const dist = Math.abs(i - center) / center;
       const maxH = Math.max(6, (1 - dist * 0.55) * 60);
-      const s = i * 7.31 + 1.9; // deterministic seed
+      const s = i * 7.31 + 1.9;
       const sin = (x: number) => Math.abs(Math.sin(s + x));
       return {
-        maxH,
         heights: [
           maxH * (0.18 + sin(0) * 0.22),
           maxH * (0.65 + sin(1) * 0.45),
@@ -106,7 +58,6 @@ function Waveform({ active }: { active: boolean }) {
   );
 }
 
-// Words are highlighted progressively — driven by speech boundary events
 function SpeechText({ text, wordCount }: { text: string; wordCount: number }) {
   const words = text.split(' ');
   return (
@@ -131,102 +82,125 @@ function SpeechText({ text, wordCount }: { text: string; wordCount: number }) {
 }
 
 export default function SceneAINarrator() {
-  const voicesReady = useVoicesReady();
   const [lineIdx, setLineIdx] = useState(0);
   const [wordCount, setWordCount] = useState(0);
   const [voiceActive, setVoiceActive] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const mountedRef = useRef(true);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const wordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lineIdxRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      audioRef.current?.pause();
+      if (wordTimerRef.current) clearInterval(wordTimerRef.current);
+    };
   }, []);
 
-  const speakLine = useCallback((idx: number) => {
-    if (!mountedRef.current || !IS_IFRAMED || !window.speechSynthesis) return;
+  const getVoice = (): AIVoice =>
+    (localStorage.getItem(VOICE_KEY) as AIVoice) ?? DEFAULT_VOICE;
 
-    const line = SPEECH_LINES[idx];
-    const utt = new SpeechSynthesisUtterance(line);
-    utt.rate = 0.88;
-    utt.pitch = 1.06;
-    utt.volume = 1.0;
-    const voice = pickVoice();
-    if (voice) utt.voice = voice;
+  const playLine = async (idx: number) => {
+    if (!mountedRef.current) return;
+    const text = SPEECH_LINES[idx];
+    const voice = getVoice();
 
-    utt.onstart = () => {
+    try {
+      const url = await fetchNarrationAudio(text, voice);
       if (!mountedRef.current) return;
-      setVoiceActive(true);
-      setWordCount(0);
-    };
 
-    // Sync word highlights to actual speech boundaries
-    utt.onboundary = (evt) => {
-      if (!mountedRef.current || evt.name !== 'word') return;
-      const before = line.substring(0, evt.charIndex).trimEnd();
-      const wIdx = before === '' ? 0 : before.split(/\s+/).length;
-      setWordCount(wIdx + 1);
-    };
+      const audio = new Audio(url);
+      audioRef.current = audio;
 
-    utt.onend = () => {
+      audio.onloadedmetadata = () => {
+        if (!mountedRef.current) return;
+        setLoading(false);
+        setVoiceActive(true);
+        setWordCount(0);
+
+        const words = text.split(' ');
+        const durationMs = (audio.duration || words.length * 0.55) * 1000;
+        const msPerWord = durationMs / words.length;
+
+        let w = 0;
+        if (wordTimerRef.current) clearInterval(wordTimerRef.current);
+        wordTimerRef.current = setInterval(() => {
+          if (!mountedRef.current) { clearInterval(wordTimerRef.current!); return; }
+          w++;
+          setWordCount(w);
+          if (w >= words.length) clearInterval(wordTimerRef.current!);
+        }, msPerWord);
+      };
+
+      audio.onended = () => {
+        if (!mountedRef.current) return;
+        setVoiceActive(false);
+        setWordCount(SPEECH_LINES[idx].split(' ').length + 1);
+        if (wordTimerRef.current) clearInterval(wordTimerRef.current);
+
+        // Move to next line after a natural breath
+        setTimeout(() => {
+          if (!mountedRef.current) return;
+          const next = (idx + 1) % SPEECH_LINES.length;
+          lineIdxRef.current = next;
+          setLineIdx(next);
+          setWordCount(0);
+          setTimeout(() => playLine(next), 180);
+        }, 280);
+      };
+
+      audio.onerror = () => {
+        if (!mountedRef.current) return;
+        setVoiceActive(false);
+        // Skip to next line after 2s if audio fails
+        setTimeout(() => {
+          if (!mountedRef.current) return;
+          const next = (idx + 1) % SPEECH_LINES.length;
+          setLineIdx(next);
+          setWordCount(0);
+          playLine(next);
+        }, 2000);
+      };
+
+      await audio.play();
+    } catch {
       if (!mountedRef.current) return;
-      // Show all words fully visible when line ends
-      setWordCount(line.split(' ').length + 1);
-      setVoiceActive(false);
-      // Chain next line with a natural breath pause
+      setLoading(false);
+      // Fall through to next line
       setTimeout(() => {
         if (!mountedRef.current) return;
         const next = (idx + 1) % SPEECH_LINES.length;
-        lineIdxRef.current = next;
         setLineIdx(next);
         setWordCount(0);
-        // Small gap between lines then speak next
-        setTimeout(() => {
-          if (!mountedRef.current) return;
-          speakLine(next);
-        }, 120);
-      }, 250);
-    };
-
-    utt.onerror = () => {
-      if (!mountedRef.current) return;
-      setVoiceActive(false);
-    };
-
-    window.speechSynthesis.speak(utt);
-  }, []);
-
-  // Fallback visual timer for browsers without speech synthesis
-  const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (!IS_IFRAMED || !window.speechSynthesis) {
-      // Drive with a simple timer
-      const words = SPEECH_LINES[lineIdx].split(' ');
-      let w = 0;
-      const iv = setInterval(() => {
-        if (w < words.length) { w++; setWordCount(w); } else {
-          clearInterval(iv);
-          fallbackRef.current = setTimeout(() => {
-            const next = (lineIdx + 1) % SPEECH_LINES.length;
-            setLineIdx(next); setWordCount(0);
-          }, 600);
-        }
-      }, 180);
-      return () => { clearInterval(iv); if (fallbackRef.current) clearTimeout(fallbackRef.current); };
+        playLine(next);
+      }, 1500);
     }
-  }, [lineIdx]);
+  };
 
-  // Start speech chain when voices load
+  // Pre-fetch all lines, then start playing
   useEffect(() => {
-    if (!IS_IFRAMED || !voicesReady) return;
-    window.speechSynthesis.cancel();
-    const t = setTimeout(() => speakLine(0), 220);
-    return () => {
-      clearTimeout(t);
-      window.speechSynthesis.cancel();
-    };
-  }, [voicesReady, speakLine]);
+    const voice = getVoice();
+    setLoading(true);
+
+    // Fetch line 0 eagerly, then start playing
+    fetchNarrationAudio(SPEECH_LINES[0], voice)
+      .then(() => {
+        if (!mountedRef.current) return;
+        playLine(0);
+        // Pre-fetch remaining lines in background
+        SPEECH_LINES.slice(1).forEach(line =>
+          fetchNarrationAudio(line, voice).catch(() => {})
+        );
+      })
+      .catch(() => {
+        if (mountedRef.current) setLoading(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const currentText = SPEECH_LINES[lineIdx];
 
@@ -258,7 +232,6 @@ export default function SceneAINarrator() {
         animate={{ scale: 1, opacity: 1 }}
         transition={{ delay: 0.2, duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
       >
-        {/* Rings */}
         {[{ inset: -18, color: '#22c55e', opacity: 0.18, delay: 0 }, { inset: -9, color: '#7c3aed', opacity: 0.26, delay: 0.4 }].map((r, i) => (
           <motion.div
             key={i}
@@ -269,15 +242,12 @@ export default function SceneAINarrator() {
           />
         ))}
 
-        {/* Face */}
         <div
           className="relative w-40 h-40 rounded-full flex flex-col items-center justify-center overflow-hidden"
           style={{
             background: 'linear-gradient(135deg, #0d1117, #111827)',
             border: '2px solid #1e1e1e',
-            boxShadow: voiceActive
-              ? '0 0 60px #22c55e30, 0 0 120px #7c3aed18'
-              : '0 0 20px #00000060',
+            boxShadow: voiceActive ? '0 0 60px #22c55e30, 0 0 120px #7c3aed18' : '0 0 20px #00000060',
             transition: 'box-shadow 0.4s',
           }}
         >
@@ -288,7 +258,6 @@ export default function SceneAINarrator() {
             <ellipse cx="80" cy="80" rx="32" ry="32" fill="none" stroke="#7c3aed" strokeWidth="0.5"/>
           </svg>
 
-          {/* Eyes */}
           <div className="flex gap-6 mb-4">
             {[0, 1].map(i => (
               <motion.div
@@ -305,7 +274,6 @@ export default function SceneAINarrator() {
             ))}
           </div>
 
-          {/* Mouth */}
           <motion.div
             style={{ width: 44, background: '#0a0a0a', borderRadius: 99, overflow: 'hidden', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
             animate={voiceActive ? { height: [10, 24, 6, 22, 14, 26, 8, 20, 10] } : { height: 8 }}
@@ -320,26 +288,24 @@ export default function SceneAINarrator() {
       <div className="flex items-center gap-3 mb-5">
         <motion.div
           className="w-2.5 h-2.5 rounded-full"
-          style={{ background: voiceActive ? '#22c55e' : '#3f3f46' }}
+          style={{ background: loading ? '#f59e0b' : voiceActive ? '#22c55e' : '#3f3f46' }}
           animate={voiceActive ? { opacity: [1, 0.25, 1] } : { opacity: 0.5 }}
           transition={{ duration: 0.8, repeat: Infinity }}
         />
         <span className="text-sm font-mono uppercase tracking-widest" style={{ color: '#52525b' }}>
           StreamVault AI
         </span>
-        {IS_IFRAMED && (
-          <motion.span
-            className="text-xs px-3 py-1 rounded-full font-mono font-bold"
-            animate={{
-              background: voiceActive ? '#22c55e18' : '#1a1a1a',
-              color: voiceActive ? '#22c55e' : '#3f3f46',
-            }}
-            style={{ border: '1px solid', borderColor: voiceActive ? '#22c55e44' : '#252525' }}
-            transition={{ duration: 0.3 }}
-          >
-            {voiceActive ? '🔊 Speaking' : '○ Ready'}
-          </motion.span>
-        )}
+        <motion.span
+          className="text-xs px-3 py-1 rounded-full font-mono font-bold"
+          animate={{
+            background: loading ? '#f59e0b18' : voiceActive ? '#22c55e18' : '#1a1a1a',
+            color: loading ? '#f59e0b' : voiceActive ? '#22c55e' : '#3f3f46',
+          }}
+          style={{ border: '1px solid', borderColor: loading ? '#f59e0b44' : voiceActive ? '#22c55e44' : '#252525' }}
+          transition={{ duration: 0.3 }}
+        >
+          {loading ? '◌ Loading...' : voiceActive ? '🔊 Speaking' : '○ Ready'}
+        </motion.span>
       </div>
 
       {/* Waveform */}

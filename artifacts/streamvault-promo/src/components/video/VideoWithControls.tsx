@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, Repeat, Mic } from 'lucide-react';
 import VideoTemplate, { SCENE_DURATIONS } from './VideoTemplate';
 import VoicePicker from './VoicePicker';
 import { useSceneControls } from '@/hooks/useSceneControls';
-import { useSceneNarration, VOICE_KEY } from '@/hooks/useSceneNarration';
+import { useSceneAINarration, prefetchAllNarrations, DEFAULT_VOICE, VOICE_KEY, type AIVoice } from '@/hooks/useAINarration';
 
 const PROGRESS_TICK_MS = 60;
 
@@ -40,7 +40,7 @@ function ProgressSegments({
           <button
             key={key}
             onClick={() => onJumpTo(i)}
-            className="flex-1 bg-white/20 rounded-full overflow-hidden cursor-pointer hover:bg-white/25 transition-all relative min-h-[12px]"
+            className="flex-1 rounded-full overflow-hidden cursor-pointer hover:bg-white/25 transition-all relative min-h-[12px] bg-white/20"
             style={{ height: isActive ? 14 : 12 }}
             aria-label={`Jump to scene ${i + 1}`}
             aria-current={isActive ? 'true' : undefined}
@@ -66,7 +66,7 @@ interface ControlBarProps {
   activeIndex: number;
   activeDuration: number;
   tick: number;
-  selectedVoice: string;
+  selectedVoice: AIVoice;
   onToggleLock: () => void;
   onJumpTo: (i: number) => void;
   onToggleCollapsed: () => void;
@@ -83,24 +83,20 @@ function ControlBar({
       className={`flex items-center gap-3 bg-black/55 backdrop-blur-sm px-5 py-4 transition-all duration-200 ease-out ${
         visible ? 'translate-y-0 opacity-100 pointer-events-auto' : 'translate-y-full opacity-0 pointer-events-none'
       }`}
-      aria-hidden={!visible}
     >
-      {/* Loop lock */}
       <button
         onClick={onToggleLock}
         className={`w-14 h-14 flex items-center justify-center transition-colors rounded-lg shrink-0 ${
           locked ? 'text-white bg-white/15 hover:bg-white/25' : 'text-white/60 hover:text-white hover:bg-white/10'
         }`}
         title={locked ? 'Loop: on' : 'Loop: off'}
-        aria-label={locked ? 'Loop current scene: on' : 'Loop current scene: off'}
         aria-pressed={locked}
       >
         <Repeat className="w-8 h-8" />
       </button>
 
-      <div className="w-px self-stretch bg-white/15" aria-hidden="true" />
+      <div className="w-px self-stretch bg-white/15" />
 
-      {/* Progress */}
       <ProgressSegments
         sceneKeys={sceneKeys}
         activeIndex={activeIndex}
@@ -109,37 +105,29 @@ function ControlBar({
         onJumpTo={onJumpTo}
       />
 
-      {/* Scene counter */}
       <div className="text-xl text-white/60 font-mono tabular-nums shrink-0">
         {activeIndex + 1}/{sceneKeys.length}
       </div>
 
-      <div className="w-px self-stretch bg-white/15" aria-hidden="true" />
+      <div className="w-px self-stretch bg-white/15" />
 
-      {/* Voice picker toggle */}
       <button
         onClick={onToggleVoicePicker}
         className={`w-14 h-14 flex items-center justify-center transition-colors rounded-lg shrink-0 ${
           voicePickerOpen
             ? 'text-green-400 bg-green-400/15 hover:bg-green-400/25'
-            : selectedVoice
-            ? 'text-green-400/70 hover:text-green-400 hover:bg-white/10'
             : 'text-white/60 hover:text-white hover:bg-white/10'
         }`}
-        title="Narration voice"
-        aria-label="Choose narration voice"
+        title={`AI Voice: ${selectedVoice}`}
         aria-pressed={voicePickerOpen}
       >
         <Mic className="w-7 h-7" />
       </button>
 
-      {/* Collapse */}
       <button
         onClick={onToggleCollapsed}
         className="w-14 h-14 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors rounded-lg shrink-0"
         title={collapsed ? 'Show controls' : 'Hide controls'}
-        aria-label={collapsed ? 'Show controls' : 'Hide controls'}
-        aria-expanded={!collapsed}
       >
         {collapsed ? <ChevronUp className="w-10 h-10" /> : <ChevronDown className="w-10 h-10" />}
       </button>
@@ -156,13 +144,28 @@ export default function VideoWithControls() {
     durations, activeDuration, onSceneChange, jumpTo, toggleLock,
   } = useSceneControls(SCENE_DURATIONS);
 
-  // Per-scene narration
-  const activeSceneKey = sceneKeys[activeIndex] ?? '';
-  useSceneNarration(activeSceneKey);
+  // AI voice selection
+  const [selectedVoice, setSelectedVoice] = useState<AIVoice>(
+    () => (localStorage.getItem(VOICE_KEY) as AIVoice) ?? DEFAULT_VOICE,
+  );
 
-  // Voice picker state
+  // Pre-fetch all narration audio in background on mount
+  useEffect(() => {
+    prefetchAllNarrations(selectedVoice);
+  }, [selectedVoice]);
+
+  // Per-scene AI narration
+  const activeSceneKey = sceneKeys[activeIndex] ?? '';
+  useSceneAINarration(activeSceneKey, selectedVoice);
+
+  // Voice picker
   const [showVoicePicker, setShowVoicePicker] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem(VOICE_KEY) ?? '');
+
+  const handleVoiceSelect = useCallback((voice: AIVoice) => {
+    localStorage.setItem(VOICE_KEY, voice);
+    setSelectedVoice(voice);
+    setShowVoicePicker(false);
+  }, []);
 
   // Sensor / collapse
   const sensorRef = useRef<HTMLDivElement | null>(null);
@@ -170,13 +173,13 @@ export default function VideoWithControls() {
   const [hovering, setHovering] = useState(false);
   const [tapPinned, setTapPinned] = useState(false);
 
-  const handlePointerEnter = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerEnter = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === 'mouse') setHovering(true);
   }, []);
-  const handlePointerLeave = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerLeave = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === 'mouse') setHovering(false);
   }, []);
-  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === 'mouse') return;
     if (collapsed) setTapPinned(true);
   }, [collapsed]);
@@ -197,14 +200,9 @@ export default function VideoWithControls() {
     return () => document.removeEventListener('pointerdown', onDoc);
   }, [collapsed, tapPinned]);
 
-  const handleVoiceSelect = useCallback((name: string) => {
-    setSelectedVoice(name);
-    setShowVoicePicker(false);
-  }, []);
-
   const barVisible = !collapsed || hovering || tapPinned;
 
-  // Export path — clean, no controls, no voice picker
+  // Export mode: clean, no controls
   if (!isIframed) return <VideoTemplate />;
 
   return (
@@ -224,9 +222,8 @@ export default function VideoWithControls() {
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       >
-        <div className="flex-1 w-full" aria-hidden="true" />
+        <div className="flex-1 w-full" />
 
-        {/* Voice picker panel (above control bar) */}
         <div className="relative">
           <VoicePicker
             open={showVoicePicker}
