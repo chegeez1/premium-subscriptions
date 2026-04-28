@@ -37,7 +37,7 @@ const DURATIONS = [
 ];
 
 const STRATEGIES = [
-  { id: "auto_c4",        label: "🤖 Auto C4",        desc: "4-tick streak reversal — fires on every tick, no warmup needed" },
+  { id: "auto_c4",        label: "🤖 Auto C4",        desc: "3–4 tick streak reversal only — ignores 1–2 tick noise for cleaner signals" },
   { id: "consensus",      label: "⚡ Consensus",      desc: "3-of-5 indicator vote: RSI + MACD + BB + Momentum + Velocity" },
   { id: "trend",          label: "📈 Trend Follow",   desc: "EMA crossover with RSI & weighted momentum filter" },
   { id: "mean_reversion", label: "↩ Mean Reversion",  desc: "Bollinger Band oversold/overbought bounce" },
@@ -154,15 +154,6 @@ function getSignal(
     const last3 = moves.slice(-3);
     if (last3.every(m => m === 1))  return { signal: "PUT",  confidence: 75 };
     if (last3.every(m => m === -1)) return { signal: "CALL", confidence: 75 };
-
-    // 2-streak
-    const last2 = moves.slice(-2);
-    if (last2.every(m => m === 1))  return { signal: "PUT",  confidence: 60 };
-    if (last2.every(m => m === -1)) return { signal: "CALL", confidence: 60 };
-
-    // Alternating continuation
-    if (moves[2] !== 0 && moves[3] !== 0 && moves[2] !== moves[3])
-      return { signal: moves[3] === 1 ? "CALL" : "PUT", confidence: 55 };
 
     return { signal: null, confidence: 0 };
   }
