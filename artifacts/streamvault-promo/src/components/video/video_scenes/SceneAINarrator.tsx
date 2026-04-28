@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { VOICE_KEY } from '@/hooks/useSceneNarration';
 
 const SPEECH_LINES = [
   "Welcome to ChegeTech StreamVault — your all-in-one digital premium platform.",
@@ -16,6 +17,12 @@ const IS_IFRAMED = typeof window !== 'undefined' && window.self !== window.top;
 
 function pickVoice(): SpeechSynthesisVoice | null {
   const voices = window.speechSynthesis?.getVoices() ?? [];
+  // Check user-selected voice first
+  const saved = localStorage.getItem(VOICE_KEY);
+  if (saved) {
+    const v = voices.find(v => v.name === saved);
+    if (v) return v;
+  }
   const PREF = [
     'Google UK English Female',
     'Microsoft Jenny Online (Natural)',
