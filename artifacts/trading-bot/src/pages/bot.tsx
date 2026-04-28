@@ -253,10 +253,24 @@ function calcStake(
   return base;
 }
 
+// ─── Persist helpers ──────────────────────────────────────────────────────────
+const LS_KEY = "chegebot_cfg";
+function loadCfg() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { return {}; }
+}
+function saveCfg(patch: Record<string, unknown>) {
+  try {
+    const cur = loadCfg();
+    localStorage.setItem(LS_KEY, JSON.stringify({ ...cur, ...patch }));
+  } catch {}
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function TradingBotPage() {
+  const cfg = loadCfg();
+
   // Connection
-  const [apiToken,    setApiToken]    = useState("");
+  const [apiToken,    setApiToken]    = useState<string>(cfg.apiToken    ?? "");
   const [showToken,   setShowToken]   = useState(false);
   const [connStatus,  setConnStatus]  = useState<ConnStatus>("disconnected");
   const [account,     setAccount]     = useState<Account | null>(null);
@@ -264,15 +278,15 @@ export default function TradingBotPage() {
   const [error,       setError]       = useState("");
   const [autoReconnect, setAutoReconnect] = useState(true);
 
-  // Config
-  const [symbol,     setSymbol]     = useState("R_50");
-  const [strategy,   setStrategy]   = useState("auto_c4");
-  const [stakeMode,  setStakeMode]  = useState<"fixed" | "percent">("fixed");
-  const [baseStake,  setBaseStake]  = useState(1);
-  const [durIdx,     setDurIdx]     = useState(0);
-  const [stopLoss,   setStopLoss]   = useState(10);
-  const [takeProfit, setTakeProfit] = useState(20);
-  const [maxDailyLoss, setMaxDailyLoss] = useState(50);
+  // Config — restored from localStorage
+  const [symbol,     setSymbol]     = useState<string>(cfg.symbol     ?? "R_50");
+  const [strategy,   setStrategy]   = useState<string>(cfg.strategy   ?? "auto_c4");
+  const [stakeMode,  setStakeMode]  = useState<"fixed" | "percent">(cfg.stakeMode ?? "fixed");
+  const [baseStake,  setBaseStake]  = useState<number>(cfg.baseStake  ?? 1);
+  const [durIdx,     setDurIdx]     = useState<number>(cfg.durIdx     ?? 0);
+  const [stopLoss,   setStopLoss]   = useState<number>(cfg.stopLoss   ?? 10);
+  const [takeProfit, setTakeProfit] = useState<number>(cfg.takeProfit ?? 20);
+  const [maxDailyLoss, setMaxDailyLoss] = useState<number>(cfg.maxDailyLoss ?? 50);
 
   // Runtime
   const [running,          setRunning]          = useState(false);
@@ -331,6 +345,11 @@ export default function TradingBotPage() {
     if (wsRef.current?.readyState === WebSocket.OPEN)
       wsRef.current.send(JSON.stringify({ ...obj, req_id: reqIdRef.current++ }));
   }, []);
+
+  // ── Persist config to localStorage on any change ────────────────────────────
+  useEffect(() => {
+    saveCfg({ symbol, strategy, stakeMode, baseStake, durIdx, stopLoss, takeProfit, maxDailyLoss });
+  }, [symbol, strategy, stakeMode, baseStake, durIdx, stopLoss, takeProfit, maxDailyLoss]);
 
   // ── Place contract ──────────────────────────────────────────────────────────
   const placeContract = useCallback((signal: Signal, stake: number, confidence: number) => {
@@ -405,6 +424,17 @@ export default function TradingBotPage() {
         setError("");
         addLog(`✅ Authorized: ${a.loginid} | ${a.currency} ${(a.balance as number).toFixed(2)} | ${a.is_virtual === 1 ? "Demo" : "Real"}`);
         send({ balance: 1, subscribe: 1 });
+        // Auto-start bot if page was refreshed while bot was running
+        if (pendingStartRef.current) {
+          pendingStartRef.current = false;
+          const saved = loadCfg();
+          addLog(`🔄 Auto-restarting bot (${saved.strategy ?? "auto_c4"} | ${saved.symbol ?? "R_50"})`);
+          setRunning(true); runningRef.current = true;
+          setWaitingContract(false); waitingRef.current = false;
+          setEquityHistory([]); setTrades([]); setOpenContracts([]);
+          tradeIdRef.current = 1; openContractsRef.current = [];
+          send({ ticks: saved.symbol ?? "R_50", subscribe: 1 });
+        }
         break;
       }
       case "balance": {
@@ -523,6 +553,7 @@ export default function TradingBotPage() {
     setEquityHistory([]);
     setTrades([]); tradeIdRef.current = 1;
     setOpenContracts([]); openContractsRef.current = [];
+    saveCfg({ wasRunning: true });
     send({ ticks: symbol, subscribe: 1 });
     addLog(`🚀 Bot started | ${STRATEGIES.find(s => s.id === strategy)?.label} | ${SYMBOLS[symbol]} | $${baseStake} ${stakeMode}`);
   }, [connStatus, symbol, strategy, baseStake, stakeMode, send, addLog]);
@@ -531,12 +562,31 @@ export default function TradingBotPage() {
     setRunning(false);
     setWaitingContract(false);
     waitingRef.current = false;
+    saveCfg({ wasRunning: false });
     send({ forget_all: "ticks" });
     addLog("⏹ Bot stopped");
   }, [send, addLog]);
 
   useEffect(() => () => {
     if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
+  }, []);
+
+  // ── Auto-reconnect + auto-start on page load if bot was running ─────────────
+  const autoStartedRef  = useRef(false);
+  const pendingStartRef = useRef(false); // set true → startBot fires on next authorize
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    const saved = loadCfg();
+    if (saved.apiToken && saved.wasRunning) {
+      addLog("🔄 Restoring session — reconnecting…");
+      pendingStartRef.current = true;
+      setTimeout(() => {
+        apiTokenRef.current = saved.apiToken;
+        connect();
+      }, 800);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Poll open contracts every 8s to recover stuck "open" trades ────────────
@@ -633,7 +683,7 @@ export default function TradingBotPage() {
                   <input
                     type={showToken ? "text" : "password"}
                     value={apiToken}
-                    onChange={e => { setApiToken(e.target.value); apiTokenRef.current = e.target.value; }}
+                    onChange={e => { setApiToken(e.target.value); apiTokenRef.current = e.target.value; saveCfg({ apiToken: e.target.value }); }}
                     placeholder="Paste your Deriv API token"
                     className="w-full bg-black/60 border border-white/10 rounded-xl px-3 pr-9 h-10 text-sm text-white focus:outline-none focus:border-green-500/50 font-mono placeholder:text-gray-600"
                   />
