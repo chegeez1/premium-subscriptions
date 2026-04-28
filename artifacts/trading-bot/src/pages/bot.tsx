@@ -6,7 +6,7 @@ import {
 import {
   Zap, Play, Square, RefreshCw, DollarSign, TrendingUp, TrendingDown,
   Activity, Shield, Eye, EyeOff, AlertTriangle, CheckCircle, Clock,
-  BarChart2, Settings, Wifi, WifiOff, Info, Target, Cpu,
+  BarChart2, Settings, Wifi, WifiOff, Info, Target, Cpu, Bell, BellOff, Link, Unlink,
 } from "lucide-react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -304,6 +304,13 @@ export default function TradingBotPage() {
   const [equityHistory,    setEquityHistory]    = useState<{ t: string; pnl: number }[]>([]);
   const [openContracts,    setOpenContracts]    = useState<number[]>([]);
 
+  // Telegram alerts
+  const [tgLinked,         setTgLinked]         = useState(false);
+  const [tgChatId,         setTgChatId]         = useState("");
+  const [tgSaving,         setTgSaving]         = useState(false);
+  const [tgMsg,            setTgMsg]            = useState("");
+  const tgLinkedRef = useRef(false);
+
   // Refs
   const wsRef             = useRef<WebSocket | null>(null);
   const reqIdRef          = useRef(1);
@@ -351,6 +358,22 @@ export default function TradingBotPage() {
     saveCfg({ symbol, strategy, stakeMode, baseStake, durIdx, stopLoss, takeProfit, maxDailyLoss });
   }, [symbol, strategy, stakeMode, baseStake, durIdx, stopLoss, takeProfit, maxDailyLoss]);
 
+  // ── Telegram helpers ─────────────────────────────────────────────────────────
+  function authHeaders() {
+    try { const t = localStorage.getItem("customer_token") || ""; return t ? { "Content-Type": "application/json", Authorization: `Bearer ${t}` } : { "Content-Type": "application/json" }; } catch { return { "Content-Type": "application/json" }; }
+  }
+  useEffect(() => {
+    fetch("/api/tradingbot/telegram/link", { headers: authHeaders() })
+      .then(r => r.json())
+      .then(d => { if (d.linked) { setTgLinked(true); tgLinkedRef.current = true; setTgChatId(d.chatId || ""); } })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sendTelegramAlert = useCallback((payload: { event: string; symbol?: string; type?: string; stake?: number; pnl?: number; sessionPnl?: number; confidence?: number }) => {
+    if (!tgLinkedRef.current) return;
+    fetch("/api/tradingbot/telegram/alert", { method: "POST", headers: authHeaders(), body: JSON.stringify(payload) }).catch(() => {});
+  }, []);
+
   // ── Place contract ──────────────────────────────────────────────────────────
   const placeContract = useCallback((signal: Signal, stake: number, confidence: number) => {
     if (waitingRef.current) return;
@@ -389,9 +412,9 @@ export default function TradingBotPage() {
     // Risk guards
     const spnl = sessionPnlRef.current;
     const dl   = dailyLossRef.current;
-    if (spnl <= -stopLoss)   { addLog(`🛑 Stop loss hit — $${Math.abs(spnl).toFixed(2)} loss. Bot paused.`); setRunning(false); return; }
-    if (spnl >= takeProfit)  { addLog(`✅ Take profit hit — +$${spnl.toFixed(2)}. Bot paused.`); setRunning(false); return; }
-    if (dl   >= maxDailyLoss){ addLog(`🛑 Daily loss limit hit. Bot stopped.`); setRunning(false); return; }
+    if (spnl <= -stopLoss)   { addLog(`🛑 Stop loss hit — $${Math.abs(spnl).toFixed(2)} loss. Bot paused.`); sendTelegramAlert({ event: "stop_loss", symbol, sessionPnl: spnl }); setRunning(false); return; }
+    if (spnl >= takeProfit)  { addLog(`✅ Take profit hit — +$${spnl.toFixed(2)}. Bot paused.`); sendTelegramAlert({ event: "take_profit", symbol, sessionPnl: spnl }); setRunning(false); return; }
+    if (dl   >= maxDailyLoss){ addLog(`🛑 Daily loss limit hit. Bot stopped.`); sendTelegramAlert({ event: "daily_limit", symbol, sessionPnl: spnl }); setRunning(false); return; }
 
     const { signal, confidence } = getSignal(strategy, ticksRef.current, lastPnlRef.current);
     if (!signal || confidence < 30) return; // skip low-confidence signals
@@ -493,6 +516,7 @@ export default function TradingBotPage() {
         setWaitingContract(false);
         waitingRef.current = false;
         addLog(won ? `✅ WON  #${contractId} | +$${profit.toFixed(2)}` : `❌ LOST #${contractId} | -$${Math.abs(profit).toFixed(2)}`);
+        sendTelegramAlert({ event: won ? "win" : "loss", symbol, stake: lastStakeRef.current, pnl: profit, sessionPnl: sessionPnlRef.current, confidence: lastSignalConfRef.current });
         break;
       }
     }
@@ -1083,6 +1107,66 @@ export default function TradingBotPage() {
                   <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all shadow ${autoReconnect ? "left-[22px]" : "left-0.5"}`} />
                 </button>
               </div>
+            </div>
+
+            {/* Telegram alerts */}
+            <div className="bg-white/[0.03] border border-white/[0.07] rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Bell className="w-4 h-4 text-blue-400" />
+                <span className="font-medium">Telegram Alerts</span>
+                {tgLinked && <span className="ml-auto text-[11px] bg-green-500/15 text-green-400 px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Linked</span>}
+              </div>
+              {tgLinked ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-400">Alerts are active. You'll get a Telegram message every time the bot wins, loses, or hits a risk limit.</p>
+                  <div className="flex items-center gap-2 text-xs text-gray-500 bg-white/[0.03] rounded-lg px-3 py-2">
+                    <span className="text-gray-500">Chat ID:</span>
+                    <span className="text-gray-300 font-mono">{tgChatId}</span>
+                  </div>
+                  <button onClick={async () => {
+                    setTgSaving(true); setTgMsg("");
+                    try {
+                      const r = await fetch("/api/tradingbot/telegram/link", { method: "DELETE", headers: authHeaders() });
+                      const d = await r.json();
+                      if (d.success) { setTgLinked(false); tgLinkedRef.current = false; setTgChatId(""); setTgMsg("Alerts unlinked."); }
+                      else setTgMsg(d.error || "Failed");
+                    } catch { setTgMsg("Network error"); }
+                    setTgSaving(false);
+                  }} className="w-full h-9 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 text-sm transition-colors flex items-center justify-center gap-2">
+                    <Unlink className="w-3.5 h-3.5" /> Unlink Telegram
+                  </button>
+                  {tgMsg && <p className="text-xs text-center text-gray-400">{tgMsg}</p>}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-400">Get instant Telegram alerts when your bot wins, loses, or hits stop loss.</p>
+                  <div className="text-xs text-gray-500 space-y-1 bg-white/[0.03] rounded-lg p-3">
+                    <p className="text-gray-300 font-medium mb-1">How to get your Chat ID:</p>
+                    <p>1. Open Telegram, search <span className="text-blue-400">@userinfobot</span></p>
+                    <p>2. Send it any message — it replies with your Chat ID</p>
+                    <p>3. Also start a chat with <span className="text-green-400">@ChegeBot</span> (your bot) so it can message you</p>
+                  </div>
+                  <input
+                    type="text" placeholder="Enter your Telegram Chat ID (e.g. 123456789)"
+                    value={tgChatId} onChange={e => setTgChatId(e.target.value)}
+                    className="w-full bg-black/50 border border-white/10 rounded-lg px-3 h-9 text-sm text-white focus:outline-none focus:border-blue-500/40 placeholder:text-gray-600"
+                  />
+                  <button onClick={async () => {
+                    if (!tgChatId.trim()) { setTgMsg("Enter your Chat ID first"); return; }
+                    setTgSaving(true); setTgMsg("");
+                    try {
+                      const r = await fetch("/api/tradingbot/telegram/link", { method: "POST", headers: authHeaders(), body: JSON.stringify({ chatId: tgChatId.trim() }) });
+                      const d = await r.json();
+                      if (d.success) { setTgLinked(true); tgLinkedRef.current = true; setTgMsg("✅ Linked! Check Telegram for a test message."); }
+                      else setTgMsg(d.error || "Failed — double-check your Chat ID");
+                    } catch { setTgMsg("Network error"); }
+                    setTgSaving(false);
+                  }} disabled={tgSaving || !tgChatId.trim()} className="w-full h-9 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-sm font-medium text-white transition-colors flex items-center justify-center gap-2">
+                    <Link className="w-3.5 h-3.5" /> {tgSaving ? "Linking…" : "Link Telegram & Test"}
+                  </button>
+                  {tgMsg && <p className={`text-xs text-center ${tgMsg.startsWith("✅") ? "text-green-400" : "text-red-400"}`}>{tgMsg}</p>}
+                </div>
+              )}
             </div>
 
             {/* How to get token */}
