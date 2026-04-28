@@ -868,6 +868,16 @@ export default function TradingBotPage() {
                   </div>
                 )}
 
+                {!running && completed.length > 0 && (
+                  <div className={`flex items-center justify-between gap-2 text-xs rounded-xl px-3 py-2.5 border ${sessionPnl >= 0 ? "bg-green-500/10 border-green-500/20 text-green-400" : "bg-red-500/10 border-red-500/20 text-red-400"}`}>
+                    <div className="flex items-center gap-2">
+                      {sessionPnl >= 0 ? <TrendingUp className="w-3.5 h-3.5 shrink-0" /> : <TrendingDown className="w-3.5 h-3.5 shrink-0" />}
+                      <span className="font-semibold">Session ended · Total P&amp;L</span>
+                    </div>
+                    <span className="font-bold tabular-nums text-sm">{sessionPnl >= 0 ? "+" : ""}${sessionPnl.toFixed(2)}</span>
+                  </div>
+                )}
+
                 {/* Live indicators */}
                 {indicators && connStatus === "authorized" && (
                   <div className="border-t border-white/5 pt-3 space-y-2">
