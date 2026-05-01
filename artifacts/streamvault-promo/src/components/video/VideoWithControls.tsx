@@ -18,7 +18,7 @@ const PROGRESS_TICK_MS = 60;
 const TOTAL_DURATION_MS = Object.values(SCENE_DURATIONS).reduce((a, b) => a + b, 0);
 
 // ─── Export overlay ────────────────────────────────────────────────────────────
-type ExportPhase = 'idle' | 'instructions' | 'recording' | 'done' | 'error';
+type ExportPhase = 'idle' | 'recording' | 'done' | 'error';
 
 function fmtTime(ms: number) {
   const s = Math.ceil(ms / 1000);
@@ -26,133 +26,70 @@ function fmtTime(ms: number) {
 }
 
 function ExportOverlay({
-  phase,
-  elapsed,
-  onStart,
-  onCancel,
-  errorMsg,
+  phase, elapsed, onCancel, onRetry, errorMsg,
 }: {
-  phase: ExportPhase;
-  elapsed: number;
-  onStart: () => void;
-  onCancel: () => void;
-  errorMsg: string;
+  phase: ExportPhase; elapsed: number;
+  onCancel: () => void; onRetry: () => void; errorMsg: string;
 }) {
   if (phase === 'idle') return null;
   const remaining = Math.max(0, TOTAL_DURATION_MS - elapsed);
   const pct = Math.min(100, (elapsed / TOTAL_DURATION_MS) * 100);
 
   return (
-    <div className="absolute inset-0 z-[100] flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(8px)' }}>
-      <div className="rounded-2xl p-8 max-w-md w-full mx-6 flex flex-col gap-5"
-        style={{ background: '#111', border: '1px solid #22c55e33' }}>
+    <div className="absolute inset-0 z-[100] flex items-end justify-center pb-28"
+      style={{ pointerEvents: 'none' }}>
+      <div className="rounded-2xl px-6 py-4 flex items-center gap-4 min-w-80"
+        style={{ background: '#111', border: '1px solid #22c55e33', pointerEvents: 'auto', boxShadow: '0 8px 32px #00000088' }}>
 
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{ background: '#22c55e18' }}>
-            {phase === 'recording' ? (
-              <Circle className="w-5 h-5 fill-red-500 text-red-500" />
-            ) : phase === 'done' ? (
-              <span className="text-xl">✅</span>
-            ) : phase === 'error' ? (
-              <span className="text-xl">❌</span>
-            ) : (
-              <Download className="w-5 h-5 text-green-400" />
-            )}
-          </div>
-          <div className="flex-1">
-            <div className="font-bold text-white" style={{ fontFamily: 'var(--font-display)' }}>
-              {phase === 'instructions' && 'Export Video'}
-              {phase === 'recording'    && 'Recording…'}
-              {phase === 'done'         && 'Download Ready!'}
-              {phase === 'error'        && 'Recording Failed'}
-            </div>
-            <div className="text-xs" style={{ color: '#52525b' }}>
-              {phase === 'recording' && `${fmtTime(remaining)} remaining`}
-              {phase === 'done' && 'Check your Downloads folder'}
-              {phase === 'error' && errorMsg}
-              {phase === 'instructions' && `${fmtTime(TOTAL_DURATION_MS)} · all 17 scenes`}
-            </div>
-          </div>
-          {phase !== 'recording' && (
-            <button onClick={onCancel} className="w-8 h-8 flex items-center justify-center rounded-lg text-white/40 hover:text-white hover:bg-white/10">
-              <X className="w-4 h-4" />
-            </button>
-          )}
+        {/* Icon */}
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+          style={{ background: '#22c55e18' }}>
+          {phase === 'recording' && <Circle className="w-4 h-4 fill-red-500 text-red-500" />}
+          {phase === 'done'      && <span className="text-lg">✅</span>}
+          {phase === 'error'     && <span className="text-lg">❌</span>}
         </div>
 
-        {/* Instructions */}
-        {phase === 'instructions' && (
-          <>
-            <div className="flex flex-col gap-2">
-              {[
-                { n: '1', t: 'Click "Start Export" below' },
-                { n: '2', t: 'Browser will ask what to share — choose "This Tab"' },
-                { n: '3', t: 'The video resets to scene 1 and records automatically' },
-                { n: '4', t: 'After 2 min 45 sec, download starts automatically' },
-              ].map(s => (
-                <div key={s.n} className="flex items-start gap-3 rounded-xl px-3 py-2.5"
-                  style={{ background: '#0d0d0d', border: '1px solid #1a1a1a' }}>
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5"
-                    style={{ background: '#22c55e22', color: '#22c55e' }}>{s.n}</span>
-                  <span className="text-sm" style={{ color: '#a1a1aa' }}>{s.t}</span>
-                </div>
-              ))}
-            </div>
-            <div className="rounded-xl px-3 py-2.5 text-xs" style={{ background: '#f59e0b0d', border: '1px solid #f59e0b22', color: '#f59e0b' }}>
-              Tip: turn on Music before exporting to include audio in the file.
-            </div>
-            <button onClick={onStart}
-              className="w-full py-3 rounded-xl font-bold text-sm transition-colors"
-              style={{ background: '#22c55e', color: '#000' }}>
-              Start Export
-            </button>
-          </>
-        )}
-
-        {/* Progress bar while recording */}
-        {phase === 'recording' && (
-          <div className="flex flex-col gap-3">
-            <div className="rounded-full overflow-hidden" style={{ background: '#1a1a1a', height: 8 }}>
+        {/* Text + bar */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-sm font-bold text-white" style={{ fontFamily: 'var(--font-display)' }}>
+              {phase === 'recording' && 'Recording…'}
+              {phase === 'done'      && 'Saved to Downloads ✓'}
+              {phase === 'error'     && 'Failed'}
+            </span>
+            <span className="text-xs font-mono" style={{ color: '#52525b' }}>
+              {phase === 'recording' && fmtTime(remaining)}
+              {phase === 'done'      && 'streamvault-premium-promo.webm'}
+              {phase === 'error'     && errorMsg.slice(0, 32)}
+            </span>
+          </div>
+          {phase === 'recording' && (
+            <div className="rounded-full overflow-hidden" style={{ background: '#1a1a1a', height: 5 }}>
               <div className="h-full rounded-full transition-all duration-500"
                 style={{ width: `${pct}%`, background: 'linear-gradient(90deg,#22c55e,#7c3aed)' }} />
             </div>
-            <div className="text-center text-xs" style={{ color: '#52525b' }}>
-              Do not close or switch tabs · recording in progress
+          )}
+          {phase === 'error' && (
+            <div className="text-xs" style={{ color: '#71717a' }}>
+              In the browser dialog, choose <strong style={{ color: '#ffffff' }}>This Tab</strong> then click Share
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Done */}
-        {phase === 'done' && (
-          <div className="text-center">
-            <div className="text-sm mb-3" style={{ color: '#a1a1aa' }}>
-              Your video has been saved as <strong style={{ color: '#22c55e' }}>streamvault-premium-promo.webm</strong>
-            </div>
-            <button onClick={onCancel}
-              className="px-6 py-2.5 rounded-xl font-bold text-sm"
-              style={{ background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>
-              Close
-            </button>
-          </div>
-        )}
-
-        {/* Error */}
+        {/* Action */}
         {phase === 'error' && (
-          <div className="flex gap-3">
-            <button onClick={onCancel}
-              className="flex-1 py-2.5 rounded-xl font-bold text-sm"
-              style={{ background: '#1a1a1a', color: '#a1a1aa' }}>
-              Cancel
-            </button>
-            <button onClick={onStart}
-              className="flex-1 py-2.5 rounded-xl font-bold text-sm"
-              style={{ background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e33' }}>
-              Try Again
-            </button>
-          </div>
+          <button onClick={onRetry}
+            className="text-xs px-3 py-1.5 rounded-lg font-bold shrink-0"
+            style={{ background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e33' }}>
+            Retry
+          </button>
+        )}
+        {phase !== 'recording' && (
+          <button onClick={onCancel}
+            className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0"
+            style={{ color: '#3f3f46' }}>
+            <X className="w-4 h-4" />
+          </button>
         )}
       </div>
     </div>
@@ -430,7 +367,9 @@ export default function VideoWithControls() {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30, width: 1920, height: 1080 } as MediaTrackConstraints,
         audio: true,
-      });
+        // Chrome 94+: pre-selects this tab so user just clicks "Share" once
+        preferCurrentTab: true,
+      } as DisplayMediaStreamOptions);
 
       chunksRef.current = [];
       const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
@@ -498,7 +437,7 @@ export default function VideoWithControls() {
       <ExportOverlay
         phase={exportPhase}
         elapsed={exportElapsed}
-        onStart={handleExportStart}
+        onRetry={handleExportStart}
         onCancel={handleExportCancel}
         errorMsg={exportError}
       />
@@ -538,7 +477,7 @@ export default function VideoWithControls() {
           onToggleCollapsed={handleToggleCollapsed}
           onToggleVoicePicker={() => setShowVoicePicker(v => !v)}
           onToggleMusic={handleToggleMusic}
-          onExport={() => setExportPhase('instructions')}
+          onExport={handleExportStart}
         />
       </div>
     </div>
