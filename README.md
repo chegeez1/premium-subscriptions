@@ -8,7 +8,7 @@
 
 <div align="center">
 
-  <a href="https://streamvault-premium.site/streamvault-promo/" target="_blank">
+  <a href="https://streamvault-premium.site/advideo/" target="_blank">
     <img
       src="docs/promo-video-thumb.jpg"
       alt="▶ Watch the StreamVault Premium Promo Video"
@@ -20,16 +20,16 @@
   <br/>
   <br/>
 
-  <a href="https://streamvault-premium.site/streamvault-promo/" target="_blank">
-    <img src="https://img.shields.io/badge/▶%20Watch%20Full%20Video-22c55e?style=for-the-badge&logoColor=white" alt="Watch Video"/>
+  <a href="https://streamvault-premium.site/advideo/" target="_blank">
+    <img src="https://img.shields.io/badge/▶%20Watch%20%2F%20Download%20MP4-22c55e?style=for-the-badge&logoColor=white" alt="Watch & Download"/>
   </a>
   &nbsp;
-  <a href="https://streamvault-premium.site/streamvault-promo/download.html" target="_blank">
-    <img src="https://img.shields.io/badge/⬇%20Download%20MP4-ec4899?style=for-the-badge&logoColor=white" alt="Download MP4"/>
+  <a href="https://streamvault-premium.site/streamvault-promo/" target="_blank">
+    <img src="https://img.shields.io/badge/🎬%20Live%20Preview-7c3aed?style=for-the-badge&logoColor=white" alt="Live Preview"/>
   </a>
   &nbsp;
   <a href="https://streamvault-premium.site" target="_blank">
-    <img src="https://img.shields.io/badge/Visit%20Site-7c3aed?style=for-the-badge&logoColor=white" alt="Visit Site"/>
+    <img src="https://img.shields.io/badge/Visit%20Site-ec4899?style=for-the-badge&logoColor=white" alt="Visit Site"/>
   </a>
 
 </div>
