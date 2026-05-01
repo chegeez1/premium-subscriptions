@@ -32,5 +32,8 @@
     "tailwindcss": "catalog:",
     "three": "^0.182.0",
     "vite": "catalog:"
+  },
+  "dependencies": {
+    "html2canvas": "^1.4.1"
   }
 }

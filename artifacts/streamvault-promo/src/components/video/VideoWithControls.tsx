@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import html2canvas from 'html2canvas';
 import { ChevronDown, ChevronUp, Repeat, Mic, Music2, VolumeX, Download, Circle, X } from 'lucide-react';
 import VideoTemplate, { SCENE_DURATIONS } from './VideoTemplate';
 import VoicePicker from './VoicePicker';
@@ -53,14 +54,14 @@ function ExportOverlay({
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-bold text-white" style={{ fontFamily: 'var(--font-display)' }}>
-              {phase === 'recording' && 'Recording…'}
-              {phase === 'done'      && 'Saved to Downloads ✓'}
-              {phase === 'error'     && 'Failed'}
+              {phase === 'recording' && 'Exporting video…'}
+              {phase === 'done'      && 'Download complete ✓'}
+              {phase === 'error'     && 'Export failed'}
             </span>
             <span className="text-xs font-mono" style={{ color: '#52525b' }}>
-              {phase === 'recording' && fmtTime(remaining)}
+              {phase === 'recording' && `${fmtTime(remaining)} left`}
               {phase === 'done'      && 'streamvault-premium-promo.webm'}
-              {phase === 'error'     && errorMsg.slice(0, 32)}
+              {phase === 'error'     && errorMsg.slice(0, 40)}
             </span>
           </div>
           {phase === 'recording' && (
@@ -71,7 +72,7 @@ function ExportOverlay({
           )}
           {phase === 'error' && (
             <div className="text-xs" style={{ color: '#71717a' }}>
-              In the browser dialog, choose <strong style={{ color: '#ffffff' }}>This Tab</strong> then click Share
+              Try again — or try a different browser (Chrome recommended)
             </div>
           )}
         </div>
@@ -348,85 +349,115 @@ export default function VideoWithControls() {
 
   const barVisible = !collapsed || hovering || tapPinned;
 
-  // ── Export / download via MediaRecorder ──────────────────────────────────────
+  // ── Export / download via canvas capture (no screen-share dialog) ───────────
   const [exportPhase, setExportPhase] = useState<ExportPhase>('idle');
   const [exportElapsed, setExportElapsed] = useState(0);
   const [exportError, setExportError] = useState('');
-  const recorderRef  = useRef<MediaRecorder | null>(null);
-  const chunksRef    = useRef<Blob[]>([]);
-  const elapsedTimer = useRef<number | null>(null);
-
-  const stopExport = useCallback((phase: ExportPhase) => {
-    if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null; }
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop();
-    setExportPhase(phase);
-  }, []);
+  const containerRef  = useRef<HTMLDivElement | null>(null);
+  const recorderRef   = useRef<MediaRecorder | null>(null);
+  const chunksRef     = useRef<Blob[]>([]);
+  const capturingRef  = useRef(false);
 
   const handleExportStart = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30, width: 1920, height: 1080 } as MediaTrackConstraints,
-        audio: true,
-        // Chrome 94+: pre-selects this tab so user just clicks "Share" once
-        preferCurrentTab: true,
-      } as DisplayMediaStreamOptions);
+    const container = containerRef.current;
+    if (!container) return;
 
-      chunksRef.current = [];
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-        ? 'video/webm;codecs=vp9,opus'
+    try {
+      setExportError('');
+      setExportElapsed(0);
+      setExportPhase('recording');
+
+      // Offscreen canvas sized to the video container
+      const W = container.offsetWidth  || 1280;
+      const H = container.offsetHeight || 720;
+      const canvas  = document.createElement('canvas');
+      canvas.width  = W;
+      canvas.height = H;
+
+      // Manual-frame stream (captureStream(0) = we call requestFrame ourselves)
+      const stream = canvas.captureStream(0);
+      const track  = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
+
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
         : 'video/webm';
-      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
-      recorderRef.current = recorder;
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+      recorderRef.current  = recorder;
+      chunksRef.current    = [];
+      capturingRef.current = true;
 
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
         const blob = new Blob(chunksRef.current, { type: mimeType });
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href     = url;
         a.download = 'streamvault-premium-promo.webm';
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
         setExportPhase('done');
       };
 
-      recorder.start(1000);
-      setExportElapsed(0);
-      setExportPhase('recording');
-
-      // Jump to scene 0 and restart
+      // Reset to scene 0, then wait a tick for React to repaint
       jumpTo(0);
+      await new Promise(r => setTimeout(r, 600));
 
-      // Tick elapsed time
+      recorder.start(1000);
       const started = Date.now();
-      elapsedTimer.current = window.setInterval(() => {
-        const el = Date.now() - started;
-        setExportElapsed(el);
-        if (el >= TOTAL_DURATION_MS) stopExport('recording');
-      }, 500);
 
-      // Auto-stop after full duration + 1s buffer
-      setTimeout(() => stopExport('recording'), TOTAL_DURATION_MS + 1000);
+      // Frame capture loop — runs until full duration captured
+      const loop = async () => {
+        if (!capturingRef.current) return;
+
+        const elapsed = Date.now() - started;
+        setExportElapsed(elapsed);
+
+        if (elapsed >= TOTAL_DURATION_MS) {
+          capturingRef.current = false;
+          recorder.stop();
+          return;
+        }
+
+        try {
+          await html2canvas(container, {
+            canvas,
+            useCORS: true,
+            allowTaint: true,
+            backgroundColor: '#0a0a0a',
+            scale: 1,
+            logging: false,
+            imageTimeout: 0,
+            removeContainer: false,
+          });
+          track.requestFrame();
+        } catch {
+          // skip bad frames silently
+        }
+
+        // ~15fps target (67ms); actual interval adapts to html2canvas cost
+        setTimeout(loop, 67);
+      };
+
+      loop();
 
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('Permission denied') || msg.includes('NotAllowedError')) {
-        setExportError('Screen share was cancelled. Click "Try Again" to retry.');
-      } else {
-        setExportError(msg || 'Could not start screen capture.');
-      }
+      capturingRef.current = false;
+      setExportError(err instanceof Error ? err.message : String(err));
       setExportPhase('error');
     }
-  }, [jumpTo, stopExport]);
+  }, [jumpTo]);
 
   const handleExportCancel = useCallback(() => {
-    stopExport('idle');
+    capturingRef.current = false;
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop();
+    setExportPhase('idle');
     setExportElapsed(0);
-  }, [stopExport]);
+  }, []);
 
   return (
-    <div className="relative w-full h-screen">
+    <div ref={containerRef} className="relative w-full h-screen">
       <VideoTemplate
         key={mountKey}
         durations={durations}
