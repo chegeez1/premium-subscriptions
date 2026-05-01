@@ -8,7 +8,7 @@
 
 <div align="center">
 
-  <a href="https://ac66be45-965a-4b0c-a536-67f2200a17e9-00-2fbk9kaywnyiy.janeway.replit.dev/streamvault-promo/" target="_blank">
+  <a href="https://streamvault-premium.site/streamvault-promo/" target="_blank">
     <img
       src="docs/promo-video-thumb.jpg"
       alt="▶ Watch the StreamVault Premium Promo Video"
@@ -20,7 +20,7 @@
   <br/>
   <br/>
 
-  <a href="https://ac66be45-965a-4b0c-a536-67f2200a17e9-00-2fbk9kaywnyiy.janeway.replit.dev/streamvault-promo/" target="_blank">
+  <a href="https://streamvault-premium.site/streamvault-promo/" target="_blank">
     <img src="https://img.shields.io/badge/▶%20Watch%20Full%20Video-22c55e?style=for-the-badge&logoColor=white" alt="Watch Video"/>
   </a>
   &nbsp;
@@ -38,12 +38,32 @@
 
 This monorepo contains everything that powers **streamvault-premium.site**:
 
-| Artifact | Path | Description |
+| Artifact | Live URL | Description |
 |---|---|---|
-| 🎬 Promo Video | `/streamvault-promo/` | 17-scene animated marketing video with AI narration |
-| 🤖 Trading Bot | `/trading-bot/` | ChegeBot Pro dashboard — Boom & Crash auto-trading |
-| 🔗 Link Shortener | `/link-shortener/` | URL shortener with click analytics, QR codes, custom slugs |
-| ⚙️ API Server | `/api/` | Express 5 REST API — TTS, links, trading, auth |
+| 🎬 Promo Video | [streamvault-premium.site/streamvault-promo/](https://streamvault-premium.site/streamvault-promo/) | 17-scene animated marketing video with AI narration |
+| 🤖 Trading Bot | [streamvault-premium.site/trading-bot/](https://streamvault-premium.site/trading-bot/) | ChegeBot Pro dashboard — Boom & Crash auto-trading |
+| 🔗 Link Shortener | [streamvault-premium.site/link-shortener/](https://streamvault-premium.site/link-shortener/) | URL shortener with click analytics, QR codes, custom slugs |
+| ⚙️ API Server | [streamvault-premium.site/api/](https://streamvault-premium.site/api/) | Express 5 REST API — TTS, links, trading, auth |
+
+---
+
+## 🔗 Domain Routing
+
+All artifacts are served under `streamvault-premium.site` via path-based routing:
+
+```
+streamvault-premium.site/                  → Landing / Trading Bot
+streamvault-premium.site/streamvault-promo/ → Promo Video (ad)
+streamvault-premium.site/link-shortener/   → Link Shortener tool
+streamvault-premium.site/api/              → API Server
+```
+
+To go live, deploy this project on Replit and point your domain's DNS to the deployed app:
+
+1. **Deploy** — click _Publish_ in Replit to get a `.replit.app` production URL
+2. **Custom domain** — in Replit deployment settings, add `streamvault-premium.site` as a custom domain
+3. **DNS** — add a `CNAME` record at your registrar pointing `streamvault-premium.site` → your `.replit.app` URL
+4. **TLS** — Replit provisions SSL automatically; your video ad URL is live at `https://streamvault-premium.site/streamvault-promo/`
 
 ---
 
@@ -103,7 +123,7 @@ Deploy your own WhatsApp sales/support bot in minutes. M-Pesa STK push built-in.
 pnpm install
 
 # Start all services
-pnpm --filter @workspace/api-server run dev     # API  → /api
+pnpm --filter @workspace/api-server run dev          # API  → /api
 pnpm --filter @workspace/streamvault-promo run dev   # Video → /streamvault-promo
 pnpm --filter @workspace/link-shortener run dev      # Links → /link-shortener
 pnpm --filter @workspace/trading-bot run dev         # Bot   → /trading-bot
@@ -136,13 +156,16 @@ pnpm --filter @workspace/db run push          # Push DB schema changes (dev only
 
 ## 📍 Links
 
-- **Website:** [streamvault-premium.site](https://streamvault-premium.site)
-- **Promo Video:** [`/streamvault-promo/`](https://ac66be45-965a-4b0c-a536-67f2200a17e9-00-2fbk9kaywnyiy.janeway.replit.dev/streamvault-promo/)
-- **Trading Bot:** [`/trading-bot/`](https://ac66be45-965a-4b0c-a536-67f2200a17e9-00-2fbk9kaywnyiy.janeway.replit.dev/trading-bot/)
-- **Link Shortener:** [`/link-shortener/`](https://ac66be45-965a-4b0c-a536-67f2200a17e9-00-2fbk9kaywnyiy.janeway.replit.dev/link-shortener/)
+| | URL |
+|---|---|
+| 🌐 Website | [streamvault-premium.site](https://streamvault-premium.site) |
+| 🎬 Promo Video | [streamvault-premium.site/streamvault-promo/](https://streamvault-premium.site/streamvault-promo/) |
+| 🤖 Trading Bot | [streamvault-premium.site/trading-bot/](https://streamvault-premium.site/trading-bot/) |
+| 🔗 Link Shortener | [streamvault-premium.site/link-shortener/](https://streamvault-premium.site/link-shortener/) |
+| ⚙️ API | [streamvault-premium.site/api/healthz](https://streamvault-premium.site/api/healthz) |
 
 ---
 
 <div align="center">
-  <sub>Built by <strong>ChegeTech</strong> · streamvault-premium.site</sub>
+  <sub>Built by <strong>ChegeTech</strong> · <a href="https://streamvault-premium.site">streamvault-premium.site</a></sub>
 </div>
