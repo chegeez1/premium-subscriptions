@@ -86,7 +86,7 @@ export default function BinChecker() {
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Error</AlertTitle>
               <AlertDescription>
-                {error?.error || "Could not find details for this BIN. It may be invalid or not in our database."}
+                {(error as { error?: string } | null)?.error || "Could not find details for this BIN. It may be invalid or not in our database."}
               </AlertDescription>
             </Alert>
           ) : binResult ? (

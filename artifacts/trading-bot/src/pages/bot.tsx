@@ -360,7 +360,7 @@ export default function TradingBotPage() {
   }, [symbol, strategy, stakeMode, baseStake, durIdx, stopLoss, takeProfit, maxDailyLoss]);
 
   // ── Telegram helpers ─────────────────────────────────────────────────────────
-  function authHeaders() {
+  function authHeaders(): Record<string, string> {
     try { const t = localStorage.getItem("customer_token") || ""; return t ? { "Content-Type": "application/json", Authorization: `Bearer ${t}` } : { "Content-Type": "application/json" }; } catch { return { "Content-Type": "application/json" }; }
   }
   useEffect(() => {

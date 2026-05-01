@@ -428,7 +428,7 @@ export default function VideoWithControls() {
           // Remux VP9 video into MP4 container — no re-encoding, fast
           await ff.exec(['-i', 'input.webm', '-c', 'copy', '-f', 'mp4', 'output.mp4']);
           const mp4 = await ff.readFile('output.mp4') as Uint8Array;
-          const mp4Blob = new Blob([mp4], { type: 'video/mp4' });
+          const mp4Blob = new Blob([mp4 as unknown as BlobPart], { type: 'video/mp4' });
           const url = URL.createObjectURL(mp4Blob);
           const a = document.createElement('a');
           a.href = url; a.download = 'streamvault-premium-promo.mp4';

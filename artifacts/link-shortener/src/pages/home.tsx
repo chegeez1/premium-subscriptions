@@ -15,7 +15,7 @@ import {
   getListLinksQueryKey,
   getGetLinkStatsQueryKey,
 } from "@workspace/api-client-react";
-import type { Link } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { Link } from "@workspace/api-client-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -320,7 +320,7 @@ export default function Home() {
                 </p>
                 <Button 
                   variant="outline" 
-                  onClick={() => document.querySelector('input[name="originalUrl"]')?.focus()}
+                  onClick={() => (document.querySelector('input[name="originalUrl"]') as HTMLInputElement | null)?.focus()}
                   data-testid="button-create-first"
                 >
                   <Plus className="h-4 w-4 mr-2" />
