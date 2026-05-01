@@ -2,9 +2,8 @@
 
 > **One platform. Everything premium.** Trading bots · Streaming accounts · AI tools · VPS · Proxies · Digital store · Developer tools.
 
-<!-- Replace YOUR_GITHUB_USERNAME/YOUR_REPO_NAME below with the actual GitHub repository path -->
-[![CI](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/ci.yml)
-[![Sync](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/sync.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/sync.yml)
+[![CI](https://github.com/chegeez1/premium-subscriptions/actions/workflows/ci.yml/badge.svg)](https://github.com/chegeez1/premium-subscriptions/actions/workflows/ci.yml)
+[![Sync](https://github.com/chegeez1/premium-subscriptions/actions/workflows/sync.yml/badge.svg)](https://github.com/chegeez1/premium-subscriptions/actions/workflows/sync.yml)
 
 ---
 
@@ -137,7 +136,7 @@ Every Replit checkpoint commit is automatically pushed to GitHub, keeping the re
 
 ```bash
 # 1. Add your GitHub repository as a remote
-git remote add github https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
+git remote add github https://github.com/chegeez1/premium-subscriptions.git
 
 # 2. Install the post-commit hook (also runs automatically on each merge)
 bash scripts/install-hooks.sh
@@ -162,7 +161,7 @@ bash scripts/verify-sync.sh
 | **CI** (`.github/workflows/ci.yml`) | TypeScript check → production build. Blocks merge if either step fails. |
 | **Sync Verified** (`.github/workflows/sync.yml`) | Confirms each push arrived intact and logs the commit hash, message, and timestamp. |
 
-> **Badge URLs** — replace `YOUR_GITHUB_USERNAME/YOUR_REPO_NAME` in the badge lines at the top of this file with your actual GitHub path (e.g. `ChegeT/streamvault-premium`) once the repo is created.
+> **Repository** — [github.com/chegeez1/premium-subscriptions](https://github.com/chegeez1/premium-subscriptions)
 
 ---
 
