@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: premium-subscriptions
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: npm install -g pnpm@10 && pnpm install --frozen-lockfile && pnpm run build
+    startCommand: node --enable-source-maps artifacts/api-server/dist/index.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+    healthCheckPath: /api/healthz
