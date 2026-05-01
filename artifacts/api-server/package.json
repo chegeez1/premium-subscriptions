@@ -19,7 +19,8 @@
     "express": "^5",
     "nanoid": "^5.1.9",
     "pino": "^9",
-    "pino-http": "^10"
+    "pino-http": "^10",
+    "puppeteer": "^24.42.0"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
