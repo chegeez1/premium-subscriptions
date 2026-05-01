@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Download Promo Video — StreamVault Premium</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0a0a0a;color:#fff;font-family:'DM Sans',system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}
+    .card{background:#111;border:1px solid #22c55e22;border-radius:1.5rem;padding:2.5rem 2rem;max-width:480px;width:100%;text-align:center;box-shadow:0 24px 64px #00000066}
+    .logo{display:inline-flex;align-items:center;gap:.6rem;margin-bottom:2rem}
+    .logo-icon{width:36px;height:36px;background:#22c55e;border-radius:.5rem;display:flex;align-items:center;justify-content:center;font-weight:900;color:#000;font-size:1rem}
+    .logo-text{font-size:1.1rem;font-weight:700;letter-spacing:-.02em}
+    .logo-text span{color:#22c55e}
+    h1{font-size:1.6rem;font-weight:800;letter-spacing:-.03em;margin-bottom:.5rem}
+    .sub{color:#71717a;font-size:.95rem;margin-bottom:2rem}
+    .bar-wrap{background:#1a1a1a;border-radius:999px;height:8px;overflow:hidden;margin-bottom:1rem}
+    .bar{height:100%;border-radius:999px;transition:width .5s ease;background:linear-gradient(90deg,#22c55e,#7c3aed)}
+    .status-text{font-size:.85rem;color:#52525b;margin-bottom:1.5rem;min-height:1.2em}
+    .step{display:flex;align-items:center;gap:.75rem;background:#0d0d0d;border:1px solid #1f1f1f;border-radius:.75rem;padding:.75rem 1rem;margin-bottom:.6rem;text-align:left;font-size:.875rem;color:#a1a1aa}
+    .step-num{width:22px;height:22px;border-radius:50%;background:#22c55e22;color:#22c55e;font-size:.75rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .dl-btn{display:inline-flex;align-items:center;gap:.5rem;background:#22c55e;color:#000;font-weight:700;font-size:1rem;padding:.85rem 2rem;border-radius:.75rem;text-decoration:none;margin-top:.5rem;transition:opacity .2s}
+    .dl-btn:hover{opacity:.85}
+    .err{color:#f87171;font-size:.875rem;margin-top:1rem}
+    .spinner{display:inline-block;width:18px;height:18px;border:2px solid #22c55e33;border-top-color:#22c55e;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:.4rem}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .hidden{display:none!important}
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <div class="logo-icon">M</div>
+    <div class="logo-text">Chege<span>Tech</span></div>
+  </div>
+
+  <h1>StreamVault Premium</h1>
+  <p class="sub">Full promo video — all 17 scenes · MP4</p>
+
+  <!-- steps (shown while generating) -->
+  <div id="steps">
+    <div class="step"><span class="step-num">1</span>Puppeteer renders all 17 animated scenes at 1280×720</div>
+    <div class="step"><span class="step-num">2</span>Frames encoded to H.264 MP4 with ffmpeg</div>
+    <div class="step"><span class="step-num">3</span>Your download starts automatically</div>
+  </div>
+
+  <div class="bar-wrap"><div class="bar" id="bar" style="width:0%"></div></div>
+  <div class="status-text" id="status-text"><span class="spinner"></span>Starting…</div>
+
+  <!-- shown only when ready -->
+  <a id="dl-link" class="dl-btn hidden" href="/api/promo/video.mp4" download="streamvault-premium-promo.mp4">
+    ⬇ Download MP4
+  </a>
+  <div id="err-msg" class="err hidden"></div>
+</div>
+
+<script>
+const bar        = document.getElementById('bar');
+const statusText = document.getElementById('status-text');
+const dlLink     = document.getElementById('dl-link');
+const errMsg     = document.getElementById('err-msg');
+const steps      = document.getElementById('steps');
+
+function setStatus(text, pct) {
+  bar.style.width = pct + '%';
+  statusText.innerHTML = text;
+}
+
+async function poll() {
+  try {
+    const r    = await fetch('/api/promo/status');
+    const data = await r.json();
+
+    if (data.status === 'ready') {
+      setStatus('✅ Done! Your download is starting…', 100);
+      steps.classList.add('hidden');
+      dlLink.classList.remove('hidden');
+      dlLink.click(); // auto-download
+      return;
+    }
+
+    if (data.status === 'error') {
+      setStatus('❌ Generation failed', 0);
+      errMsg.textContent = data.errorMsg || 'Unknown error';
+      errMsg.classList.remove('hidden');
+      return;
+    }
+
+    if (data.status === 'generating') {
+      const pct = data.progress || 0;
+      const label = pct < 85
+        ? `<span class="spinner"></span>Rendering scenes… ${pct}%`
+        : `<span class="spinner"></span>Encoding MP4…`;
+      setStatus(label, pct);
+    } else {
+      setStatus('<span class="spinner"></span>Queuing…', 2);
+    }
+
+    setTimeout(poll, 3000);
+  } catch (e) {
+    setStatus('⚠️ Connection error — retrying…', 0);
+    setTimeout(poll, 5000);
+  }
+}
+
+// Kick off generation then start polling
+(async () => {
+  try {
+    await fetch('/api/promo/generate', { method: 'POST' });
+  } catch { /* ignore */ }
+  setStatus('<span class="spinner"></span>Rendering scenes… 0%', 1);
+  setTimeout(poll, 3000);
+})();
+</script>
+</body>
+</html>

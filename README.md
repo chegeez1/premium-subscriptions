@@ -24,6 +24,10 @@
     <img src="https://img.shields.io/badge/▶%20Watch%20Full%20Video-22c55e?style=for-the-badge&logoColor=white" alt="Watch Video"/>
   </a>
   &nbsp;
+  <a href="https://streamvault-premium.site/streamvault-promo/download.html" target="_blank">
+    <img src="https://img.shields.io/badge/⬇%20Download%20MP4-ec4899?style=for-the-badge&logoColor=white" alt="Download MP4"/>
+  </a>
+  &nbsp;
   <a href="https://streamvault-premium.site" target="_blank">
     <img src="https://img.shields.io/badge/Visit%20Site-7c3aed?style=for-the-badge&logoColor=white" alt="Visit Site"/>
   </a>
