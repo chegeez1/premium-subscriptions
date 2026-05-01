@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile } from '@ffmpeg/util';
 import { ChevronDown, ChevronUp, Repeat, Mic, Music2, VolumeX, Download, Circle, X } from 'lucide-react';
 import VideoTemplate, { SCENE_DURATIONS } from './VideoTemplate';
 import VoicePicker from './VoicePicker';
@@ -19,11 +21,21 @@ const PROGRESS_TICK_MS = 60;
 const TOTAL_DURATION_MS = Object.values(SCENE_DURATIONS).reduce((a, b) => a + b, 0);
 
 // ─── Export overlay ────────────────────────────────────────────────────────────
-type ExportPhase = 'idle' | 'recording' | 'done' | 'error';
+type ExportPhase = 'idle' | 'recording' | 'converting' | 'done' | 'error';
 
 function fmtTime(ms: number) {
   const s = Math.ceil(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function Spinner() {
+  return (
+    <div className="w-4 h-4 rounded-full border-2 animate-spin"
+      style={{
+        borderTopColor: '#22c55e', borderRightColor: '#22c55e33',
+        borderBottomColor: '#22c55e33', borderLeftColor: '#22c55e33',
+      }} />
+  );
 }
 
 function ExportOverlay({
@@ -34,40 +46,49 @@ function ExportOverlay({
 }) {
   if (phase === 'idle') return null;
   const remaining = Math.max(0, TOTAL_DURATION_MS - elapsed);
-  const pct = Math.min(100, (elapsed / TOTAL_DURATION_MS) * 100);
+  const pct       = Math.min(100, (elapsed / TOTAL_DURATION_MS) * 100);
+  const busy      = phase === 'recording' || phase === 'converting';
 
   return (
     <div className="absolute inset-0 z-[100] flex items-end justify-center pb-28"
       style={{ pointerEvents: 'none' }}>
-      <div className="rounded-2xl px-6 py-4 flex items-center gap-4 min-w-80"
+      <div className="rounded-2xl px-6 py-4 flex items-center gap-4 min-w-96"
         style={{ background: '#111', border: '1px solid #22c55e33', pointerEvents: 'auto', boxShadow: '0 8px 32px #00000088' }}>
 
         {/* Icon */}
         <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
           style={{ background: '#22c55e18' }}>
-          {phase === 'recording' && <Circle className="w-4 h-4 fill-red-500 text-red-500" />}
-          {phase === 'done'      && <span className="text-lg">✅</span>}
-          {phase === 'error'     && <span className="text-lg">❌</span>}
+          {phase === 'recording'  && <Circle className="w-4 h-4 fill-red-500 text-red-500" />}
+          {phase === 'converting' && <Spinner />}
+          {phase === 'done'       && <span className="text-lg">✅</span>}
+          {phase === 'error'      && <span className="text-lg">❌</span>}
         </div>
 
         {/* Text + bar */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-bold text-white" style={{ fontFamily: 'var(--font-display)' }}>
-              {phase === 'recording' && 'Exporting video…'}
-              {phase === 'done'      && 'Download complete ✓'}
-              {phase === 'error'     && 'Export failed'}
+              {phase === 'recording'  && 'Capturing frames…'}
+              {phase === 'converting' && 'Converting to MP4…'}
+              {phase === 'done'       && 'Download complete ✓'}
+              {phase === 'error'      && 'Export failed'}
             </span>
             <span className="text-xs font-mono" style={{ color: '#52525b' }}>
-              {phase === 'recording' && `${fmtTime(remaining)} left`}
-              {phase === 'done'      && 'streamvault-premium-promo.webm'}
-              {phase === 'error'     && errorMsg.slice(0, 40)}
+              {phase === 'recording'  && `${fmtTime(remaining)} left`}
+              {phase === 'converting' && 'almost done…'}
+              {phase === 'done'       && 'streamvault-premium-promo.mp4'}
+              {phase === 'error'      && errorMsg.slice(0, 40)}
             </span>
           </div>
           {phase === 'recording' && (
             <div className="rounded-full overflow-hidden" style={{ background: '#1a1a1a', height: 5 }}>
               <div className="h-full rounded-full transition-all duration-500"
                 style={{ width: `${pct}%`, background: 'linear-gradient(90deg,#22c55e,#7c3aed)' }} />
+            </div>
+          )}
+          {phase === 'converting' && (
+            <div className="rounded-full overflow-hidden" style={{ background: '#1a1a1a', height: 5 }}>
+              <div className="h-full rounded-full" style={{ width: '100%', background: 'linear-gradient(90deg,#7c3aed,#ec4899)', animation: 'pulse 1.5s ease-in-out infinite' }} />
             </div>
           )}
           {phase === 'error' && (
@@ -85,7 +106,7 @@ function ExportOverlay({
             Retry
           </button>
         )}
-        {phase !== 'recording' && (
+        {!busy && (
           <button onClick={onCancel}
             className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0"
             style={{ color: '#3f3f46' }}>
@@ -357,6 +378,7 @@ export default function VideoWithControls() {
   const recorderRef   = useRef<MediaRecorder | null>(null);
   const chunksRef     = useRef<Blob[]>([]);
   const capturingRef  = useRef(false);
+  const ffmpegRef     = useRef<FFmpeg | null>(null);
 
   const handleExportStart = useCallback(async () => {
     const container = containerRef.current;
@@ -387,16 +409,41 @@ export default function VideoWithControls() {
       capturingRef.current = true;
 
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        const url  = URL.createObjectURL(blob);
-        const a    = document.createElement('a');
-        a.href     = url;
-        a.download = 'streamvault-premium-promo.webm';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+      recorder.onstop = async () => {
+        const webmBlob = new Blob(chunksRef.current, { type: mimeType });
+        setExportPhase('converting');
+        try {
+          // Load ffmpeg.wasm once, reuse on subsequent exports
+          if (!ffmpegRef.current) {
+            const ff = new FFmpeg();
+            const base = import.meta.env.BASE_URL ?? '/streamvault-promo/';
+            await ff.load({
+              coreURL: `${base}ffmpeg/ffmpeg-core.js`,
+              wasmURL: `${base}ffmpeg/ffmpeg-core.wasm`,
+            });
+            ffmpegRef.current = ff;
+          }
+          const ff = ffmpegRef.current;
+          await ff.writeFile('input.webm', await fetchFile(webmBlob));
+          // Remux VP9 video into MP4 container — no re-encoding, fast
+          await ff.exec(['-i', 'input.webm', '-c', 'copy', '-f', 'mp4', 'output.mp4']);
+          const mp4 = await ff.readFile('output.mp4') as Uint8Array;
+          const mp4Blob = new Blob([mp4], { type: 'video/mp4' });
+          const url = URL.createObjectURL(mp4Blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = 'streamvault-premium-promo.mp4';
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } catch {
+          // Fallback: just download the webm if mp4 conversion fails
+          const url = URL.createObjectURL(webmBlob);
+          const a = document.createElement('a');
+          a.href = url; a.download = 'streamvault-premium-promo.webm';
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
         setExportPhase('done');
       };
 
