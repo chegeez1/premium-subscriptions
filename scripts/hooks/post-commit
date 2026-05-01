@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# post-commit hook — auto-push to the "github" remote after every commit.
+#
+# Install once with:  bash scripts/install-hooks.sh
+# Or manually:       cp scripts/hooks/post-commit .git/hooks/post-commit
+#                    chmod +x .git/hooks/post-commit
+
+set -euo pipefail
+
+REMOTE="github"
+BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo main)"
+
+# Only push when the github remote is configured
+if ! git remote get-url "$REMOTE" &>/dev/null; then
+  echo "[sync] No '$REMOTE' remote found — skipping auto-push."
+  echo "[sync] Add one with: git remote add github https://github.com/OWNER/REPO.git"
+  exit 0
+fi
+
+echo "[sync] Pushing '$BRANCH' → $REMOTE …"
+if git push "$REMOTE" "$BRANCH" --follow-tags 2>&1; then
+  echo "[sync] ✓ Pushed $(git rev-parse --short HEAD) to $REMOTE/$BRANCH"
+else
+  echo "[sync] ✗ Push failed — check your credentials and remote URL."
+  exit 1
+fi

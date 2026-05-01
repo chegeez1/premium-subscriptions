@@ -1,0 +1,34 @@
+name: Sync Verified
+
+# This workflow runs automatically every time Replit pushes a checkpoint commit
+# to GitHub. It confirms the push arrived intact and is visible on GitHub.
+#
+# The actual push is performed by:
+#   1. Replit's built-in GitHub integration (enabled via Replit's Git panel), OR
+#   2. The post-commit git hook in scripts/hooks/post-commit (installed by
+#      running `bash scripts/install-hooks.sh` once after setup).
+
+on:
+  push:
+    branches: ["main"]
+
+  # Also available on-demand from the GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  verify-sync:
+    name: Confirm sync arrived
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Print sync details
+        run: |
+          echo "✅ Synced commit : $(git rev-parse --short HEAD)"
+          echo "📝 Message       : $(git log -1 --pretty=%B)"
+          echo "🕐 Timestamp     : $(git log -1 --pretty=%ci)"
+          echo "🔗 Run URL       : $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$(git rev-parse HEAD)"

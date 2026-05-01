@@ -2,6 +2,10 @@
 
 > **One platform. Everything premium.** Trading bots · Streaming accounts · AI tools · VPS · Proxies · Digital store · Developer tools.
 
+<!-- Replace YOUR_GITHUB_USERNAME/YOUR_REPO_NAME below with the actual GitHub repository path -->
+[![CI](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/ci.yml)
+[![Sync](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/sync.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/sync.yml)
+
 ---
 
 ## 🎬 Promo Video
@@ -117,6 +121,48 @@ Deploy your own WhatsApp sales/support bot in minutes. M-Pesa STK push built-in.
 | AI / TTS | OpenAI (server-side disk cache) |
 | Animation | Framer Motion |
 | Fonts | Space Grotesk · DM Sans · JetBrains Mono |
+
+---
+
+## 🔄 GitHub Auto-Sync
+
+Every Replit checkpoint commit is automatically pushed to GitHub, keeping the repo always in sync. Two complementary mechanisms enforce this:
+
+| Mechanism | How it works |
+|---|---|
+| **Replit Git integration** | Connect via Replit's Git panel — Replit pushes every checkpoint automatically |
+| **post-commit hook** | `scripts/hooks/post-commit` pushes to the `github` remote after every commit |
+
+### One-time setup
+
+```bash
+# 1. Add your GitHub repository as a remote
+git remote add github https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
+
+# 2. Install the post-commit hook (also runs automatically on each merge)
+bash scripts/install-hooks.sh
+
+# 3. Push the initial state
+git push github main
+```
+
+After that, every commit — from Replit checkpoints or manual work — is pushed to GitHub automatically without any manual action.
+
+```bash
+# Confirm everything is correctly configured at any time
+bash scripts/verify-sync.sh
+```
+
+### What runs on GitHub after each push
+
+> **Note:** The GitHub Actions workflows below run *after* a push arrives on GitHub. The actual sync (the push itself) is performed by the post-commit hook and/or Replit's Git integration — not by the workflows.
+
+| Workflow | Purpose |
+|---|---|
+| **CI** (`.github/workflows/ci.yml`) | TypeScript check → production build. Blocks merge if either step fails. |
+| **Sync Verified** (`.github/workflows/sync.yml`) | Confirms each push arrived intact and logs the commit hash, message, and timestamp. |
+
+> **Badge URLs** — replace `YOUR_GITHUB_USERNAME/YOUR_REPO_NAME` in the badge lines at the top of this file with your actual GitHub path (e.g. `ChegeT/streamvault-premium`) once the repo is created.
 
 ---
 
